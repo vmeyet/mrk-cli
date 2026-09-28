@@ -1,0 +1,7 @@
+---
+source: src/code/mod.rs
+expression: "framed(&render(\"x\\n\", Some(\"averyveryverylonglanguagename\"), &at_width(16)))"
+---
+│ averyveryvery… │
+│ x              │
+│                │
