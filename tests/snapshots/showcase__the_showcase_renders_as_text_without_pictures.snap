@@ -41,15 +41,15 @@ Quotes and alerts
 
 Code
 
-                                                                           rust
- fn main() {
-     let greeting = "hello"; // a comment
-     println!("{greeting}, world");
- }
+                                                                          rust
+  fn main() {
+      let greeting = "hello"; // a comment
+      println!("{greeting}, world");
+  }
 
 
 
- no language here
+  no language here
 
 
 Table

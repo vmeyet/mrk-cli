@@ -2,9 +2,9 @@
 source: src/code/mod.rs
 expression: "framed(&render(RUST, Some(\"rust\"), &at_width(40)))"
 ---
-│                                   rust │
-│ fn main() {                            │
-│     let greeting = "hello";            │
-│     println!("{greeting}");            │
-│ }                                      │
+│                                  rust  │
+│  fn main() {                           │
+│      let greeting = "hello";           │
+│      println!("{greeting}");           │
+│  }                                     │
 │                                        │

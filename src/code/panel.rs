@@ -2,7 +2,7 @@ use crate::document::{Line, Span, Style};
 use crate::text::display_width;
 use crate::theme::Palette;
 
-const PADDING: &str = " ";
+const PADDING: &str = "  ";
 const CONTINUATION: &str = "↪ ";
 const ELLIPSIS: &str = "…";
 
