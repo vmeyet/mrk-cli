@@ -59,6 +59,19 @@ pub const MRK_DARK: Theme = Theme {
     syntax: "OneHalfDark",
 };
 
+// TEMPORARY shim from feat/terminal so the CLI compiles: feat/code owns the real preset list, `names` and `find`.
+const PRESETS: [Theme; 1] = [MRK_DARK];
+
+/// TEMPORARY shim (feat/terminal), replaced by feat/code.
+pub fn names() -> Vec<&'static str> {
+    PRESETS.iter().map(|theme| theme.name).collect()
+}
+
+/// TEMPORARY shim (feat/terminal), replaced by feat/code.
+pub fn find(name: &str) -> Option<Theme> {
+    PRESETS.iter().find(|theme| theme.name == name).cloned()
+}
+
 pub const DEFAULT_WIDTH: usize = 100;
 
 /// The settings unit tests render with: dark theme, 80 columns, no pictures.
