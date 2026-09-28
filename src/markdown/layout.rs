@@ -22,7 +22,7 @@ pub(super) fn stack(groups: impl IntoIterator<Item = Vec<Block>>, spacing: Spaci
     })
 }
 
-fn is_empty(group: &[Block]) -> bool {
+pub(super) fn is_empty(group: &[Block]) -> bool {
     group.iter().all(|block| matches!(block, Block::Lines(lines) if lines.is_empty()))
 }
 

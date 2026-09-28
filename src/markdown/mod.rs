@@ -1,3 +1,4 @@
+mod blocks;
 mod context;
 mod footnote;
 mod heading;
@@ -12,6 +13,8 @@ mod table;
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{Arena, Options, parse_document};
 
+use self::blocks::Section;
+pub use self::blocks::{BlockKind, SourceBlock};
 use self::context::Context;
 use self::layout::Spacing;
 use crate::document::{Block, Document, Settings};
@@ -20,13 +23,22 @@ const FRONT_MATTER_DELIMITER: &str = "---";
 
 /// Renders GitHub-flavoured Markdown into a document at `settings.width`; images and links are never fetched.
 pub fn render(source: &str, settings: &Settings) -> Document {
+    let blocks = layout::stack(sections(source, settings).into_iter().map(Section::stacked), Spacing::Loose);
+    Document { blocks }
+}
+
+/// The document's top-level blocks, each with the source lines it came from, for a consumer that diffs or pairs blocks.
+/// A list gives one block per top-level item, nested items staying inside theirs; the footnote definitions are one
+/// last block. No blank line separates or surrounds them: `render` puts one between blocks and between loose items.
+pub fn render_blocks(source: &str, settings: &Settings) -> Vec<SourceBlock> {
+    let blocks = sections(source, settings).into_iter().flat_map(|section| section.blocks);
+    blocks.filter(|block| !layout::is_empty(&block.blocks)).collect()
+}
+
+fn sections(source: &str, settings: &Settings) -> Vec<Section> {
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options());
-    let context = Context::new(settings);
-    let (notes, body): (Vec<&AstNode>, Vec<&AstNode>) = root.children().partition(|node| is_footnote_definition(node));
-    let body = layout::stack(body.into_iter().map(|node| block(node, &context)), Spacing::Loose);
-    let blocks = layout::stack([body, footnote::section(&notes, &context)], Spacing::Loose);
-    Document { blocks }
+    blocks::sections(root, source, &Context::new(settings))
 }
 
 fn options() -> Options<'static> {
@@ -39,10 +51,6 @@ fn options() -> Options<'static> {
     options.extension.alerts = true;
     options.extension.front_matter_delimiter = Some(FRONT_MATTER_DELIMITER.to_owned());
     options
-}
-
-fn is_footnote_definition<'a>(node: &'a AstNode<'a>) -> bool {
-    matches!(node.data().value, NodeValue::FootnoteDefinition(_))
 }
 
 /// The blocks inside a container, rendered in `context` and spaced as the container says.

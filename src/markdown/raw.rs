@@ -6,7 +6,7 @@ use super::layout;
 use crate::document::{Block, Line, Span, Style};
 use crate::text;
 
-const MERMAID: &str = "mermaid";
+pub(super) const MERMAID: &str = "mermaid";
 
 /// An HTML block as muted literal text, never interpreted.
 pub(super) fn html(literal: &str, context: &Context) -> Vec<Line> {
@@ -21,9 +21,14 @@ pub(super) fn flat<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
 
 /// A fenced or indented code block: a Mermaid diagram or a code panel, both at the current width.
 pub(super) fn code(block: &NodeCodeBlock, context: &Context) -> Vec<Block> {
-    let language = block.info.split_whitespace().next();
+    let language = language(block);
     match language {
         Some(MERMAID) => vec![crate::mermaid::render(&block.literal, &context.settings)],
         _ => layout::lines(crate::code::render(&block.literal, language, &context.settings)),
     }
+}
+
+/// The first word of the fence's info string, the language as written.
+pub(super) fn language(block: &NodeCodeBlock) -> Option<&str> {
+    block.info.split_whitespace().next()
 }

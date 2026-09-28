@@ -17,14 +17,22 @@ struct Marker {
 }
 
 pub(super) fn render<'a>(node: &'a AstNode<'a>, list: &NodeList, context: &Context) -> Vec<Block> {
+    layout::stack(items(node, list, context), spacing(list))
+}
+
+/// Tight items sit on consecutive lines, loose ones a blank line apart.
+pub(super) fn spacing(list: &NodeList) -> Spacing {
+    if list.tight { Spacing::Tight } else { Spacing::Loose }
+}
+
+/// Each item rendered on its own, marker included, in the order of the list.
+pub(super) fn items<'a>(node: &'a AstNode<'a>, list: &NodeList, context: &Context) -> Vec<Vec<Block>> {
     let items: Vec<&AstNode> = node.children().collect();
     let numbers = (list.start..).take(items.len());
     let number_width = numbers.clone().last().map_or(1, |last| last.to_string().len());
     let markers: Vec<Marker> = items.iter().zip(numbers).map(|(item, number)| marker(item, list, number, number_width, context)).collect();
     let marker_width = markers.iter().map(|marker| text::display_width(&marker.text)).max().unwrap_or(0) + 1;
-    let spacing = if list.tight { Spacing::Tight } else { Spacing::Loose };
-    let rendered = items.iter().zip(&markers).map(|(item, marker)| render_item(item, marker, marker_width, spacing, context));
-    layout::stack(rendered.collect::<Vec<_>>(), spacing)
+    items.iter().zip(&markers).map(|(item, marker)| render_item(item, marker, marker_width, spacing(list), context)).collect()
 }
 
 fn marker<'a>(item: &'a AstNode<'a>, list: &NodeList, number: usize, number_width: usize, context: &Context) -> Marker {
