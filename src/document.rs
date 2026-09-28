@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::theme::Theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -134,9 +136,51 @@ fn plain_block(block: &Block) -> String {
     }
 }
 
+fn split_span(span: &Span, first: usize, ranges: &[Range<usize>], restyle: &impl Fn(Style) -> Style) -> Vec<Span> {
+    let is_inside = |offset: usize| ranges.iter().any(|range| range.contains(&offset));
+    let mut pieces: Vec<(bool, String)> = Vec::new();
+    for (offset, character) in span.text.chars().enumerate() {
+        let inside = is_inside(first + offset);
+        match pieces.last_mut() {
+            Some((last, text)) if *last == inside => text.push(character),
+            _ => pieces.push((inside, character.to_string())),
+        }
+    }
+    let style = |inside: bool| if inside { restyle(span.style) } else { span.style };
+    pieces.into_iter().map(|(inside, text)| Span { text, style: style(inside), link: span.link.clone() }).collect()
+}
+
+/// The char offset in `plain` text at which each span starts, spans and lines taken in order with nothing between them.
+fn span_offsets(lines: &[Line]) -> impl Iterator<Item = usize> {
+    lines.iter().flat_map(|line| &line.spans).scan(0, |next, span| {
+        let first = *next;
+        *next += span.text.chars().count();
+        Some(first)
+    })
+}
+
+/// Restyles the text inside `ranges`, for a search match or a word-level diff; text, widths and links never change.
+///
+/// Ranges are char offsets into the lines' plain text joined with no separator:
+/// `lines.iter().map(Line::plain).collect::<String>()`. A span is split where a range starts or ends inside it.
+pub fn highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line> {
+    let mut offsets = span_offsets(lines);
+    lines
+        .iter()
+        .map(|line| {
+            let spans = line.spans.iter().zip(offsets.by_ref()).flat_map(|(span, first)| split_span(span, first, ranges, &restyle));
+            Line::new(spans.collect())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::single_range_in_vec_init)]
+
     use super::*;
+
+    const RED: Rgb = Rgb(255, 0, 0);
 
     #[test]
     fn plain_joins_spans_and_trims_trailing_padding() {
@@ -151,5 +195,41 @@ mod tests {
         let line = Line::new(vec![Span::plain("é漢")]);
 
         assert_eq!(line.width(), 3);
+    }
+
+    #[test]
+    fn highlight_splits_spans_at_the_range_edges_and_keeps_links() {
+        let line =
+            Line::new(vec![Span::new("say hel", Style::fg(RED)), Span::new("lo world", Style::fg(RED).bold()).linked("https://x.y")]);
+
+        let lit = highlight(&[line], &[4..9], Style::underline);
+
+        assert_eq!(
+            lit[0].spans,
+            [
+                Span::new("say ", Style::fg(RED)),
+                Span::new("hel", Style::fg(RED).underline()),
+                Span::new("lo", Style::fg(RED).bold().underline()).linked("https://x.y"),
+                Span::new(" world", Style::fg(RED).bold()).linked("https://x.y"),
+            ]
+        );
+    }
+
+    #[test]
+    fn highlight_crosses_a_line_break_without_changing_the_text() {
+        let lines = [Line::new(vec![Span::plain("one two")]), Line::new(vec![Span::plain("three")])];
+
+        let lit = highlight(&lines, &[4..9], Style::bold);
+
+        assert_eq!(lit[0].spans, [Span::plain("one "), Span::new("two", Style::default().bold())]);
+        assert_eq!(lit[1].spans, [Span::new("th", Style::default().bold()), Span::plain("ree")]);
+        assert_eq!(lit.iter().map(Line::width).collect::<Vec<_>>(), [7, 5]);
+    }
+
+    #[test]
+    fn an_empty_range_changes_nothing() {
+        let lines = [Line::new(vec![Span::plain("abc")])];
+
+        assert_eq!(highlight(&lines, &[1..1], Style::bold), lines);
     }
 }

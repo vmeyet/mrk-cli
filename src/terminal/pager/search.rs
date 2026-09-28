@@ -1,5 +1,7 @@
+use std::ops::Range;
+
 use super::page::Row;
-use crate::document::{Line, Span, Style};
+use crate::document::{self, Line, Style};
 use crate::theme::Palette;
 
 /// A match of the query in one row, in characters of `Line::plain`.
@@ -77,56 +79,28 @@ impl Search {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mark {
-    None,
-    Match,
-    Current,
+fn matched_style(palette: &Palette) -> Style {
+    Style::fg(palette.text).on(palette.subtle)
 }
 
-fn mark(index: usize, matches: &[Match], current: Option<Match>) -> Mark {
-    match matches.iter().find(|each| (each.start..each.end).contains(&index)) {
-        None => Mark::None,
-        Some(found) if Some(*found) == current => Mark::Current,
-        Some(_) => Mark::Match,
-    }
-}
-
-fn marked_style(style: Style, mark: Mark, palette: &Palette) -> Style {
-    match mark {
-        Mark::None => style,
-        Mark::Match => Style::fg(palette.text).on(palette.subtle),
-        Mark::Current => Style::fg(palette.surface).on(palette.accent).bold(),
-    }
-}
-
-fn split_span(span: &Span, first: usize, matches: &[Match], current: Option<Match>, palette: &Palette) -> Vec<Span> {
-    let mut pieces: Vec<(Mark, String)> = Vec::new();
-    for (offset, character) in span.text.chars().enumerate() {
-        let mark = mark(first + offset, matches, current);
-        match pieces.last_mut() {
-            Some((last, text)) if *last == mark => text.push(character),
-            _ => pieces.push((mark, character.to_string())),
-        }
-    }
-    pieces.into_iter().map(|(mark, text)| Span { text, style: marked_style(span.style, mark, palette), link: span.link.clone() }).collect()
+fn current_style(palette: &Palette) -> Style {
+    Style::fg(palette.surface).on(palette.accent).bold()
 }
 
 /// The line with the matches on it painted: the current one in `accent`, the others on `subtle`. Spans are split
 /// where a match starts or ends inside them and keep their link.
 pub fn highlight(line: &Line, matches: &[Match], current: Option<Match>, palette: &Palette) -> Line {
-    let firsts = line.spans.iter().scan(0, |next, span| {
-        let first = *next;
-        *next += span.text.chars().count();
-        Some(first)
-    });
-    Line::new(line.spans.iter().zip(firsts).flat_map(|(span, first)| split_span(span, first, matches, current, palette)).collect())
+    let others: Vec<Range<usize>> = matches.iter().filter(|each| Some(**each) != current).map(|each| each.start..each.end).collect();
+    let current: Vec<Range<usize>> = current.into_iter().map(|each| each.start..each.end).collect();
+    let painted = document::highlight(std::slice::from_ref(line), &others, |_| matched_style(palette));
+    let painted = document::highlight(&painted, &current, |_| current_style(palette));
+    painted.into_iter().next().unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::Rgb;
+    use crate::document::{Rgb, Span};
     use crate::theme::MRK_DARK;
 
     const RED: Rgb = Rgb(255, 0, 0);
