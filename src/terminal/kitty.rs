@@ -77,6 +77,11 @@ pub fn hide(id: u32) -> String {
     format!("\x1b_Ga=d,d=i,i={id},q=2\x1b\\")
 }
 
+/// Frees one picture, placements and data.
+pub fn free(id: u32) -> String {
+    format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\")
+}
+
 /// Frees every picture with an id in `ids`, placements and data.
 pub fn forget(ids: std::ops::RangeInclusive<u32>) -> String {
     format!("\x1b_Ga=d,d=R,x={},y={},q=2\x1b\\", ids.start(), ids.end())

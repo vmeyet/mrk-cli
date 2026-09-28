@@ -13,6 +13,8 @@ use crate::theme::Palette;
 const FIRST_IMAGE_ID: u32 = 0x6d72_6b00;
 const LAST_IMAGE_ID: u32 = FIRST_IMAGE_ID + 0xffff;
 pub const IMAGE_IDS: RangeInclusive<u32> = FIRST_IMAGE_ID..=LAST_IMAGE_ID;
+/// Freed one by one as well, for terminals that ignore the range delete.
+const FREED_ONE_BY_ONE: usize = 64;
 
 const BEGIN_SYNCHRONIZED: &str = "\x1b[?2026h";
 const END_SYNCHRONIZED: &str = "\x1b[?2026l";
@@ -96,7 +98,8 @@ pub fn store_pictures(page: &Page) -> String {
 
 /// Frees every picture the pager may have sent.
 pub fn forget_pictures() -> String {
-    kitty::forget(IMAGE_IDS)
+    let one_by_one: String = (0..FREED_ONE_BY_ONE).map(|index| kitty::free(image_id(index))).collect();
+    kitty::forget(IMAGE_IDS) + &one_by_one
 }
 
 #[cfg(test)]
