@@ -22,11 +22,12 @@ mrk                 render stdin (cat notes.md | mrk)
 mrk --theme NAME    pick a theme; mrk --list-themes shows them with a swatch
 mrk --width N       wrap width in columns (default: terminal width, capped at 100)
 mrk --images auto|always|never   Mermaid as images (auto: when the terminal supports it)
+mrk --align center|left          centre the text column in a wide window (default center; piped output is never centred)
 mrk --color auto|always|never    auto honours NO_COLOR and a non-tty stdout
 mrk --completions zsh
 ```
 
-Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`. Flags win over env (`MRK_THEME`), env over config.
+Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
 
 ## Visual language
 

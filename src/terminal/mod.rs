@@ -31,6 +31,7 @@ pub struct Capabilities {
     pub cell: Option<CellSize>,
     pub background: Option<Appearance>,
     pub columns: u16,
+    pub is_terminal: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Deserialize)]
@@ -51,17 +52,34 @@ pub enum ImagesMode {
     Never,
 }
 
-fn block(block: &Block, capabilities: &Capabilities) -> String {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Align {
+    Left,
+    #[default]
+    Center,
+}
+
+pub const LEFT_MARGIN: usize = 2;
+
+/// Columns left of the text: centred in the window when asked and stdout is a terminal, the fixed margin otherwise.
+pub fn margin(align: Align, capabilities: &Capabilities, width: usize) -> usize {
+    let centred = usize::from(capabilities.columns).saturating_sub(width) / 2;
+    let is_centred = align == Align::Center && capabilities.is_terminal;
+    if is_centred { centred.max(LEFT_MARGIN) } else { LEFT_MARGIN }
+}
+
+fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
     match block {
-        Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities)).collect(),
-        Block::Picture(picture) if capabilities.cell.is_some() => kitty::picture(picture),
-        Block::Picture(picture) => kitty::placeholder(picture),
+        Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin)).collect(),
+        Block::Picture(picture) if capabilities.cell.is_some() => kitty::picture(picture, margin),
+        Block::Picture(picture) => kitty::placeholder(picture, margin),
     }
 }
 
-/// Writes the document for this terminal: the only place mrk produces escape sequences.
-pub fn write(document: &Document, capabilities: &Capabilities, out: &mut impl Write) -> std::io::Result<()> {
-    document.blocks.iter().try_for_each(|each| out.write_all(block(each, capabilities).as_bytes()))
+/// Writes the document for this terminal, `margin` columns from the left: the only place mrk produces escape sequences.
+pub fn write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write) -> std::io::Result<()> {
+    document.blocks.iter().try_for_each(|each| out.write_all(block(each, capabilities, margin).as_bytes()))
 }
 
 /// An error and its causes for stderr, sanitized, causes dimmed when `is_styled`.
@@ -72,14 +90,26 @@ pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
 }
 
 /// The bytes `write` would produce, as a string for tests.
-pub fn ansi(document: &Document, capabilities: &Capabilities) -> String {
-    document.blocks.iter().map(|each| block(each, capabilities)).collect()
+pub fn ansi(document: &Document, capabilities: &Capabilities, margin: usize) -> String {
+    document.blocks.iter().map(|each| block(each, capabilities, margin)).collect()
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn centring_splits_the_spare_columns_on_a_terminal_only() {
+        let wide = Capabilities { columns: 200, ..capabilities(ColorDepth::TrueColor, None) };
+        let piped = Capabilities { is_terminal: false, ..wide };
+        let narrow = Capabilities { columns: 82, ..wide };
+
+        assert_eq!(margin(Align::Center, &wide, 100), 50);
+        assert_eq!(margin(Align::Left, &wide, 100), LEFT_MARGIN);
+        assert_eq!(margin(Align::Center, &piped, 100), LEFT_MARGIN);
+        assert_eq!(margin(Align::Center, &narrow, 80), LEFT_MARGIN);
+    }
 
     #[test]
     fn an_error_report_strips_escapes_and_dims_causes_only_when_styled() {
@@ -106,7 +136,7 @@ mod tests {
     }
 
     fn capabilities(color: ColorDepth, cell: Option<CellSize>) -> Capabilities {
-        Capabilities { color, hyperlinks: color != ColorDepth::None, cell, background: None, columns: 80 }
+        Capabilities { color, hyperlinks: color != ColorDepth::None, cell, background: None, columns: 80, is_terminal: true }
     }
 
     fn readable(ansi: &str) -> String {
@@ -117,25 +147,28 @@ mod tests {
     fn truecolor_with_links_and_pictures() {
         let cell = Some(CellSize { width_px: 10, height_px: 20 });
 
-        insta::assert_snapshot!(readable(&ansi(&sample(), &capabilities(ColorDepth::TrueColor, cell))));
+        insta::assert_snapshot!(readable(&ansi(&sample(), &capabilities(ColorDepth::TrueColor, cell), LEFT_MARGIN)));
     }
 
     #[test]
     fn ansi256_without_pictures() {
-        insta::assert_snapshot!(readable(&ansi(&sample(), &capabilities(ColorDepth::Ansi256, None))));
+        insta::assert_snapshot!(readable(&ansi(&sample(), &capabilities(ColorDepth::Ansi256, None), LEFT_MARGIN)));
     }
 
     #[test]
     fn no_colour_is_plain_text() {
-        assert_eq!(ansi(&sample(), &capabilities(ColorDepth::None, None)), "  Title\n\n  Read the docs or run  mrk .\n  [picture: flow]\n");
+        assert_eq!(
+            ansi(&sample(), &capabilities(ColorDepth::None, None), LEFT_MARGIN),
+            "  Title\n\n  Read the docs or run  mrk .\n  [picture: flow]\n"
+        );
     }
 
     #[test]
     fn write_produces_the_same_bytes_as_ansi() {
         let capabilities = capabilities(ColorDepth::TrueColor, None);
         let mut out = Vec::new();
-        write(&sample(), &capabilities, &mut out).unwrap();
+        write(&sample(), &capabilities, LEFT_MARGIN, &mut out).unwrap();
 
-        assert_eq!(String::from_utf8(out).unwrap(), ansi(&sample(), &capabilities));
+        assert_eq!(String::from_utf8(out).unwrap(), ansi(&sample(), &capabilities, LEFT_MARGIN));
     }
 }

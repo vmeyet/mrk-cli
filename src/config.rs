@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::terminal::ImagesMode;
+use crate::terminal::{Align, ImagesMode};
 
 pub const MIN_WIDTH: usize = 20;
 const FILE: &str = "mrk/config.toml";
@@ -16,6 +16,7 @@ pub struct Config {
     pub theme: Option<String>,
     pub width: Option<usize>,
     pub images: Option<ImagesMode>,
+    pub align: Option<Align>,
 }
 
 fn candidates(xdg: Option<OsString>, home: Option<PathBuf>, platform: Option<PathBuf>) -> Vec<PathBuf> {
@@ -94,7 +95,7 @@ mod tests {
     fn every_key_is_read() {
         let config = parse("theme = \"mrk-light\"\nwidth = 72\nimages = \"never\"\n").unwrap();
 
-        assert_eq!(config, Config { theme: Some("mrk-light".to_owned()), width: Some(72), images: Some(ImagesMode::Never) });
+        assert_eq!(config, Config { theme: Some("mrk-light".to_owned()), width: Some(72), images: Some(ImagesMode::Never), align: None });
     }
 
     #[test]

@@ -2,7 +2,6 @@ use super::color::ansi256;
 use super::{Capabilities, ColorDepth, sanitize};
 use crate::document::{Line, Rgb, Span, Style};
 
-pub const MARGIN: &str = "  ";
 const RESET: &str = "\x1b[0m";
 const HYPERLINK_CLOSE: &str = "\x1b]8;;\x1b\\";
 
@@ -72,12 +71,12 @@ fn close(pen: &Pen) -> String {
 
 /// One line behind the margin, attributes emitted only when they change, everything closed before the newline
 /// so a background or a hyperlink never runs past the line.
-pub fn line(line: &Line, capabilities: &Capabilities) -> String {
+pub fn line(line: &Line, capabilities: &Capabilities, margin: usize) -> String {
     if line.spans.is_empty() {
         return "\n".to_owned();
     }
 
-    let mut out = String::from(MARGIN);
+    let mut out = " ".repeat(margin);
     let mut pen = Pen::default();
     for span in &line.spans {
         let text = sanitize::text(&span.text);
@@ -100,10 +99,14 @@ mod tests {
     use super::*;
     use crate::document::Span;
 
+    fn line(line: &Line, capabilities: &Capabilities) -> String {
+        super::line(line, capabilities, crate::terminal::LEFT_MARGIN)
+    }
+
     const RED: Rgb = Rgb(255, 0, 0);
 
     fn capabilities(color: ColorDepth, hyperlinks: bool) -> Capabilities {
-        Capabilities { color, hyperlinks, cell: None, background: None, columns: 80 }
+        Capabilities { color, hyperlinks, cell: None, background: None, columns: 80, is_terminal: true }
     }
 
     fn truecolor() -> Capabilities {

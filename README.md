@@ -17,6 +17,7 @@ mrk --list-themes
 | `--theme NAME` | `MRK_THEME` | `theme` | `mrk-dark` / `mrk-light` from the terminal background |
 | `--width N` | `MRK_WIDTH` | `width` | terminal width, capped at 100 |
 | `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol, not under tmux |
+| `--align center\|left` | `MRK_ALIGN` | `align` | `center`: the text column sits in the middle of a wide window; piped output is never centred |
 | `--color auto\|always\|never` | `NO_COLOR` | | `auto`: colour on a tty |
 | `--completions SHELL` | | | |
 
@@ -26,6 +27,7 @@ Config lives in `~/.config/mrk/config.toml`:
 theme = "tokyo-night"
 width = 90
 images = "auto"
+align = "left"
 ```
 
 ## Develop

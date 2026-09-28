@@ -38,7 +38,7 @@ src/
 - `markdown::render(source: &str, settings: &Settings) -> Document`
 - `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells.
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
-- `terminal::write(document: &Document, capabilities: &Capabilities, out: &mut impl Write)`: the only place escape sequences are produced; a two-column left margin on every line and picture.
+- `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: the only place escape sequences are produced; `margin` columns before every line and picture, from `terminal::margin` (centred on a wide terminal, `LEFT_MARGIN` otherwise).
 - A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` helps.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 

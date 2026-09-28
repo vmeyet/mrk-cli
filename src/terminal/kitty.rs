@@ -1,7 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
-use super::ansi::MARGIN;
 use super::sanitize;
 use crate::document::Picture;
 
@@ -31,20 +30,28 @@ fn transmit(picture: &Picture) -> String {
 /// Draws the picture with the kitty graphics protocol behind the margin, then leaves the cursor at the start of the line below it.
 /// The rows are scrolled into view first and the picture is drawn with `C=1` (cursor unmoved): where kitty, Ghostty and
 /// WezTerm would otherwise leave the cursor differs, and drawing at the bottom of the screen must not clip the picture.
-pub fn picture(picture: &Picture) -> String {
+pub fn picture(picture: &Picture, margin: usize) -> String {
     let rows = picture.rows.max(1);
     let reserve = "\n".repeat(usize::from(rows));
-    format!("{reserve}\x1b[{rows}A\r{MARGIN}{}\x1b[{rows}B\r", transmit(picture))
+    format!("{reserve}\x1b[{rows}A\r{}{}\x1b[{rows}B\r", " ".repeat(margin), transmit(picture))
 }
 
 /// What stands in for a picture when the terminal cannot draw it.
-pub fn placeholder(picture: &Picture) -> String {
-    format!("{MARGIN}[picture: {}]\n", sanitize::text(&picture.alt))
+pub fn placeholder(picture: &Picture, margin: usize) -> String {
+    format!("{}[picture: {}]\n", " ".repeat(margin), sanitize::text(&picture.alt))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn picture(picture: &Picture) -> String {
+        super::picture(picture, crate::terminal::LEFT_MARGIN)
+    }
+
+    fn placeholder(picture: &Picture) -> String {
+        super::placeholder(picture, crate::terminal::LEFT_MARGIN)
+    }
 
     fn sample(png: Vec<u8>) -> Picture {
         Picture { png, cols: 40, rows: 3, alt: "flow".to_owned() }

@@ -54,7 +54,14 @@ pub fn detect(preferences: Preferences) -> Capabilities {
     let has_graphics = known_graphics(&environment).unwrap_or(replies.graphics);
     let background = background_hint(&environment).or(replies.background.map(appearance));
     let columns = window.as_ref().map(|window| window.columns).filter(|&columns| columns > 0).unwrap_or(DEFAULT_COLUMNS);
-    Capabilities { color, hyperlinks: hyperlinks(&environment, color), cell: cell.filter(|_| has_graphics), background, columns }
+    Capabilities {
+        color,
+        hyperlinks: hyperlinks(&environment, color),
+        cell: cell.filter(|_| has_graphics),
+        background,
+        columns,
+        is_terminal: environment.stdout_is_tty,
+    }
 }
 
 #[cfg(test)]

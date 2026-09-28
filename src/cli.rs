@@ -1,4 +1,4 @@
-//! The command line: flags win over the environment (`MRK_THEME`, `MRK_WIDTH`), the environment over the config file.
+//! The command line: flags win over the environment (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), the environment over the config file.
 use std::fmt;
 use std::io::{self, BufWriter, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use clap_complete::Shell;
 
 use crate::config::{self, Config, MIN_WIDTH};
 use crate::document::{Block, Document, Line, Rgb, Settings, Span, Style};
-use crate::terminal::{self, Capabilities, ColorChoice, ColorDepth, ImagesMode, Preferences};
+use crate::terminal::{self, Align, Capabilities, ColorChoice, ColorDepth, ImagesMode, Preferences};
 use crate::theme::{self, Appearance, Palette, Theme};
 
 const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
@@ -35,6 +35,9 @@ pub struct Cli {
     /// Draw Mermaid diagrams as images; `auto` does when the terminal supports it.
     #[arg(long, value_enum, value_name = "WHEN")]
     pub images: Option<ImagesMode>,
+    /// Place the text in the window; `center` only applies on a terminal, never to piped output.
+    #[arg(long, value_enum, env = "MRK_ALIGN", value_name = "WHERE")]
+    pub align: Option<Align>,
     /// Colour the output; `auto` honours NO_COLOR and a stdout that is not a terminal.
     #[arg(long, value_enum, value_name = "WHEN", default_value_t)]
     pub color: ColorChoice,
@@ -116,9 +119,9 @@ fn read_input(file: Option<&Path>) -> Result<String> {
     }
 }
 
-fn print(document: &Document, capabilities: &Capabilities) -> Result<()> {
+fn print(document: &Document, capabilities: &Capabilities, margin: usize) -> Result<()> {
     let mut out = BufWriter::new(io::stdout().lock());
-    let written = terminal::write(document, capabilities, &mut out).and_then(|()| out.flush());
+    let written = terminal::write(document, capabilities, margin, &mut out).and_then(|()| out.flush());
     match written {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         other => other.context("writing to stdout"),
@@ -148,7 +151,7 @@ fn theme_list(has_color: bool) -> Document {
 
 fn list_themes(color: ColorChoice) -> Result<()> {
     let capabilities = terminal::detect(Preferences { color, images: ImagesMode::Never, needs_background: false });
-    print(&theme_list(capabilities.color != ColorDepth::None), &capabilities)
+    print(&theme_list(capabilities.color != ColorDepth::None), &capabilities, terminal::LEFT_MARGIN)
 }
 
 fn render(cli: &Cli, config: &Config) -> Result<()> {
@@ -162,7 +165,8 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
         theme: theme.unwrap_or_else(|| default_theme(capabilities.background)),
         cell: capabilities.cell,
     };
-    print(&crate::markdown::render(&source, &settings), &capabilities)
+    let margin = terminal::margin(cli.align.or(config.align).unwrap_or_default(), &capabilities, settings.width);
+    print(&crate::markdown::render(&source, &settings), &capabilities, margin)
 }
 
 pub fn run() -> Result<()> {
