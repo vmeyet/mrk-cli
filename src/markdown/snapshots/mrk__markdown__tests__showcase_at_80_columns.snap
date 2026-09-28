@@ -1,0 +1,60 @@
+---
+source: src/markdown/mod.rs
+expression: "plain_at(&showcase_without_fences(), 80)"
+---
+title: Showcase
+tags: [demo, mrk]
+────────────────────────────────────────────────────────────────────────────────
+
+mrk showcase
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A paragraph with bold, italic, struck,  inline code , a link, an autolink
+https://example.org and a footnote¹. It is long enough to wrap across more than
+one line at eighty columns, so wrapping shows.
+
+▍ Lists
+
+• First item
+• Second item with a longer text that needs to wrap onto a second line to show
+  the hanging indent working
+  ◦ Nested item
+    ▪ Deeper item
+
+1. One
+2. Two
+3. Ten
+
+✔ Done task
+○ Open task
+
+Quotes and alerts
+
+│ A quote, with emphasis, that is long enough to wrap onto a second line so the
+│ bar repeats.
+
+│ ● Note
+│ Useful information.
+
+│ ▲ Warning
+│ Careful here.
+
+Code
+
+Table
+
+╭──────┬──────────────────┬────────┬───────╮
+│ Name │ Left             │ Center │ Right │
+├──────┼──────────────────┼────────┼───────┤
+│ mrk  │ a                │   b    │     1 │
+│ glow │ longer cell text │   c    │    22 │
+╰──────┴──────────────────┴────────┴───────╯
+
+Rule and image
+
+────────────────────────────────────── ◆ ───────────────────────────────────────
+
+▣ a diagram
+
+────────────────
+¹ The footnote text.

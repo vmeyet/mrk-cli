@@ -1,0 +1,9 @@
+---
+source: src/markdown/list.rs
+expression: "plain_at(\"9. nine\\n10. ten\\n11. eleven with text that wraps under itself\", 24)"
+---
+ 9. nine
+10. ten
+11. eleven with text
+    that wraps under
+    itself

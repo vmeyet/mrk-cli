@@ -1,0 +1,29 @@
+---
+source: src/markdown/table.rs
+expression: "plain_at(&source, 30)"
+---
+c1: v1
+c2: v2
+c3: v3
+c4: v4
+c5: v5
+c6: v6
+c7: v7
+c8: v8
+c9: v9
+c10: v10
+c11: v11
+c12: v12
+
+c1: v1
+c2: v2
+c3: v3
+c4: v4
+c5: v5
+c6: v6
+c7: v7
+c8: v8
+c9: v9
+c10: v10
+c11: v11
+c12: v12

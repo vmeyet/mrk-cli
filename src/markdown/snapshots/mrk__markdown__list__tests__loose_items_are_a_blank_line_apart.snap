@@ -1,0 +1,9 @@
+---
+source: src/markdown/list.rs
+expression: "plain_at(\"- one\\n\\n  second paragraph\\n\\n- two\", 40)"
+---
+• one
+
+  second paragraph
+
+• two

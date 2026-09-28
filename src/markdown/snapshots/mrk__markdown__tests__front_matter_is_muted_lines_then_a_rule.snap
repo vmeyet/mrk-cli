@@ -1,0 +1,9 @@
+---
+source: src/markdown/mod.rs
+expression: "plain_at(\"---\\ntitle: Hello\\ntags: [a, b]\\n---\\n\\nBody\", 30)"
+---
+title: Hello
+tags: [a, b]
+──────────────────────────────
+
+Body

@@ -1,0 +1,12 @@
+---
+source: src/markdown/table.rs
+expression: "plain_at(TABLE, 34)"
+---
+╭──────┬────────┬────────┬───────╮
+│ Name │ Left   │ Center │ Right │
+├──────┼────────┼────────┼───────┤
+│ mrk  │ a      │   b    │     1 │
+│ glow │ longer │   c    │    22 │
+│      │ cell   │        │       │
+│      │ text   │        │       │
+╰──────┴────────┴────────┴───────╯

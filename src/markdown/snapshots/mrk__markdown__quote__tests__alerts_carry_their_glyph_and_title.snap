@@ -1,0 +1,18 @@
+---
+source: src/markdown/quote.rs
+expression: "plain_at(source, 40)"
+---
+│ ● Note
+│ n
+
+│ ◆ Tip
+│ t
+
+│ ✦ Important
+│ i
+
+│ ▲ Warning
+│ w
+
+│ ■ Caution
+│ c

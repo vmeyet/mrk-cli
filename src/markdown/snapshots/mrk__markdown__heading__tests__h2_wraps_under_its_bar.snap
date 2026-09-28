@@ -1,0 +1,6 @@
+---
+source: src/markdown/heading.rs
+expression: "plain_at(\"## A second level title that wraps\", 20)"
+---
+▍ A second level
+  title that wraps

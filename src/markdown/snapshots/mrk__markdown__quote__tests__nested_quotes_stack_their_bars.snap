@@ -1,0 +1,10 @@
+---
+source: src/markdown/quote.rs
+expression: "plain_at(\"> outer\\n>\\n> > inner that wraps onto a second line\\n>\\n> back out\",\n30)"
+---
+│ outer
+│
+│ │ inner that wraps onto a
+│ │ second line
+│
+│ back out
