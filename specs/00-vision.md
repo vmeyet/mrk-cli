@@ -12,7 +12,7 @@ It replaces `glow` for everyday reading, and adds Mermaid.
 
 ## Non-goals (for now)
 
-A pager, a TUI, watching files, fetching remote images or URLs, HTML rendering.
+A full TUI, watching files, fetching remote images or URLs, HTML rendering.
 
 ## Usage
 
@@ -24,10 +24,12 @@ mrk --width N       wrap width in columns (default: terminal width, capped at 10
 mrk --images auto|always|never   Mermaid as images (auto: when the terminal supports it)
 mrk --align center|left          centre the text column in a wide window (default center; piped output is never centred)
 mrk --color auto|always|never    auto honours NO_COLOR and a non-tty stdout
+mrk -p FILE         read in the pager: diagrams stay images, j/k/space/b/g/G scroll, / n N search, q quits
+MRK_PAGER="less -R" mrk -p FILE  pipe into that command instead (split into words, no shell), diagrams as text
 mrk --completions zsh
 ```
 
-Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `pager`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
 
 ## Visual language
 
@@ -51,6 +53,8 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`. Fl
 | Rule | `─` in `subtle` across the width, with a centred `◆` |
 | Footnote | `¹`-style marker in `accent`; notes listed at the end under a short rule |
 | Front matter | key/value lines in `muted`, then a rule |
+| Pager status bar | last row on `surface`: file name in bold `text`, the search prompt or `3/12` in `accent`, `Top`/`Bot`/`42%` in `accent` and a `muted` key hint |
+| Search match | current match `surface` on `accent`, bold; other matches `text` on `subtle` |
 | Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off |
 
 ## Vocabulary

@@ -1,21 +1,22 @@
 //! The command line: flags win over the environment (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), the environment over the config file.
-use std::fmt;
-use std::io::{self, BufWriter, IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
+mod input;
+mod output;
 
-use anyhow::{Context, Result, bail};
+use std::fmt;
+use std::io::{self, IsTerminal};
+use std::path::PathBuf;
+
+use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
 use crate::config::{self, Config, MIN_WIDTH};
-use crate::document::{Block, Document, Line, Rgb, Settings, Span, Style};
-use crate::terminal::{self, Align, Capabilities, ColorChoice, ColorDepth, ImagesMode, Preferences};
+use crate::document::{Block, Document, Line, Rgb, Span, Style};
+use crate::terminal::{self, Align, ColorChoice, ColorDepth, ImagesMode, Preferences};
 use crate::theme::{self, Appearance, Palette, Theme};
+use output::{Layout, Output};
 
-const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
-const SIDE_MARGINS: usize = 4;
 const SWATCH: &str = "██";
-const USAGE_HINT: &str = "no input: name a Markdown file (mrk README.md) or pipe one in (cat notes.md | mrk)";
 
 /// Render Markdown beautifully in the terminal.
 #[derive(Parser, Debug)]
@@ -40,6 +41,9 @@ pub struct Cli {
     /// Place the text in the window; `center` only applies on a terminal, never to piped output.
     #[arg(long, value_enum, env = "MRK_ALIGN", value_name = "WHERE")]
     pub align: Option<Align>,
+    /// Read in a pager: `$MRK_PAGER` when set (diagrams as text), else the built-in one that keeps diagrams as images.
+    #[arg(short, long)]
+    pub pager: bool,
     /// Colour the output; `auto` honours NO_COLOR and a stdout that is not a terminal.
     #[arg(long, value_enum, value_name = "WHEN", default_value_t)]
     pub color: ColorChoice,
@@ -87,59 +91,6 @@ fn default_theme(background: Option<Appearance>) -> Theme {
     theme::default_for(background.unwrap_or(Appearance::Dark))
 }
 
-fn default_width(columns: u16) -> usize {
-    usize::from(columns).saturating_sub(SIDE_MARGINS).min(theme::DEFAULT_WIDTH)
-}
-
-fn width(requested: Option<usize>, columns: u16) -> usize {
-    requested.unwrap_or_else(|| default_width(columns)).max(MIN_WIDTH)
-}
-
-fn read_capped(reader: impl Read, name: &str) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.take(MAX_INPUT_BYTES as u64 + 1).read_to_end(&mut bytes).with_context(|| format!("reading {name}"))?;
-    if bytes.len() > MAX_INPUT_BYTES {
-        bail!("{name} is larger than 8 MiB, the most mrk reads");
-    }
-    Ok(bytes)
-}
-
-/// Invalid UTF-8 is replaced rather than refused: a stray Latin-1 byte should not hide an otherwise readable file,
-/// and U+FFFD is inert on a terminal.
-fn decode(bytes: Vec<u8>, name: &str) -> String {
-    String::from_utf8(bytes).unwrap_or_else(|error| {
-        eprintln!("⚠ {name} is not valid UTF-8: invalid bytes show as �");
-        String::from_utf8_lossy(error.as_bytes()).into_owned()
-    })
-}
-
-fn read_file(path: &Path) -> Result<String> {
-    let name = path.display().to_string();
-    let file = std::fs::File::open(path).with_context(|| format!("reading {name}"))?;
-    Ok(decode(read_capped(file, &name)?, &name))
-}
-
-fn read_stdin() -> Result<String> {
-    Ok(decode(read_capped(io::stdin().lock(), "stdin")?, "stdin"))
-}
-
-fn read_input(file: Option<&Path>) -> Result<String> {
-    match file {
-        None if io::stdin().is_terminal() => Err(UsageError(USAGE_HINT).into()),
-        Some(path) if path != Path::new("-") => read_file(path),
-        _ => read_stdin(),
-    }
-}
-
-fn print(document: &Document, capabilities: &Capabilities, margin: usize) -> Result<()> {
-    let mut out = BufWriter::new(io::stdout().lock());
-    let written = terminal::write(document, capabilities, margin, &mut out).and_then(|()| out.flush());
-    match written {
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        other => other.context("writing to stdout"),
-    }
-}
-
 fn palette_colors(palette: &Palette) -> [Rgb; 16] {
     let Palette { text, muted, subtle, surface, accent, h1, h2, h3, link, code, success, note, tip, important, warning, caution } =
         *palette;
@@ -163,22 +114,26 @@ fn theme_list(has_color: bool) -> Document {
 
 fn list_themes(color: ColorChoice) -> Result<()> {
     let capabilities = terminal::detect(Preferences { color, images: ImagesMode::Never, needs_background: false });
-    print(&theme_list(capabilities.color != ColorDepth::None), &capabilities, terminal::LEFT_MARGIN)
+    output::print(&theme_list(capabilities.color != ColorDepth::None), &capabilities, terminal::LEFT_MARGIN)
 }
 
 fn render(cli: &Cli, config: &Config) -> Result<()> {
     let theme = cli.theme.as_deref().or(config.theme.as_deref()).map(find_theme).transpose()?;
-    let source = read_input(cli.file.as_deref())?;
-    let images = cli.images.or(config.images).unwrap_or_default();
+    let source = input::read_input(cli.file.as_deref())?;
+    let wants_pager = cli.pager || config.pager.unwrap_or_default();
+    let output = output::choose(wants_pager, io::stdout().is_terminal(), std::env::var("MRK_PAGER").ok().as_deref())?;
+    let wanted_images = cli.images.or(config.images).unwrap_or_default();
+    let images = if matches!(output, Output::Command(_)) { ImagesMode::Never } else { wanted_images };
     let capabilities = terminal::detect(Preferences { color: cli.color, images, needs_background: theme.is_none() });
 
-    let settings = Settings {
-        width: width(cli.width.or(config.width), capabilities.columns),
+    let layout = Layout {
+        source,
+        requested_width: cli.width.or(config.width),
+        align: cli.align.or(config.align).unwrap_or_default(),
         theme: theme.unwrap_or_else(|| default_theme(capabilities.background)),
-        cell: capabilities.cell,
+        capabilities,
     };
-    let margin = terminal::margin(cli.align.or(config.align).unwrap_or_default(), &capabilities, settings.width);
-    print(&crate::markdown::render(&source, &settings), &capabilities, margin)
+    output::show(&output, &layout, &input::name(cli.file.as_deref()))
 }
 
 pub fn run() -> Result<()> {
@@ -206,7 +161,7 @@ mod tests {
     #[test]
     fn update_is_a_command_and_a_path_still_renders() {
         assert!(matches!(parse(&["update", "--force"]).command, Some(Command::Update { force: true })));
-        assert_eq!(parse(&["./update"]).file.as_deref(), Some(Path::new("./update")));
+        assert_eq!(parse(&["./update"]).file.as_deref(), Some(std::path::Path::new("./update")));
     }
 
     fn parse(args: &[&str]) -> Cli {
@@ -241,14 +196,6 @@ mod tests {
     }
 
     #[test]
-    fn the_default_width_leaves_margins_and_caps_at_100() {
-        assert_eq!(width(None, 80), 76);
-        assert_eq!(width(None, 200), 100);
-        assert_eq!(width(None, 10), MIN_WIDTH);
-        assert_eq!(width(Some(120), 80), 120);
-    }
-
-    #[test]
     fn an_unknown_theme_lists_the_known_ones() {
         let error = find_theme("nope").unwrap_err().to_string();
 
@@ -275,18 +222,5 @@ mod tests {
         let expected: String = theme::names().map(|name| format!("{name}\n")).collect();
 
         assert_eq!(crate::document::plain(&theme_list(false)), expected);
-    }
-
-    #[test]
-    fn oversized_input_is_refused() {
-        let error = read_capped(io::repeat(b'a').take(MAX_INPUT_BYTES as u64 + 1), "big.md").unwrap_err().to_string();
-
-        assert!(error.contains("big.md") && error.contains("8 MiB"), "{error}");
-        assert_eq!(read_capped(io::repeat(b'a').take(MAX_INPUT_BYTES as u64), "ok.md").unwrap().len(), MAX_INPUT_BYTES);
-    }
-
-    #[test]
-    fn invalid_utf8_is_replaced() {
-        assert_eq!(decode(b"caf\xe9".to_vec(), "x.md"), "caf\u{fffd}");
     }
 }

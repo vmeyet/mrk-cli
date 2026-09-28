@@ -9,6 +9,7 @@ mrk README.md
 cat notes.md | mrk
 mrk --theme catppuccin-mocha notes.md
 mrk --list-themes
+mrk -p notes.md   # read in the pager; diagrams stay images
 ```
 
 ## Options
@@ -20,6 +21,7 @@ mrk --list-themes
 | `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol, not under tmux |
 | `--align center\|left` | `MRK_ALIGN` | `align` | `center`: the text column sits in the middle of a wide window; piped output is never centred |
 | `--color auto\|always\|never` | `NO_COLOR` | | `auto`: colour on a tty |
+| `-p`, `--pager` | `MRK_PAGER` | `pager` | off; the built-in pager keeps diagrams as images and stays open until `q`; `MRK_PAGER` pipes into that command instead (diagrams as text); piped output is never paged |
 | `--completions SHELL` | | | |
 
 Config lives in `~/.config/mrk/config.toml`:
@@ -29,7 +31,10 @@ theme = "tokyo-night"
 width = 90
 images = "auto"
 align = "left"
+pager = true
 ```
+
+Pager keys: `j`/`k`/arrows scroll a row, `space`/`b` a page, `d`/`u` half a page, `g`/`G` top and bottom, `/` searches, `n`/`N` move between matches, `q` quits.
 
 ## Develop
 

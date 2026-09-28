@@ -3,6 +3,7 @@ mod color;
 mod detect;
 mod environment;
 mod kitty;
+pub mod pager;
 mod query;
 mod reply;
 pub mod sanitize;

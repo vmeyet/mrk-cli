@@ -1,0 +1,19 @@
+---
+source: src/terminal/pager/status.rs
+expression: "lines.join(\"\\n\")"
+---
+| notes/architecture.md                                  Top   q quit · / search |
+| notes/architecture.md                2/20              Top   q quit · / search |
+| notes/architecture.md                /ro▏              Top   q quit · / search |
+| notes/architecture.md    Top   q quit · / search |
+| notes/architec…   2/20   Top   q quit · / search |
+| notes/architec…   /ro▏   Top   q quit · / search |
+| notes/architecture.md    Top |
+| notes/architec…   2/20   Top |
+| notes/architec…   /ro▏   Top |
+| not…   Top |
+|    2/20   T|
+|    /ro▏   T|
+|   |
+|   |
+|   |

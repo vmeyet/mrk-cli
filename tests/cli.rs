@@ -141,3 +141,10 @@ fn a_closed_pipe_exits_quietly() {
     assert!(output.status.success(), "{output:?}");
     assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
 }
+
+#[test]
+fn the_pager_prints_as_usual_when_stdout_is_not_a_terminal() {
+    let plain = mrk().write_stdin("# Title\n\ntext\n").assert().success().get_output().stdout.clone();
+
+    mrk().arg("-p").env("MRK_PAGER", "false").write_stdin("# Title\n\ntext\n").assert().success().stdout(plain);
+}

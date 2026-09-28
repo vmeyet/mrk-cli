@@ -1,0 +1,8 @@
+---
+source: src/terminal/kitty.rs
+expression: "commands.join(\"\\n\")"
+---
+␛_Ga=t,f=100,i=7,q=2,m=0;AQID␛\
+␛_Ga=p,i=7,p=1,x=0,y=40,w=400,h=60,c=40,r=3,C=1,q=2␛\
+␛_Ga=d,d=i,i=7,q=2␛\
+␛_Ga=d,d=R,x=7,y=9,q=2␛\

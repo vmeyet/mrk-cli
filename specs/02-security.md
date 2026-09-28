@@ -13,4 +13,5 @@ mrk's job is to make rendering a hostile file equivalent to rendering a boring o
 4. **Bounded work.** Input capped at 8 MiB; a Mermaid block over 64 KiB or a diagram whose PNG would exceed 4096×4096 falls back to text; SVG rasterisation refuses external `href`s (images, fonts) so a diagram label cannot pull a file off disk.
 5. **Terminal queries are parsed strictly.** Responses are read from `/dev/tty` with a timeout, bounded in length, and anything unexpected means "unsupported".
 6. **Config is data.** Strict TOML, unknown keys rejected, no paths or commands in it.
+   `MRK_PAGER`, set by the user, is split into words (`shell-words`) and run without a shell, so nothing in it expands; the pager's search query goes through `sanitize` like span text.
 7. **No `unsafe`**, enforced by `unsafe_code = "forbid"`; `cargo deny check` clean.
