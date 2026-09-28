@@ -1,0 +1,62 @@
+[package]
+name = "mrk"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Render Markdown beautifully in the terminal: syntax highlighting, tables, themes, and Mermaid diagrams as images."
+license = "MIT"
+readme = "README.md"
+
+[[bin]]
+name = "mrk"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
+comrak = { version = "0.55", default-features = false }
+crossterm = "0.29"
+dirs = "7.0"
+mermaid-rs-renderer = { version = "0.3", default-features = false }
+mermaid-text = "0.57"
+resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+serde = { version = "1.0", features = ["derive"] }
+syntect = { version = "5.3", default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy"] }
+toml = "1.1"
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+unicode-width = "0.2"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+insta = "1"
+predicates = "3.1"
+
+[profile.release]
+lto = "thin"
+strip = true
+panic = "abort"
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+doc_markdown = "allow"
+format_collect = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+module_name_repetitions = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+too_many_lines = "allow"
