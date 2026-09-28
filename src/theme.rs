@@ -81,8 +81,8 @@ pub fn resolve(requested: Option<&str>, background: Option<Appearance>) -> anyho
 fn unknown_theme(name: &str) -> anyhow::Error {
     let valid = names().collect::<Vec<_>>().join(", ");
     match closest_name(name) {
-        Some(suggestion) => anyhow!("unknown theme \"{name}\", did you mean \"{suggestion}\"? Themes: {valid}"),
-        None => anyhow!("unknown theme \"{name}\". Themes: {valid}"),
+        Some(suggestion) => anyhow!("unknown theme {name:?}, did you mean \"{suggestion}\"? Themes: {valid} (mrk --list-themes)"),
+        None => anyhow!("unknown theme {name:?}. Themes: {valid}"),
     }
 }
 

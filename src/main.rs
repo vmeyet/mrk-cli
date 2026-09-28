@@ -1,5 +1,9 @@
 use std::process::ExitCode;
 
+use mrk::cli::UsageError;
+
+const USAGE_EXIT: u8 = 2;
+
 fn main() -> ExitCode {
     match mrk::cli::run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -8,7 +12,7 @@ fn main() -> ExitCode {
             for cause in error.chain().skip(1) {
                 eprintln!("  \x1b[2m{cause}\x1b[0m");
             }
-            ExitCode::FAILURE
+            if error.is::<UsageError>() { ExitCode::from(USAGE_EXIT) } else { ExitCode::FAILURE }
         }
     }
 }
