@@ -36,6 +36,32 @@ pager = true
 
 Pager keys: `j`/`k`/arrows scroll a row, `space`/`b` a page, `d`/`u` half a page, `g`/`G` top and bottom, `/` searches, `n`/`N` move between matches, `q` quits.
 
+## Library
+
+Render Markdown into styled lines and pictures from Rust, without the CLI and terminal dependencies:
+
+```toml
+mrk = { git = "https://github.com/vmeyet/mrk-cli", tag = "v0.2.0", default-features = false }
+```
+
+```rust
+use mrk::document::{Block, Settings};
+use mrk::{markdown, theme};
+
+let settings = Settings { width: 80, theme: theme::find("tokyo-night").unwrap_or(theme::MRK_DARK), cell: None };
+for block in markdown::render_blocks(source, &settings) {
+    println!("{:?}, lines {}-{}", block.kind, block.first_line, block.last_line);
+    for part in &block.blocks {
+        if let Block::Lines(lines) = part {
+            lines.iter().for_each(|line| println!("  {}", line.plain()));
+        }
+    }
+}
+```
+
+`markdown::render` gives the whole `Document`; `document::highlight` restyles char ranges of a block's text, for search or word-level diffs.
+Set `cell` to the terminal cell size in pixels to get Mermaid diagrams as PNG pictures.
+
 ## Develop
 
 ```sh
