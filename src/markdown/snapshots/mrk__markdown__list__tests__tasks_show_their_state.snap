@@ -1,0 +1,7 @@
+---
+source: src/markdown/list.rs
+expression: "plain_at(\"- [x] done\\n- [ ] open\\n- plain\", 40)"
+---
+✔ done
+○ open
+• plain

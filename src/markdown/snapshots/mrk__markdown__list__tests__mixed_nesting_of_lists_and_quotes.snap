@@ -1,0 +1,9 @@
+---
+source: src/markdown/list.rs
+expression: "plain_at(\"1. first\\n   - bullet\\n     > quoted\\n2) second\", 40)"
+---
+1. first
+   ◦ bullet
+     │ quoted
+
+2) second

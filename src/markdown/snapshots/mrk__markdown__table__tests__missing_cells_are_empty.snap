@@ -1,0 +1,9 @@
+---
+source: src/markdown/table.rs
+expression: "plain_at(\"| a | b |\\n|---|---|\\n| only |\", 40)"
+---
+╭──────┬───╮
+│ a    │ b │
+├──────┼───┤
+│ only │   │
+╰──────┴───╯

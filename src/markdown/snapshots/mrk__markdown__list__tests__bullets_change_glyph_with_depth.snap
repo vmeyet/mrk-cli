@@ -1,0 +1,8 @@
+---
+source: src/markdown/list.rs
+expression: "plain_at(\"- one\\n  - two\\n    - three\\n      - four\", 40)"
+---
+• one
+  ◦ two
+    ▪ three
+      • four

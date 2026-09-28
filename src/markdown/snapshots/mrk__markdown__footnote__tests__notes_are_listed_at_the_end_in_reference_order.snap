@@ -1,0 +1,12 @@
+---
+source: src/markdown/footnote.rs
+expression: "crate::markdown::plain_at(source, 24)"
+---
+b¹ then a².
+
+Last paragraph.
+
+────────────────
+¹ Note b, long enough to
+  wrap.
+² Note a.
