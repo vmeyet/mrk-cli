@@ -132,9 +132,12 @@ fn palette_colors(palette: &Palette) -> [Rgb; 16] {
 }
 
 fn theme_line(theme: &Theme, name_width: usize, has_color: bool) -> Line {
+    if !has_color {
+        return Line::new(vec![Span::plain(theme.name)]);
+    }
     let name = Span::new(format!("{:name_width$}  ", theme.name), Style::fg(theme.palette.text).bold());
     let swatches = palette_colors(&theme.palette).into_iter().map(|color| Span::new(SWATCH, Style::fg(color)));
-    Line::new(std::iter::once(name).chain(swatches.filter(|_| has_color)).collect())
+    Line::new(std::iter::once(name).chain(swatches).collect())
 }
 
 fn theme_list(has_color: bool) -> Document {

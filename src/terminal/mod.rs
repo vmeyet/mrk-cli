@@ -64,6 +64,13 @@ pub fn write(document: &Document, capabilities: &Capabilities, out: &mut impl Wr
     document.blocks.iter().try_for_each(|each| out.write_all(block(each, capabilities).as_bytes()))
 }
 
+/// An error and its causes for stderr, sanitized, causes dimmed when `is_styled`.
+pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
+    let (dim, reset) = if is_styled { ("\x1b[2m", "\x1b[0m") } else { ("", "") };
+    let causes: String = error.chain().skip(1).map(|cause| format!("  {dim}{}{reset}\n", sanitize::text(&cause.to_string()))).collect();
+    format!("✗ {}\n{causes}", sanitize::text(&error.to_string()))
+}
+
 /// The bytes `write` would produce, as a string for tests.
 pub fn ansi(document: &Document, capabilities: &Capabilities) -> String {
     document.blocks.iter().map(|each| block(each, capabilities)).collect()
@@ -73,6 +80,14 @@ pub fn ansi(document: &Document, capabilities: &Capabilities) -> String {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn an_error_report_strips_escapes_and_dims_causes_only_when_styled() {
+        let error = anyhow::anyhow!("inner \x1b]52;c;AAAA\x07").context("cannot read \x1b[31mfile");
+
+        assert_eq!(error_report(&error, false), "✗ cannot read [31mfile\n  inner ]52;c;AAAA\n");
+        assert_eq!(error_report(&error, true), "✗ cannot read [31mfile\n  \x1b[2minner ]52;c;AAAA\x1b[0m\n");
+    }
     use crate::document::{Line, Picture, Span, Style};
     use crate::theme::MRK_DARK;
 
