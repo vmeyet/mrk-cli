@@ -1,0 +1,9 @@
+---
+source: src/code/mod.rs
+expression: "framed(&render(\"just text\\n\\n\\tindented\\n\", None, &at_width(24)))"
+---
+│                        │
+│ just text              │
+│                        │
+│     indented           │
+│                        │
