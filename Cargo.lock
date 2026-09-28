@@ -897,6 +897,7 @@ dependencies = [
  "mermaid-text",
  "predicates",
  "resvg",
+ "rustix",
  "serde",
  "syntect",
  "toml",

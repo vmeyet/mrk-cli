@@ -1,0 +1,8 @@
+---
+source: src/terminal/mod.rs
+expression: "readable(&ansi(&sample(), &capabilities(ColorDepth::Ansi256, None)))"
+---
+  ␛[1;38;5;177mTitle␛[0m
+
+  ␛[38;5;253mRead ␛]8;;https://example.com/docs␛\␛[4;38;5;117mthe docs␛]8;;␛\␛[24;38;5;253m or run ␛[38;5;216;48;5;235m mrk ␛[38;5;253;49m.␛[0m
+  [picture: flow]
