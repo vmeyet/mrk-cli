@@ -900,6 +900,7 @@ dependencies = [
  "rustix",
  "serde",
  "syntect",
+ "tempfile",
  "toml",
  "two-face",
  "unicode-width",

@@ -4,7 +4,7 @@ use std::io::{self, BufWriter, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
 use crate::config::{self, Config, MIN_WIDTH};
@@ -19,8 +19,10 @@ const USAGE_HINT: &str = "no input: name a Markdown file (mrk README.md) or pipe
 
 /// Render Markdown beautifully in the terminal.
 #[derive(Parser, Debug)]
-#[command(name = "mrk", version, about)]
+#[command(name = "mrk", version = crate::version::label(), about, args_conflicts_with_subcommands = true)]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
     /// The Markdown file to render; stdin when omitted or `-`.
     pub file: Option<PathBuf>,
     /// The theme, one of `--list-themes`; by default dark or light after the terminal background.
@@ -44,6 +46,16 @@ pub struct Cli {
     /// Print the completion script for a shell.
     #[arg(long, value_name = "SHELL", exclusive = true)]
     pub completions: Option<Shell>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Rebuild and install the latest mrk with cargo; a file named `update` renders as `./update`.
+    Update {
+        /// Install even when the running binary is already the latest commit.
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 /// A mistake in how mrk was called rather than a failure while running: exits with 2.
@@ -171,6 +183,9 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Update { force }) = cli.command {
+        return crate::update::run(force);
+    }
     if let Some(shell) = cli.completions {
         print_completions(shell);
         return Ok(());
@@ -187,6 +202,12 @@ pub fn run() -> Result<()> {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn update_is_a_command_and_a_path_still_renders() {
+        assert!(matches!(parse(&["update", "--force"]).command, Some(Command::Update { force: true })));
+        assert_eq!(parse(&["./update"]).file.as_deref(), Some(Path::new("./update")));
+    }
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("mrk").chain(args.iter().copied())).unwrap()

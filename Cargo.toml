@@ -6,6 +6,7 @@ rust-version = "1.92"
 description = "Render Markdown beautifully in the terminal: syntax highlighting, tables, themes, and Mermaid diagrams as images."
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/vmeyet/mrk-cli"
 
 [[bin]]
 name = "mrk"
@@ -32,6 +33,7 @@ unicode-width = "0.2"
 rustix = { version = "1.1", features = ["fs"] }
 
 [dev-dependencies]
+tempfile = "3.20"
 assert_cmd = "2.0"
 insta = "1"
 predicates = "3.1"

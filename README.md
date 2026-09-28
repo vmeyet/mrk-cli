@@ -3,7 +3,8 @@
 Render Markdown beautifully in the terminal: syntax-highlighted code, tables, alerts, footnotes, themes, and Mermaid diagrams drawn as real images in Ghostty, kitty and WezTerm (box-drawing text elsewhere).
 
 ```sh
-cargo install --path .
+cargo install --git https://github.com/vmeyet/mrk-cli
+mrk update        # rebuild from the latest commit; dependencies stay built in the cache
 mrk README.md
 cat notes.md | mrk
 mrk --theme catppuccin-mocha notes.md

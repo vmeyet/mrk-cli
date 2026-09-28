@@ -9,3 +9,5 @@ pub mod mermaid;
 pub mod terminal;
 pub mod text;
 pub mod theme;
+pub mod update;
+pub mod version;
