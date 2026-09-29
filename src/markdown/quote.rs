@@ -41,7 +41,7 @@ fn barred(body: Vec<Block>, color: Rgb) -> Vec<Block> {
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::{plain_at, span_with};
+    use crate::markdown::{plain_at, plain_with_pictures, span_with};
     use crate::theme::MRK_DARK;
 
     #[test]
@@ -56,6 +56,13 @@ mod tests {
 
         assert_eq!((text.style.fg, text.style.italic), (Some(palette.muted), true));
         assert_eq!(span_with("> quoted", "│").style.fg, Some(palette.subtle));
+    }
+
+    #[test]
+    fn a_diagram_in_a_quote_keeps_the_bar_beside_it() {
+        let plain = plain_with_pictures("> ```mermaid\n> graph LR\n>   A --> B\n> ```");
+
+        assert!(plain.starts_with("│ [picture: flowchart "), "{plain}");
     }
 
     #[test]

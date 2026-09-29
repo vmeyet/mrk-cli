@@ -5,8 +5,8 @@ mod panel;
 use crate::document::{Line, Settings};
 
 /// A fenced code block as a panel: every line exactly `settings.width` cells, highlighted when the language is known.
+/// `language` is a language name (`rust`, `ts`), not a whole fence info string.
 pub fn render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line> {
-    let language = language.and_then(language::fence_token);
     let rows = highlight::highlight(code, language, &settings.theme);
     panel::panel(&rows, language, settings.width, &settings.theme.palette)
 }
@@ -77,13 +77,6 @@ mod tests {
         let marker = lines[2].spans.iter().find(|span| span.text == "↪ ").map(|span| span.style.fg);
         assert_eq!(label, Some(Some(palette.muted)));
         assert_eq!(marker, Some(Some(palette.subtle)));
-    }
-
-    #[test]
-    fn fence_info_keeps_only_the_language() {
-        let lines = render("x\n", Some("rust,ignore"), &at_width(20));
-
-        assert_eq!(lines[0].plain().trim(), "rust");
     }
 
     /// Run with `cargo test --release code::tests::cold -- --ignored --nocapture`, alone, so nothing warmed the sets first.

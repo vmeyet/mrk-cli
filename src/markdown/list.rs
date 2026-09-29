@@ -68,7 +68,7 @@ fn render_item<'a>(item: &'a AstNode<'a>, marker: &Marker, marker_width: usize, 
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::{plain_at, span_with};
+    use crate::markdown::{plain_at, plain_with_pictures, span_with};
     use crate::theme::MRK_DARK;
 
     #[test]
@@ -110,6 +110,14 @@ mod tests {
     fn markers_are_accent() {
         assert_eq!(span_with("- a", "•").style.fg, Some(MRK_DARK.palette.accent));
         assert_eq!(span_with("3. a", "3.").style.fg, Some(MRK_DARK.palette.accent));
+    }
+
+    #[test]
+    fn an_item_opening_on_a_diagram_has_its_marker_above_the_indented_picture() {
+        let plain = plain_with_pictures("- ```mermaid\n  graph LR\n    A --> B\n  ```\n- after");
+
+        assert!(plain.starts_with("•\n  [picture: flowchart "), "{plain}");
+        assert!(plain.ends_with("]\n• after\n"), "{plain}");
     }
 
     #[test]

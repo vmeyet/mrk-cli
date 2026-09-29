@@ -55,7 +55,7 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `p
 | Front matter | key/value lines in `muted`, then a rule |
 | Pager status bar | last row on `surface`: file name in bold `text`, the search prompt or `3/12` in `accent`, `Top`/`Bot`/`42%` in `accent` and a `muted` key hint |
 | Search match | current match `surface` on `accent`, bold; other matches `text` on `subtle` |
-| Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off |
+| Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off. In a list or quote the image keeps the indent and bar beside every row, and an item that opens on a diagram has its marker on a line of its own |
 
 ## Vocabulary
 
@@ -63,5 +63,5 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `p
 - **Line**: spans that fit the width. **Span**: text with one style and an optional link.
 - **Theme**: a palette plus a syntax theme, one of the `SyntaxTheme` variants that `code` maps onto a two-face theme. **Palette**: the named colours above.
 - **Settings**: width, theme and the image cell size, everything a renderer reads.
-- **Picture**: a PNG with the cell box it occupies.
+- **Picture**: a PNG with the cell box it occupies and the indent drawn left of each of its rows.
 - **Capabilities**: what the terminal can do (colour depth, images, cell size, background).

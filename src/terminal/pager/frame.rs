@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use super::page::{Page, Row};
+use super::page::{Page, Placed, Row};
 use super::picture;
 use super::search::{self, Match};
 use super::state::Pager;
@@ -53,7 +53,10 @@ fn row_text(pager: &Pager, index: usize, look: &Look) -> String {
     match pager.page.rows.get(index) {
         Some(Row::Line(line)) if matches.is_empty() => drawn_line(line, look),
         Some(Row::Line(line)) => drawn_line(&search::highlight(line, matches, pager.search.current_match(), look.palette), look),
-        Some(Row::Picture(_)) | None => String::new(),
+        Some(Row::Picture(index)) => {
+            pager.page.pictures.get(*index).map_or_else(String::new, |placed| drawn_line(&placed.picture.indent, look))
+        }
+        None => String::new(),
     }
 }
 
@@ -73,13 +76,11 @@ fn hidden_pictures(page: &Page) -> String {
 }
 
 fn placed_pictures(pager: &Pager, look: &Look) -> String {
-    let placements = pager
-        .page
-        .pictures
-        .iter()
-        .enumerate()
-        .filter_map(|(index, placed)| picture::placement(placed, image_id(index), pager.top, pager.height));
-    placements.map(|(screen_row, placement)| format!("{}{}", go_to(screen_row, look.margin), kitty::place(&placement))).collect()
+    let placed = |(index, placed): (usize, &Placed)| {
+        let (screen_row, placement) = picture::placement(placed, image_id(index), pager.top, pager.height)?;
+        Some(format!("{}{}", go_to(screen_row, look.margin + placed.picture.indent.width()), kitty::place(&placement)))
+    };
+    pager.page.pictures.iter().enumerate().filter_map(placed).collect()
 }
 
 /// One whole screen, drawn at once: last frame's pictures taken off, every text row and the status bar written over,
@@ -119,9 +120,16 @@ mod tests {
         [b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice(), &200_u32.to_be_bytes(), &60_u32.to_be_bytes()].concat()
     }
 
+    fn text(value: &str) -> Line {
+        Line::new(vec![Span::new(value, Style::fg(MRK_DARK.palette.text))])
+    }
+
     fn sample() -> Pager {
-        let text = |value: &str| Line::new(vec![Span::new(value, Style::fg(MRK_DARK.palette.text))]);
-        let picture = Picture { png: png(), cols: 20, rows: 3, alt: "flow".to_owned() };
+        indented_sample(Line::blank())
+    }
+
+    fn indented_sample(indent: Line) -> Pager {
+        let picture = Picture { png: png(), cols: 20, rows: 3, alt: "flow".to_owned(), indent };
         let document = Document {
             blocks: vec![Block::Lines(vec![text("Alpha"), text("beta")]), Block::Picture(picture), Block::Lines(vec![text("gamma")])],
         };
@@ -142,6 +150,16 @@ mod tests {
         let cell = Some(CellSize { width_px: 10, height_px: 20 });
 
         insta::assert_snapshot!(readable(&drawn(&sample(), cell)));
+    }
+
+    #[test]
+    fn a_picture_is_placed_after_its_indent_drawn_on_each_visible_row() {
+        let cell = Some(CellSize { width_px: 10, height_px: 20 });
+
+        let frame = drawn(&indented_sample(text("│ ")), cell);
+
+        assert_eq!(frame.matches("│ ").count(), 2, "{frame:?}");
+        assert!(frame.contains("\x1b[1;5H\x1b_Ga=p,"), "{frame:?}");
     }
 
     #[test]

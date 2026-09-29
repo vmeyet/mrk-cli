@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 pub use detect::{Preferences, detect};
 
-use crate::document::{Block, CellSize, Document};
+use crate::document::{Block, CellSize, Document, Picture};
 use crate::theme::Appearance;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,11 +70,18 @@ pub fn margin(align: Align, capabilities: &Capabilities, width: usize) -> usize 
     if is_centred { centred.max(LEFT_MARGIN) } else { LEFT_MARGIN }
 }
 
+/// What stands left of each row of a picture: the margin, then its indent.
+fn picture_indent(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
+    format!("{}{}", " ".repeat(margin), ansi::line(&picture.indent, capabilities, 0).trim_end_matches('\n'))
+}
+
 fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
     match block {
         Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin)).collect(),
-        Block::Picture(picture) if capabilities.cell.is_some() => kitty::picture(picture, margin),
-        Block::Picture(picture) => kitty::placeholder(picture, margin),
+        Block::Picture(picture) => {
+            let indent = picture_indent(picture, capabilities, margin);
+            if capabilities.cell.is_some() { kitty::picture(picture, &indent) } else { kitty::placeholder(picture, &indent) }
+        }
     }
 }
 
@@ -119,7 +126,7 @@ mod tests {
         assert_eq!(error_report(&error, false), "✗ cannot read [31mfile\n  inner ]52;c;AAAA\n");
         assert_eq!(error_report(&error, true), "✗ cannot read [31mfile\n  \x1b[2minner ]52;c;AAAA\x1b[0m\n");
     }
-    use crate::document::{Line, Picture, Span, Style};
+    use crate::document::{Line, Span, Style};
     use crate::theme::MRK_DARK;
 
     fn sample() -> Document {
@@ -132,7 +139,7 @@ mod tests {
             Span::new(" mrk ", Style::fg(palette.code).on(palette.surface)),
             Span::new(".", Style::fg(palette.text)),
         ]);
-        let picture = Picture { png: vec![0x89, b'P', b'N', b'G'], cols: 20, rows: 2, alt: "flow".to_owned() };
+        let picture = Picture { png: vec![0x89, b'P', b'N', b'G'], cols: 20, rows: 2, alt: "flow".to_owned(), indent: Line::blank() };
         Document { blocks: vec![Block::Lines(vec![heading, Line::blank(), prose]), Block::Picture(picture)] }
     }
 
@@ -162,6 +169,20 @@ mod tests {
             ansi(&sample(), &capabilities(ColorDepth::None, None), LEFT_MARGIN),
             "  Title\n\n  Read the docs or run  mrk .\n  [picture: flow]\n"
         );
+    }
+
+    #[test]
+    fn a_picture_is_drawn_after_its_indent_on_every_row() {
+        let indent = Line::new(vec![Span::plain("│ ")]);
+        let picture = Picture { png: vec![1, 2, 3], cols: 20, rows: 2, alt: "flow".to_owned(), indent };
+        let document = Document { blocks: vec![Block::Picture(picture)] };
+        let cell = Some(CellSize { width_px: 10, height_px: 20 });
+
+        assert_eq!(
+            ansi(&document, &capabilities(ColorDepth::None, cell), LEFT_MARGIN),
+            "  │ \n  │ \n\x1b[2A\r  │ \x1b_Ga=T,f=100,q=2,C=1,c=20,r=2,m=0;AQID\x1b\\\x1b[2B\r"
+        );
+        assert_eq!(ansi(&document, &capabilities(ColorDepth::None, None), LEFT_MARGIN), "  │ [picture: flow]\n");
     }
 
     #[test]

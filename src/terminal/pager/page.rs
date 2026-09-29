@@ -51,7 +51,7 @@ mod tests {
     }
 
     fn picture(rows: u16) -> Picture {
-        Picture { png: vec![], cols: 10, rows, alt: "flow".to_owned() }
+        Picture { png: vec![], cols: 10, rows, alt: "flow".to_owned(), indent: Line::blank() }
     }
 
     #[test]

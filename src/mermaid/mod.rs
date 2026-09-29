@@ -8,7 +8,7 @@ mod text;
 
 use std::fmt;
 
-use crate::document::{Block, CellSize, Picture, Settings};
+use crate::document::{Block, CellSize, Line, Picture, Settings};
 
 /// Mermaid blocks above this size are shown as source (`specs/02-security.md` rule 4).
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
@@ -61,7 +61,7 @@ fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture,
     let size = tree.size();
     let frame = frame::fit(size.width(), size.height(), svg::FONT_SIZE_PX, cell, settings.width).ok_or(DiagramError::TooLarge)?;
     let png = raster::draw(&tree, &frame)?;
-    Ok(Picture { png, cols: frame.cols, rows: frame.rows, alt: kind::describe(source).to_owned() })
+    Ok(Picture { png, cols: frame.cols, rows: frame.rows, alt: kind::describe(source).to_owned(), indent: Line::blank() })
 }
 
 fn as_text(source: &str, settings: &Settings) -> Result<Block, DiagramError> {

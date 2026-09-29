@@ -79,6 +79,13 @@ fn plain_at(source: &str, width: usize) -> String {
     crate::document::plain(&render(source, &Settings { width, ..crate::theme::test_settings() }))
 }
 
+/// `plain_at` 40 columns wide on a terminal that draws pictures.
+#[cfg(test)]
+fn plain_with_pictures(source: &str) -> String {
+    let cell = Some(crate::document::CellSize { width_px: 10, height_px: 22 });
+    crate::document::plain(&render(source, &Settings { width: 40, cell, ..crate::theme::test_settings() }))
+}
+
 /// The first span, at 80 columns, whose text contains `needle`.
 #[cfg(test)]
 fn span_with(source: &str, needle: &str) -> crate::document::Span {
