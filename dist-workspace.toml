@@ -11,6 +11,8 @@ ci = "github"
 installers = ["shell", "homebrew"]
 # A GitHub repo to push Homebrew formulas to
 tap = "vmeyet/homebrew-tap"
+# The Homebrew formula name
+formula = "mrk"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
