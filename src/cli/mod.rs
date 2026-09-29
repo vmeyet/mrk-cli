@@ -64,7 +64,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Rebuild and install the latest mrk release with cargo; a file named `update` renders as `./update`.
+    /// Install the latest mrk release, through brew when brew installed mrk, else with cargo; a file named `update` renders as `./update`.
     Update {
         /// Install even when the running binary is already the latest release.
         #[arg(short, long)]

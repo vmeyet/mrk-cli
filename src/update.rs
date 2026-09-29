@@ -10,6 +10,9 @@ use crate::version;
 /// Where `mrk update` installs from.
 pub const REPO: &str = "https://github.com/vmeyet/mrk-cli";
 
+/// The Homebrew formula `mrk update` upgrades when brew installed the running binary.
+const FORMULA: &str = "vmeyet/tap/mrk";
+
 /// cargo's build folder, kept between updates so only mrk recompiles.
 const BUILD_FOLDER: &str = "cargo_target";
 
@@ -108,8 +111,25 @@ fn forget_mrk(build: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Homebrew keeps every formula it installs under a `Cellar` folder.
+fn is_brew_path(exe: &Path) -> bool {
+    exe.components().any(|part| part.as_os_str() == "Cellar")
+}
+
+fn installed_by_brew() -> bool {
+    std::env::current_exe().and_then(std::fs::canonicalize).is_ok_and(|exe| is_brew_path(&exe))
+}
+
+fn upgrade_with_brew() -> Result<()> {
+    let status = Command::new("brew").args(["upgrade", FORMULA]).status().context("running brew upgrade")?;
+    if !status.success() {
+        bail!("brew upgrade failed");
+    }
+    Ok(())
+}
+
 /// Rebuilds and installs a release from the repo with cargo, reusing the dependencies built last time.
-fn install(release: Version) -> Result<()> {
+fn install_with_cargo(release: Version) -> Result<()> {
     let build = build_folder()?;
     forget_mrk(&build)?;
     let status = Command::new("cargo")
@@ -123,13 +143,22 @@ fn install(release: Version) -> Result<()> {
     Ok(())
 }
 
-/// Rebuilds and installs the latest release when it is newer than the running one.
+/// Upgrades through brew when brew installed mrk, otherwise rebuilds the release with cargo.
+fn install(release: Version) -> Result<()> {
+    if installed_by_brew() {
+        println!("→ upgrading {FORMULA} to {} with brew…", release.tag());
+        return upgrade_with_brew();
+    }
+    println!("→ installing mrk {} from {REPO}…", release.tag());
+    install_with_cargo(release)
+}
+
+/// Installs the latest release when it is newer than the running one.
 pub fn run(force: bool) -> Result<()> {
     let latest = latest().context("could not check the latest release")?;
     match decide(Version::running()?, latest, force) {
         Decision::UpToDate => println!("✓ already up to date ({})", version::label()),
         Decision::Install => {
-            println!("→ installing mrk {} from {REPO}…", latest.tag());
             install(latest)?;
             println!("✓ updated, run `mrk --version` to see it");
         }
@@ -168,6 +197,16 @@ mod tests {
 
         forget_mrk(&build.path().join("missing")).unwrap();
         forget_mrk(build.path()).unwrap();
+    }
+
+    #[test]
+    fn a_binary_in_the_brew_cellar_is_a_brew_install() {
+        assert!(is_brew_path(Path::new("/opt/homebrew/Cellar/mrk/0.3.0/bin/mrk")));
+    }
+
+    #[test]
+    fn a_binary_installed_by_cargo_is_not_a_brew_install() {
+        assert!(!is_brew_path(Path::new("/Users/me/.cargo/bin/mrk")));
     }
 
     #[test]

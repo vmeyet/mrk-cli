@@ -6,12 +6,13 @@ Render Markdown beautifully in the terminal: syntax-highlighted code, tables, al
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vmeyet/mrk-cli/releases/latest/download/mrk-cli-installer.sh | sh
-brew install vmeyet/tap/mrk-cli
+brew install vmeyet/tap/mrk
 cargo install --locked --git https://github.com/vmeyet/mrk-cli   # Rust 1.92 or newer
 ```
 
 Release builds cover macOS and Linux on x86_64 and arm64.
 `mrk update` installs the latest release tag with cargo when it is newer.
+When brew installed mrk, `mrk update` runs `brew upgrade vmeyet/tap/mrk` instead.
 
 ## Use
 
