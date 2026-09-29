@@ -160,8 +160,18 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
     output::show(&output, &layout, &input::name(cli.file.as_deref()))
 }
 
+/// clap echoes arguments and environment values verbatim, so its errors are sanitized; help and version carry nothing
+/// from the user and keep their colours.
+fn exit_on(error: &clap::Error) -> ! {
+    if !error.use_stderr() {
+        error.exit();
+    }
+    eprint!("{}", terminal::sanitize::lines(&error.render().to_string()));
+    std::process::exit(error.exit_code())
+}
+
 pub fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::try_parse().unwrap_or_else(|error| exit_on(&error));
     if let Some(Command::Update { force }) = cli.command {
         return crate::update::run(force);
     }

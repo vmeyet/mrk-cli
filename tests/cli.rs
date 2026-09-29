@@ -185,3 +185,39 @@ fn the_pager_prints_as_usual_when_stdout_is_not_a_terminal() {
 
     mrk().arg("-p").env("MRK_PAGER", "false").write_stdin("# Title\n\ntext\n").assert().success().stdout(plain);
 }
+
+const HOSTILE: &str = "\x1b]0;pwned\x07\u{9b}31m";
+
+fn assert_clean(stderr: &[u8]) {
+    let text = String::from_utf8_lossy(stderr);
+    assert!(!text.is_empty() && !text.chars().any(|character| character.is_control() && character != '\n'), "{text:?}");
+}
+
+#[test]
+fn an_escape_in_a_file_name_never_reaches_stderr() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join(format!("{HOSTILE}.md"));
+    std::fs::write(&file, b"caf\xe9").unwrap();
+
+    let stderr = mrk().arg(&file).assert().success().get_output().stderr.clone();
+
+    assert_clean(&stderr);
+    assert!(String::from_utf8_lossy(&stderr).contains("]0;pwned31m.md is not valid UTF-8"));
+}
+
+#[test]
+fn an_escape_in_a_missing_file_name_never_reaches_stderr() {
+    assert_clean(&mrk().arg(format!("{HOSTILE}.md")).assert().code(1).get_output().stderr);
+}
+
+#[test]
+fn an_escape_in_a_flag_never_reaches_stderr() {
+    assert_clean(&mrk().arg(format!("--{HOSTILE}")).assert().code(2).get_output().stderr);
+}
+
+#[test]
+fn an_escape_in_an_environment_value_never_reaches_stderr() {
+    for variable in ["MRK_WIDTH", "MRK_ALIGN"] {
+        assert_clean(&mrk().env(variable, HOSTILE).write_stdin("# hi").assert().code(2).get_output().stderr);
+    }
+}

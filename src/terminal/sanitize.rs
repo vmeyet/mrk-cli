@@ -16,6 +16,11 @@ pub fn text(raw: &str) -> String {
     raw.split('\t').map(|part| part.chars().filter(|&character| !is_forbidden(character)).collect::<String>()).collect::<Vec<_>>().join(TAB)
 }
 
+/// `text` for a message of several lines: each line is cleaned, the newlines between them are kept.
+pub fn lines(raw: &str) -> String {
+    raw.split('\n').map(text).collect::<Vec<_>>().join("\n")
+}
+
 fn percent_encode(raw: &str) -> String {
     raw.bytes().map(|byte| if byte.is_ascii_graphic() { char::from(byte).to_string() } else { format!("%{byte:02X}") }).collect()
 }
@@ -94,6 +99,11 @@ mod tests {
     #[test]
     fn a_tab_becomes_spaces() {
         assert_eq!(text("a\tb"), "a    b");
+    }
+
+    #[test]
+    fn lines_keep_their_newlines_and_lose_everything_else() {
+        assert_eq!(lines("a\x1b]0;t\x07\r\nb\u{9b}\n"), "a]0;t\nb\n");
     }
 
     #[test]
