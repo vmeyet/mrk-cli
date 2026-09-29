@@ -8,11 +8,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - `mrk update` installs the latest release tag instead of the newest commit on `main`, and does nothing when the running version is already that release.
+- The package is named `mrk-cli`; the binary and the library crate stay `mrk`.
+- A bad theme, config file or `MRK_PAGER` value exits with 2, like any other bad value.
+- Release builds are smaller (`opt-level = "s"`, fat LTO) and highlight code about 3x faster with onig.
+- Code panel labels are lowercase.
 
 ### Added
 
+- Prebuilt binaries for macOS and Linux, with a shell installer and a Homebrew formula.
+- `--help` lists the config file lookup, setting order, pager keys and exit codes; `mrk --man` prints a man page.
+- Without hyperlinks, links and images print their target as ` <url>`.
 - CI runs the tests on Linux as well as macOS, and checks that the minimum supported Rust version (1.92) builds.
 - Package metadata (keywords, categories, homepage) and a package that ships only the sources.
+
+### Fixed
+
+- A Mermaid flowchart that reuses or deeply nests subgraphs no longer crashes mrk.
+- A panic caught inside a diagram renderer no longer leaves the pager without its terminal.
+- Diagrams inside list items and quotes keep their marker, bar and indent.
+- Fences such as ```` ```Mermaid ```` or ```` ```mermaid,ignore ```` render as diagrams.
+- Emoji sequences and escape bytes no longer push a line past the width.
+- File names and usage errors are sanitized before reaching stderr.
+- Diagram labels in CJK and other non-Latin scripts load their fonts in milliseconds instead of scanning every system font.
 
 ## [0.2.0] - 2026-09-28
 
