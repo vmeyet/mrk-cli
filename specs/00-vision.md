@@ -27,6 +27,7 @@ mrk --color auto|always|never    auto honours NO_COLOR and a non-tty stdout
 mrk -p FILE         read in the pager: diagrams stay images, j/k/space/b/g/G scroll, / n N search, q quits
 MRK_PAGER="less -R" mrk -p FILE  pipe into that command instead (split into words, no shell), diagrams as text
 mrk --completions zsh
+mrk update          install the latest release tag with cargo when it is newer (--force reinstalls); the only command that uses the network
 ```
 
 Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `pager`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.

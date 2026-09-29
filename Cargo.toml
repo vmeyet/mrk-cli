@@ -7,6 +7,10 @@ description = "Render Markdown beautifully in the terminal: syntax highlighting,
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/vmeyet/mrk-cli"
+homepage = "https://github.com/vmeyet/mrk-cli"
+keywords = ["markdown", "terminal", "mermaid", "cli", "renderer"]
+categories = ["command-line-utilities", "text-processing", "visualization"]
+include = ["/src/**/*.rs", "/build.rs", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [[bin]]
 name = "mrk"

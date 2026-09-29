@@ -26,6 +26,7 @@ main ─▶ cli::run
 ## Crate layout
 
 ```
+build.rs           embeds the git commit as GIT_HASH for version.rs
 src/
   main.rs          calls cli::run, maps errors to `✗ message` and exit code 1
   lib.rs           module list; `cli`, `config`, `terminal`, `update` behind the `cli` feature
@@ -36,6 +37,8 @@ src/
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, CellSize, plain(), highlight()
   text.rs          display_width, wrap
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, resolve, names
+  update.rs        `mrk update`: latest release tag from `git ls-remote --tags`, compared with the running version, installed with `cargo install --tag`
+  version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)
     blocks.rs      SourceBlock, BlockKind: the top-level sections both render and render_blocks are built from
   code/            syntect + two-face: highlight a fenced block into a surface panel
@@ -64,7 +67,8 @@ src/
   `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `BlockKind::Code`.
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
 - `terminal::pager::run(session: &Session, render: impl Fn(u16) -> Rendered)`: `render` lays the source out for a window that many columns wide and returns the Document and its margin.
-- `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: the only place escape sequences are produced; `margin` columns before every line and picture, from `terminal::margin`, then a picture's indent on each of its rows (centred on a wide terminal, `LEFT_MARGIN` otherwise).
+- `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: writes a Document with its escape sequences; `margin` columns before every line and picture, from `terminal::margin`, then a picture's indent on each of its rows (centred on a wide terminal, `LEFT_MARGIN` otherwise).
+- Escape sequences are produced only inside `terminal/`: `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `query.rs` for the capability queries, `error_report` for dimmed error causes.
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
 - A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` helps.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.

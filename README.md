@@ -4,7 +4,7 @@ Render Markdown beautifully in the terminal: syntax-highlighted code, tables, al
 
 ```sh
 cargo install --git https://github.com/vmeyet/mrk-cli
-mrk update        # rebuild from the latest commit; dependencies stay built in the cache
+mrk update        # install the latest release when it is newer; dependencies stay built in the cache
 mrk README.md
 cat notes.md | mrk
 mrk --theme catppuccin-mocha notes.md

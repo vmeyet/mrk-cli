@@ -1,4 +1,5 @@
 //! `mrk update`: where a newer mrk comes from, and whether the running one is already it.
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -18,12 +19,51 @@ pub enum Decision {
     UpToDate,
 }
 
-/// Only a commit we know we already run spares the rebuild; anything unanswered installs.
-pub fn decide(installed: &str, latest: Option<&str>, force: bool) -> Decision {
-    match latest {
-        Some(latest) if !force && installed != version::UNKNOWN && latest == installed => Decision::UpToDate,
-        _ => Decision::Install,
+/// A release number, `major.minor.patch`; pre-releases and build metadata are not releases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Version {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl Version {
+    fn parse(text: &str) -> Option<Self> {
+        let mut parts = text.split('.').map(number);
+        let version = Self { major: parts.next()??, minor: parts.next()??, patch: parts.next()?? };
+        parts.next().is_none().then_some(version)
     }
+
+    /// The version this binary was built as.
+    fn running() -> Result<Self> {
+        Self::parse(env!("CARGO_PKG_VERSION")).context("the running version is not a release number")
+    }
+
+    /// The git tag a release is published under.
+    fn tag(self) -> String {
+        format!("v{self}")
+    }
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+/// Digits only: `u64::from_str` would also take a leading `+`.
+fn number(part: &str) -> Option<u64> {
+    part.bytes().all(|byte| byte.is_ascii_digit()).then(|| part.parse().ok()).flatten()
+}
+
+/// Only a release newer than the running one installs, unless forced.
+pub fn decide(installed: Version, latest: Version, force: bool) -> Decision {
+    if force || latest > installed { Decision::Install } else { Decision::UpToDate }
+}
+
+/// The newest release among `git ls-remote --tags` lines (`<commit>\trefs/tags/v1.2.3`).
+fn newest_release(listing: &str) -> Option<Version> {
+    listing.lines().filter_map(|line| line.split_once("\trefs/tags/v")).filter_map(|(_, release)| Version::parse(release)).max()
 }
 
 fn cache_root() -> PathBuf {
@@ -47,10 +87,10 @@ fn git(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
-/// The newest commit of the repo.
-fn latest() -> Result<String> {
-    let listing = git(&["ls-remote", REPO, "HEAD"])?;
-    listing.split_whitespace().next().map(str::to_owned).with_context(|| format!("{REPO} has no HEAD"))
+/// The newest release tagged in the repo.
+fn latest() -> Result<Version> {
+    let listing = git(&["ls-remote", "--tags", "--refs", REPO])?;
+    newest_release(&listing).with_context(|| format!("{REPO} has no release tag"))
 }
 
 /// cargo ties a `--git` build to the repo URL, never to the commit, so a kept build folder would
@@ -68,12 +108,12 @@ fn forget_mrk(build: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Rebuilds and installs from the repo with cargo, reusing the dependencies built last time.
-fn install() -> Result<()> {
+/// Rebuilds and installs a release from the repo with cargo, reusing the dependencies built last time.
+fn install(release: Version) -> Result<()> {
     let build = build_folder()?;
     forget_mrk(&build)?;
     let status = Command::new("cargo")
-        .args(["install", "--git", REPO, "--force", "--locked", "--target-dir"])
+        .args(["install", "--git", REPO, "--tag", &release.tag(), "--force", "--locked", "--target-dir"])
         .arg(&build)
         .status()
         .context("running cargo install")?;
@@ -83,14 +123,14 @@ fn install() -> Result<()> {
     Ok(())
 }
 
-/// Rebuilds and installs mrk when the repo moved past the running commit.
+/// Rebuilds and installs the latest release when it is newer than the running one.
 pub fn run(force: bool) -> Result<()> {
-    let latest = if force { None } else { latest().inspect_err(|error| eprintln!("! could not check the latest version: {error}")).ok() };
-    match decide(version::COMMIT, latest.as_deref(), force) {
+    let latest = latest().context("could not check the latest release")?;
+    match decide(Version::running()?, latest, force) {
         Decision::UpToDate => println!("✓ already up to date ({})", version::label()),
         Decision::Install => {
-            println!("→ installing the latest mrk from {REPO}…");
-            install()?;
+            println!("→ installing mrk {} from {REPO}…", latest.tag());
+            install(latest)?;
             println!("✓ updated, run `mrk --version` to see it");
         }
     }
@@ -102,8 +142,9 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
-    const INSTALLED: &str = "9731436a0e7c4d1b2f3a4b5c6d7e8f9a0b1c2d3e";
-    const NEWER: &str = "635cf1b0000000000000000000000000000000ff";
+    fn version(text: &str) -> Version {
+        Version::parse(text).unwrap()
+    }
 
     #[test]
     fn forgetting_mrk_drops_only_its_own_fingerprints() {
@@ -130,27 +171,54 @@ mod tests {
     }
 
     #[test]
-    fn same_commit_needs_no_install() {
-        assert_eq!(decide(INSTALLED, Some(INSTALLED), false), Decision::UpToDate);
+    fn the_same_release_needs_no_install() {
+        assert_eq!(decide(version("0.2.0"), version("0.2.0"), false), Decision::UpToDate);
     }
 
     #[test]
-    fn a_newer_commit_installs() {
-        assert_eq!(decide(INSTALLED, Some(NEWER), false), Decision::Install);
+    fn an_older_release_needs_no_install() {
+        assert_eq!(decide(version("0.3.0"), version("0.2.9"), false), Decision::UpToDate);
     }
 
     #[test]
-    fn force_installs_over_the_same_commit() {
-        assert_eq!(decide(INSTALLED, Some(INSTALLED), true), Decision::Install);
+    fn a_newer_release_installs() {
+        assert_eq!(decide(version("0.2.0"), version("0.10.0"), false), Decision::Install);
     }
 
     #[test]
-    fn a_failed_check_installs() {
-        assert_eq!(decide(INSTALLED, None, false), Decision::Install);
+    fn force_installs_over_the_same_release() {
+        assert_eq!(decide(version("0.2.0"), version("0.2.0"), true), Decision::Install);
     }
 
     #[test]
-    fn an_unknown_installed_commit_installs() {
-        assert_eq!(decide(version::UNKNOWN, Some(version::UNKNOWN), false), Decision::Install);
+    fn versions_parse_only_plain_release_numbers() {
+        assert_eq!(version("1.22.3").to_string(), "1.22.3");
+        for text in ["1.2", "1.2.3.4", "1.2.3-rc.1", "1.2.3+build", "1.+2.3", "v1.2.3", "1.x.3", ""] {
+            assert_eq!(Version::parse(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn the_running_version_is_a_release() {
+        assert_eq!(Version::running().unwrap().to_string(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn a_release_is_tagged_with_a_v() {
+        assert_eq!(version("0.2.0").tag(), "v0.2.0");
+    }
+
+    #[test]
+    fn the_newest_release_wins_by_number_not_by_listing_order() {
+        let listing =
+            "aaaa\trefs/tags/v0.10.0\nbbbb\trefs/tags/v0.9.1\ncccc\trefs/tags/v1.0.0-rc.1\ndddd\trefs/tags/nightly\neeee\trefs/tags/v0.2.0";
+
+        assert_eq!(newest_release(listing), Some(version("0.10.0")));
+    }
+
+    #[test]
+    fn a_repo_without_release_tags_has_no_newest_release() {
+        assert_eq!(newest_release(""), None);
+        assert_eq!(newest_release("aaaa\trefs/tags/nightly"), None);
     }
 }
