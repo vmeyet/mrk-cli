@@ -20,7 +20,7 @@ fn give_back() {
     let _ = crossterm::terminal::disable_raw_mode();
 }
 
-/// Release builds abort on panic, so no destructor runs: the hook is what gives the terminal back then.
+/// The hook runs before unwinding reaches `Drop`: giving the terminal back first keeps the panic message on the normal screen.
 fn give_back_on_panic() {
     PANIC_HOOK.call_once(|| {
         let previous = std::panic::take_hook();

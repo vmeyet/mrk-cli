@@ -30,9 +30,9 @@ mermaid-text = "0.57"
 resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 shell-words = { version = "1.1", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
-syntect = { version = "5.3", default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy"] }
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-onig"] }
 toml = { version = "1.1", optional = true }
-two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
 unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
@@ -46,9 +46,9 @@ insta = "1"
 predicates = "3.1"
 
 [profile.release]
-lto = "thin"
+opt-level = "s"
+lto = "fat"
 strip = true
-panic = "abort"
 codegen-units = 1
 
 [lints.rust]

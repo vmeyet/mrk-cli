@@ -61,8 +61,8 @@ mod tests {
         let expected = [
             ("ts", "TypeScript"),
             ("tsx", "TypeScriptReact"),
-            ("js", "JavaScript"),
-            ("jsx", "JavaScript"),
+            ("js", "JavaScript (Babel)"),
+            ("jsx", "JavaScript (Babel)"),
             ("sh", "Bourne Again Shell (bash)"),
             ("zsh", "Bourne Again Shell (bash)"),
             ("console", "Bourne Again Shell (bash)"),
