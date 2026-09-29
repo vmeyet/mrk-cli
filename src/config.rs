@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::cli::UsageError;
 use crate::terminal::{Align, ImagesMode};
 
 pub const MIN_WIDTH: usize = 20;
@@ -49,7 +50,7 @@ pub fn parse(text: &str) -> Result<Config> {
 
 pub fn load_from(path: &Path) -> Result<Config> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    parse(&text).with_context(|| format!("invalid config {}", path.display()))
+    parse(&text).with_context(|| UsageError(format!("invalid config {}", path.display())))
 }
 
 /// The first config file that exists; defaults when there is none.
@@ -130,9 +131,11 @@ mod tests {
     fn a_malformed_file_names_its_path() {
         let path = std::env::temp_dir().join(format!("mrk-config-test-{}.toml", std::process::id()));
         std::fs::write(&path, "theme = \n").unwrap();
-        let error = format!("{:#}", load_from(&path).unwrap_err());
+        let error = load_from(&path).unwrap_err();
         std::fs::remove_file(&path).unwrap();
 
+        assert!(error.is::<UsageError>());
+        let error = format!("{error:#}");
         assert!(error.contains(&path.display().to_string()) && error.contains("line 1"), "{error}");
     }
 }

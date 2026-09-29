@@ -64,8 +64,8 @@ fn is_footnote_definition<'a>(node: &'a AstNode<'a>) -> bool {
 
 fn code_kind(code: &NodeCodeBlock) -> BlockKind {
     match raw::language(code) {
-        Some(raw::MERMAID) => BlockKind::Mermaid,
-        language => BlockKind::Code { language: language.map(str::to_owned) },
+        Some(language) if language == raw::MERMAID => BlockKind::Mermaid,
+        language => BlockKind::Code { language },
     }
 }
 
@@ -217,6 +217,20 @@ mod tests {
     #[test]
     fn a_fence_without_language_is_code_without_one() {
         assert_eq!(outline("```\nx\n```\n"), [(1, 3, BlockKind::Code { language: None })]);
+    }
+
+    #[test]
+    fn a_fence_names_its_language_by_its_first_word_lowercased() {
+        let kinds: Vec<BlockKind> = ["Rust,ignore", "{.mermaid}", "Mermaid", "mermaid,ignore"]
+            .iter()
+            .flat_map(|info| outline(&format!("```{info}\ngraph TD\n```\n")))
+            .map(|(.., kind)| kind)
+            .collect();
+
+        assert_eq!(
+            kinds,
+            [BlockKind::Code { language: Some("rust".to_owned()) }, BlockKind::Mermaid, BlockKind::Mermaid, BlockKind::Mermaid]
+        );
     }
 
     #[test]

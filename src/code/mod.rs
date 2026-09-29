@@ -5,8 +5,8 @@ mod panel;
 use crate::document::{Line, Settings};
 
 /// A fenced code block as a panel: every line exactly `settings.width` cells, highlighted when the language is known.
+/// `language` is a language name (`rust`, `ts`), not a whole fence info string.
 pub fn render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line> {
-    let language = language.and_then(language::fence_token);
     let rows = highlight::highlight(code, language, &settings.theme);
     panel::panel(&rows, language, settings.width, &settings.theme.palette)
 }
@@ -49,6 +49,14 @@ mod tests {
     }
 
     #[test]
+    fn escape_bytes_in_code_do_not_shorten_the_background() {
+        let lines = render("printf '\x1b[31mred\x1b[0m'\n", None, &at_width(24));
+        let visible = |line: &Line| line.plain().chars().filter(|character| !character.is_control()).count();
+
+        assert!(lines.iter().all(|line| visible(line) == 24), "{}", framed(&lines));
+    }
+
+    #[test]
     fn every_line_is_exactly_the_width() {
         let code = "fn wide() {\n\tlet 漢字 = \"日本語のテキストはとても長いのでここで折り返されるはずです\";\n}\n";
         for width in [8, 12, 20, 40, 80, 100] {
@@ -77,13 +85,6 @@ mod tests {
         let marker = lines[2].spans.iter().find(|span| span.text == "↪ ").map(|span| span.style.fg);
         assert_eq!(label, Some(Some(palette.muted)));
         assert_eq!(marker, Some(Some(palette.subtle)));
-    }
-
-    #[test]
-    fn fence_info_keeps_only_the_language() {
-        let lines = render("x\n", Some("rust,ignore"), &at_width(20));
-
-        assert_eq!(lines[0].plain().trim(), "rust");
     }
 
     /// Run with `cargo test --release code::tests::cold -- --ignored --nocapture`, alone, so nothing warmed the sets first.

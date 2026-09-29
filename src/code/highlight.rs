@@ -4,16 +4,15 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, FontStyle, Style as SyntaxStyle};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use two_face::theme::LazyThemeSet;
+use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
 use super::language;
 use crate::document::{Rgb, Span, Style};
-use crate::theme::Theme;
-
-const TAB: &str = "    ";
+use crate::text::TAB;
+use crate::theme::{SyntaxTheme, Theme};
 
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
-static THEMES: LazyLock<LazyThemeSet> = LazyLock::new(|| two_face::theme::extra().into());
+static THEMES: LazyLock<EmbeddedLazyThemeSet> = LazyLock::new(two_face::theme::extra);
 
 /// One entry per source line: tabs expanded, no line ending, no background.
 /// A language without a syntax, or a highlighting failure, gives plain text in the palette's `text`.
@@ -23,11 +22,26 @@ pub fn highlight(code: &str, language: Option<&str>, theme: &Theme) -> Vec<Vec<S
 
 fn highlight_with_syntax(code: &str, language: &str, theme: &Theme) -> Option<Vec<Vec<Span>>> {
     let syntax = language::find(language, &SYNTAXES)?;
-    let syntax_theme = THEMES.get(theme.syntax)?;
-    let mut highlighter = HighlightLines::new(syntax, syntax_theme);
+    let mut highlighter = HighlightLines::new(syntax, THEMES.get(embedded(theme.syntax)));
     LinesWithEndings::from(code)
         .map(|line| highlighter.highlight_line(line, &SYNTAXES).ok().map(|regions| spans(&regions, theme.palette.surface)))
         .collect()
+}
+
+fn embedded(theme: SyntaxTheme) -> EmbeddedThemeName {
+    match theme {
+        SyntaxTheme::CatppuccinLatte => EmbeddedThemeName::CatppuccinLatte,
+        SyntaxTheme::CatppuccinMacchiato => EmbeddedThemeName::CatppuccinMacchiato,
+        SyntaxTheme::CatppuccinMocha => EmbeddedThemeName::CatppuccinMocha,
+        SyntaxTheme::Dracula => EmbeddedThemeName::Dracula,
+        SyntaxTheme::GitHub => EmbeddedThemeName::Github,
+        SyntaxTheme::GruvboxDark => EmbeddedThemeName::GruvboxDark,
+        SyntaxTheme::GruvboxLight => EmbeddedThemeName::GruvboxLight,
+        SyntaxTheme::Nord => EmbeddedThemeName::Nord,
+        SyntaxTheme::OneHalfDark => EmbeddedThemeName::OneHalfDark,
+        SyntaxTheme::OneHalfLight => EmbeddedThemeName::OneHalfLight,
+        SyntaxTheme::TwoDark => EmbeddedThemeName::TwoDark,
+    }
 }
 
 fn plain(code: &str, color: Rgb) -> Vec<Vec<Span>> {
@@ -76,6 +90,15 @@ mod tests {
         let string = foreground_of(&lines, "hello");
         assert!(keyword.is_some() && string.is_some());
         assert_ne!(keyword, string);
+    }
+
+    #[test]
+    fn every_theme_highlights_with_its_syntax_theme() {
+        for theme in crate::theme::names().filter_map(crate::theme::find) {
+            let lines = highlight("fn main() {}\n", Some("rust"), &theme);
+
+            assert_ne!(foreground_of(&lines, "fn"), Some(theme.palette.text), "{}", theme.name);
+        }
     }
 
     #[test]

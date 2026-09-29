@@ -33,4 +33,4 @@ Every module ships its tests in the same file; rendering tests snapshot `documen
 ## Security
 
 `specs/02-security.md` is not optional: Markdown is untrusted input and the terminal is an interpreter.
-Every byte reaching the terminal passes `terminal::sanitize`; mrk never touches the network and never reads a file the user did not name.
+Every byte reaching the terminal passes `terminal::sanitize`; mrk never touches the network (except `mrk update`, run by the user) and never reads a file the user did not name.

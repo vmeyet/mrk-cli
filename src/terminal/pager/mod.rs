@@ -19,6 +19,8 @@ use super::Capabilities;
 use crate::document::Document;
 use crate::theme::Palette;
 
+pub use self::keys::help as key_help;
+
 /// The document laid out for a window this many columns wide, and the margin that centres it.
 pub struct Rendered {
     pub document: Document,

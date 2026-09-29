@@ -22,13 +22,40 @@ pub(super) fn flat<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
 /// A fenced or indented code block: a Mermaid diagram or a code panel, both at the current width.
 pub(super) fn code(block: &NodeCodeBlock, context: &Context) -> Vec<Block> {
     let language = language(block);
-    match language {
+    match language.as_deref() {
         Some(MERMAID) => vec![crate::mermaid::render(&block.literal, &context.settings)],
-        _ => layout::lines(crate::code::render(&block.literal, language, &context.settings)),
+        language => layout::lines(crate::code::render(&block.literal, language, &context.settings)),
     }
 }
 
-/// The first word of the fence's info string, the language as written.
-pub(super) fn language(block: &NodeCodeBlock) -> Option<&str> {
-    block.info.split_whitespace().next()
+/// The language a fence names, lowercase: the first word of its info string (`rust,ignore`, `{.python}` and
+/// `ts title="a.ts"` all name one language).
+pub(super) fn language(block: &NodeCodeBlock) -> Option<String> {
+    let words = block.info.split(|character: char| character.is_whitespace() || character == ',');
+    words.map(|word| word.trim_matches(['{', '}', '.'])).find(|word| !word.is_empty()).map(str::to_lowercase)
+}
+
+#[cfg(test)]
+mod tests {
+    use comrak::nodes::NodeCodeBlock;
+
+    use crate::markdown::plain_at;
+
+    fn language(info: &str) -> Option<String> {
+        super::language(&NodeCodeBlock { info: info.to_owned(), ..NodeCodeBlock::default() })
+    }
+
+    #[test]
+    fn the_language_is_the_first_word_of_the_info_string_lowercased() {
+        assert_eq!(language("rust,ignore").as_deref(), Some("rust"));
+        assert_eq!(language("  ts title=\"a.ts\"").as_deref(), Some("ts"));
+        assert_eq!(language("{.python}").as_deref(), Some("python"));
+        assert_eq!(language("Mermaid").as_deref(), Some("mermaid"));
+        assert_eq!(language("   "), None);
+    }
+
+    #[test]
+    fn the_code_panel_is_labelled_with_the_language_only() {
+        assert_eq!(plain_at("```Rust,ignore\nx\n```", 20).lines().next().map(str::trim), Some("rust"));
+    }
 }

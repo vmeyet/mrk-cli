@@ -1,5 +1,5 @@
 [package]
-name = "mrk"
+name = "mrk-cli"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.92"
@@ -7,6 +7,13 @@ description = "Render Markdown beautifully in the terminal: syntax highlighting,
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/vmeyet/mrk-cli"
+homepage = "https://github.com/vmeyet/mrk-cli"
+keywords = ["markdown", "terminal", "mermaid", "cli", "renderer"]
+categories = ["command-line-utilities", "text-processing", "visualization"]
+include = ["/src/**/*.rs", "/build.rs", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+
+[lib]
+name = "mrk"
 
 [[bin]]
 name = "mrk"
@@ -15,24 +22,28 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["dep:base64", "dep:clap", "dep:clap_complete", "dep:crossterm", "dep:dirs", "dep:rustix", "dep:serde", "dep:shell-words", "dep:toml"]
+cli = ["dep:base64", "dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:crossterm", "dep:dirs", "dep:roff", "dep:rustix", "dep:serde", "dep:shell-words", "dep:toml"]
 
 [dependencies]
 anyhow = "1.0"
 base64 = { version = "0.22", optional = true }
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
 clap_complete = { version = "4.5", optional = true }
+clap_mangen = { version = "0.3", optional = true }
 comrak = { version = "0.55", default-features = false }
 crossterm = { version = "0.29", features = ["use-dev-tty"], optional = true }
 dirs = { version = "7.0", optional = true }
 mermaid-rs-renderer = { version = "0.3", default-features = false }
 mermaid-text = "0.57"
 resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+roff = { version = "1.1", optional = true }
 shell-words = { version = "1.1", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
-syntect = { version = "5.3", default-features = false, features = ["parsing", "default-syntaxes", "default-themes", "regex-fancy"] }
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-onig"] }
 toml = { version = "1.1", optional = true }
-two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
+unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
@@ -46,10 +57,13 @@ insta = "1"
 predicates = "3.1"
 
 [profile.release]
-lto = "thin"
+opt-level = "s"
+lto = "fat"
 strip = true
-panic = "abort"
 codegen-units = 1
+
+[profile.dist]
+inherits = "release"
 
 [lints.rust]
 unsafe_code = "forbid"

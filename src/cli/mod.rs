@@ -1,12 +1,13 @@
 //! The command line: flags win over the environment (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), the environment over the config file.
+mod help;
 mod input;
 mod output;
 
 use std::fmt;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
@@ -20,7 +21,7 @@ const SWATCH: &str = "██";
 
 /// Render Markdown beautifully in the terminal.
 #[derive(Parser, Debug)]
-#[command(name = "mrk", version = crate::version::label(), about, args_conflicts_with_subcommands = true)]
+#[command(name = "mrk", version = crate::version::label(), about, after_long_help = help::text(), args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -35,13 +36,19 @@ pub struct Cli {
     /// Wrap width in columns; by default the terminal width, capped at 100.
     #[arg(long, env = "MRK_WIDTH", value_name = "N", value_parser = parse_width)]
     pub width: Option<usize>,
-    /// Draw Mermaid diagrams as images; `auto` does when the terminal supports it.
+    /// Draw Mermaid diagrams as images, on a terminal that speaks the kitty graphics protocol.
+    ///
+    /// `auto` draws them outside tmux and screen, `always` inside them too, `never` draws diagrams as text.
+    /// Piped output never gets images.
     #[arg(long, value_enum, value_name = "WHEN")]
     pub images: Option<ImagesMode>,
     /// Place the text in the window; `center` only applies on a terminal, never to piped output.
     #[arg(long, value_enum, env = "MRK_ALIGN", value_name = "WHERE")]
     pub align: Option<Align>,
-    /// Read in a pager: `$MRK_PAGER` when set (diagrams as text), else the built-in one that keeps diagrams as images.
+    /// Read in the built-in pager, which keeps diagrams as images.
+    ///
+    /// `MRK_PAGER` swaps it for that command (diagrams as text), but only this flag or `pager = true` turns paging on.
+    /// Piped output is never paged.
     #[arg(short, long)]
     pub pager: bool,
     /// Colour the output; `auto` honours NO_COLOR and a stdout that is not a terminal.
@@ -50,25 +57,28 @@ pub struct Cli {
     /// Print the completion script for a shell.
     #[arg(long, value_name = "SHELL", exclusive = true)]
     pub completions: Option<Shell>,
+    /// Print the man page as roff.
+    #[arg(long, hide = true, exclusive = true)]
+    pub man: bool,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Rebuild and install the latest mrk with cargo; a file named `update` renders as `./update`.
+    /// Install the latest mrk release, through brew when brew installed mrk, else with cargo; a file named `update` renders as `./update`.
     Update {
-        /// Install even when the running binary is already the latest commit.
+        /// Install even when the running binary is already the latest release.
         #[arg(short, long)]
         force: bool,
     },
 }
 
-/// A mistake in how mrk was called rather than a failure while running: exits with 2.
+/// A mistake in how mrk was called, by flag, environment or config file, rather than a failure while running: exits with 2.
 #[derive(Debug)]
-pub struct UsageError(pub &'static str);
+pub struct UsageError(pub String);
 
 impl fmt::Display for UsageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.0)
+        formatter.write_str(&self.0)
     }
 }
 
@@ -83,8 +93,21 @@ fn print_completions(shell: Shell) {
     clap_complete::generate(shell, &mut Cli::command(), "mrk", &mut io::stdout());
 }
 
+fn print_man() -> io::Result<()> {
+    let man = clap_mangen::Man::new(Cli::command());
+    let out = &mut io::stdout().lock();
+    man.render_title(out)?;
+    man.render_name_section(out)?;
+    man.render_synopsis_section(out)?;
+    man.render_description_section(out)?;
+    man.render_options_section(out)?;
+    man.render_subcommands_section(out)?;
+    out.write_all(help::roff().as_bytes())?;
+    man.render_version_section(out)
+}
+
 fn find_theme(name: &str) -> Result<Theme> {
-    theme::resolve(Some(name), None)
+    theme::resolve(Some(name), None).map_err(|error| UsageError(error.to_string()).into())
 }
 
 fn default_theme(background: Option<Appearance>) -> Theme {
@@ -114,7 +137,8 @@ fn theme_list(has_color: bool) -> Document {
 
 fn list_themes(color: ColorChoice) -> Result<()> {
     let capabilities = terminal::detect(Preferences { color, images: ImagesMode::Never, needs_background: false });
-    output::print(&theme_list(capabilities.color != ColorDepth::None), &capabilities, terminal::LEFT_MARGIN)
+    let margin = if capabilities.is_terminal { terminal::LEFT_MARGIN } else { 0 };
+    output::print(&theme_list(capabilities.color != ColorDepth::None), &capabilities, margin)
 }
 
 fn render(cli: &Cli, config: &Config) -> Result<()> {
@@ -136,14 +160,27 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
     output::show(&output, &layout, &input::name(cli.file.as_deref()))
 }
 
+/// clap echoes arguments and environment values verbatim, so its errors are sanitized; help and version carry nothing
+/// from the user and keep their colours.
+fn exit_on(error: &clap::Error) -> ! {
+    if !error.use_stderr() {
+        error.exit();
+    }
+    eprint!("{}", terminal::sanitize::lines(&error.render().to_string()));
+    std::process::exit(error.exit_code())
+}
+
 pub fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::try_parse().unwrap_or_else(|error| exit_on(&error));
     if let Some(Command::Update { force }) = cli.command {
         return crate::update::run(force);
     }
     if let Some(shell) = cli.completions {
         print_completions(shell);
         return Ok(());
+    }
+    if cli.man {
+        return output::ignore_broken_pipe(print_man()).context("writing the man page");
     }
 
     let config = config::load()?;
@@ -196,10 +233,12 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_theme_lists_the_known_ones() {
-        let error = find_theme("nope").unwrap_err().to_string();
+    fn an_unknown_theme_is_a_usage_error_listing_the_known_ones() {
+        let error = find_theme("nope").unwrap_err();
+        let message = error.to_string();
 
-        assert!(error.contains("\"nope\"") && error.contains("mrk-dark"), "{error}");
+        assert!(error.is::<UsageError>());
+        assert!(message.contains("\"nope\"") && message.contains("mrk-dark"), "{message}");
     }
 
     #[test]

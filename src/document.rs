@@ -97,6 +97,9 @@ pub struct Picture {
     pub cols: u16,
     pub rows: u16,
     pub alt: String,
+    /// The bars and spaces of the lists and quotes around the picture, drawn left of each of its rows; the picture
+    /// starts right after it.
+    pub indent: Line,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +125,8 @@ pub struct Settings {
     pub width: usize,
     pub theme: Theme,
     pub cell: Option<CellSize>,
+    /// Whether the terminal makes links clickable; when it does not, a link's target is printed after its text.
+    pub hyperlinks: bool,
 }
 
 /// The document as bare text, one `[picture: alt cols×rows]` line per picture: what snapshot tests compare.
@@ -132,7 +137,7 @@ pub fn plain(document: &Document) -> String {
 fn plain_block(block: &Block) -> String {
     match block {
         Block::Lines(lines) => lines.iter().map(|line| format!("{}\n", line.plain().trim_end())).collect(),
-        Block::Picture(picture) => format!("[picture: {} {}×{}]\n", picture.alt, picture.cols, picture.rows),
+        Block::Picture(picture) => format!("{}[picture: {} {}×{}]\n", picture.indent.plain(), picture.alt, picture.cols, picture.rows),
     }
 }
 
@@ -188,6 +193,13 @@ mod tests {
         let document = Document { blocks: vec![Block::Lines(vec![line, Line::blank()])] };
 
         assert_eq!(plain(&document), "a b\n\n");
+    }
+
+    #[test]
+    fn plain_draws_a_picture_after_its_indent() {
+        let picture = Picture { png: Vec::new(), cols: 4, rows: 2, alt: "flow".to_owned(), indent: Line::new(vec![Span::plain("│ ")]) };
+
+        assert_eq!(plain(&Document { blocks: vec![Block::Picture(picture)] }), "│ [picture: flow 4×2]\n");
     }
 
     #[test]

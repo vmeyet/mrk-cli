@@ -35,22 +35,39 @@ pub struct Palette {
     pub caution: Rgb,
 }
 
+/// The syntax themes the presets use; `code` maps each onto the one embedded in two-face.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyntaxTheme {
+    CatppuccinLatte,
+    CatppuccinMacchiato,
+    CatppuccinMocha,
+    Dracula,
+    GitHub,
+    GruvboxDark,
+    GruvboxLight,
+    Nord,
+    OneHalfDark,
+    OneHalfLight,
+    TwoDark,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Theme {
     pub name: &'static str,
     pub appearance: Appearance,
     pub palette: Palette,
-    /// A theme name from `two_face::theme::EmbeddedThemeName`, as syntect knows it.
-    pub syntax: &'static str,
+    pub syntax: SyntaxTheme,
 }
 
 pub const DEFAULT_WIDTH: usize = 100;
 
 const MAX_SUGGESTION_DISTANCE: usize = 3;
+/// A suggestion allows one edit per this many typed characters, so a short name is only matched by a near twin.
+const CHARS_PER_EDIT: usize = 3;
 
 /// The settings unit tests render with: dark theme, 80 columns, no pictures.
 pub fn test_settings() -> crate::document::Settings {
-    crate::document::Settings { width: 80, theme: MRK_DARK, cell: None }
+    crate::document::Settings { width: 80, theme: MRK_DARK, cell: None, hyperlinks: true }
 }
 
 /// Every built-in theme name, defaults first.
@@ -88,9 +105,10 @@ fn unknown_theme(name: &str) -> anyhow::Error {
 
 fn closest_name(name: &str) -> Option<&'static str> {
     let wanted = name.trim().to_ascii_lowercase();
+    let allowed = wanted.chars().count().div_ceil(CHARS_PER_EDIT).min(MAX_SUGGESTION_DISTANCE);
     names()
         .map(|candidate| (distance(&wanted, candidate), candidate))
-        .filter(|(distance, _)| *distance <= MAX_SUGGESTION_DISTANCE)
+        .filter(|(distance, _)| *distance <= allowed)
         .min_by_key(|(distance, _)| *distance)
         .map(|(_, candidate)| candidate)
 }
@@ -153,15 +171,6 @@ mod tests {
     }
 
     #[test]
-    fn every_syntax_theme_is_embedded_in_two_face() {
-        let embedded: Vec<&str> = two_face::theme::EmbeddedLazyThemeSet::theme_names().iter().map(|name| name.as_name()).collect();
-
-        for theme in all() {
-            assert!(embedded.contains(&theme.syntax), "{} uses missing syntax theme {}", theme.name, theme.syntax);
-        }
-    }
-
-    #[test]
     fn text_is_readable_on_surface() {
         for theme in all() {
             let ratio = contrast(theme.palette.text, theme.palette.surface);
@@ -212,6 +221,13 @@ mod tests {
 
         assert!(message.contains("did you mean \"dracula\"?"), "{message}");
         assert!(message.contains("github-light"), "{message}");
+    }
+
+    #[test]
+    fn a_short_name_is_only_matched_by_a_near_twin() {
+        assert_eq!(closest_name("nrod"), Some("nord"));
+        assert_eq!(closest_name("bad"), None);
+        assert_eq!(closest_name("x"), None);
     }
 
     #[test]

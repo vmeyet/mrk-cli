@@ -21,15 +21,22 @@ mrk FILE            render a file
 mrk                 render stdin (cat notes.md | mrk)
 mrk --theme NAME    pick a theme; mrk --list-themes shows them with a swatch
 mrk --width N       wrap width in columns (default: terminal width, capped at 100)
-mrk --images auto|always|never   Mermaid as images (auto: when the terminal supports it)
+mrk --images auto|always|never   Mermaid as images (auto: when the terminal supports it, outside tmux/screen; always: inside them too)
 mrk --align center|left          centre the text column in a wide window (default center; piped output is never centred)
 mrk --color auto|always|never    auto honours NO_COLOR and a non-tty stdout
 mrk -p FILE         read in the pager: diagrams stay images, j/k/space/b/g/G scroll, / n N search, q quits
-MRK_PAGER="less -R" mrk -p FILE  pipe into that command instead (split into words, no shell), diagrams as text
+MRK_PAGER="less -R" mrk -p FILE  pipe into that command instead (split into words, no shell), diagrams as text; MRK_PAGER alone never pages
 mrk --completions zsh
+mrk update          install the latest release tag with cargo when it is newer (--force reinstalls); the only command that uses the network
+mrk --man           the man page as roff (hidden from --help)
+mrk --list-themes   names with a swatch on a terminal, bare names one per line when piped
 ```
 
-Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `pager`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+Config: the first of `$XDG_CONFIG_HOME/mrk/config.toml` (or `~/.config/mrk/config.toml`) and, on macOS, `~/Library/Application Support/mrk/config.toml`, with `theme`, `width`, `images`, `align`, `pager`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+`--help` ends with that lookup, the environment, the pager keys and the exit status; the man page carries the same sections.
+
+Exit status: 0 on success, 2 for a usage mistake (a bad flag, environment value or config file, an unknown theme from any of them), 1 for any other failure.
+An unknown theme gets a "did you mean" only when the closest name is at most one edit per three typed characters away.
 
 ## Visual language
 
@@ -42,8 +49,8 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `p
 | Paragraph | `text`, wrapped to width, one blank line between blocks |
 | Emphasis | bold / italic / strikethrough (strike also dimmed) |
 | Inline code | `code` colour on `surface`, one space of padding each side |
-| Link | underlined `link`, OSC 8 hyperlink; autolinks likewise |
-| Image | `▣ alt text` in `muted`, hyperlinked to the source; never fetched |
+| Link | underlined `link`, OSC 8 hyperlink; autolinks likewise. Without hyperlinks (piped, no colour, dumb terminal) the text is followed by ` <url>` in `muted`, except when the text already is the URL |
+| Image | `▣ alt text` in `muted`, hyperlinked to the source (` <source>` after it without hyperlinks); never fetched |
 | Bullets | `•` `◦` `▪` by depth, in `accent`; numbers right-aligned in `accent` |
 | Task | `✔` in `success` / `○` in `muted`; done items dimmed |
 | Blockquote | `│ ` bar in `subtle`, text italic `muted` |
@@ -55,13 +62,13 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `p
 | Front matter | key/value lines in `muted`, then a rule |
 | Pager status bar | last row on `surface`: file name in bold `text`, the search prompt or `3/12` in `accent`, `Top`/`Bot`/`42%` in `accent` and a `muted` key hint |
 | Search match | current match `surface` on `accent`, bold; other matches `text` on `subtle` |
-| Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off |
+| Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off. In a list or quote the image keeps the indent and bar beside every row, and an item that opens on a diagram has its marker on a line of its own |
 
 ## Vocabulary
 
 - **Document**: the rendered output, a list of blocks. **Block**: text lines or a picture.
 - **Line**: spans that fit the width. **Span**: text with one style and an optional link.
-- **Theme**: a palette plus a syntax theme name. **Palette**: the named colours above.
-- **Settings**: width, theme and the image cell size, everything a renderer reads.
-- **Picture**: a PNG with the cell box it occupies.
+- **Theme**: a palette plus a syntax theme, one of the `SyntaxTheme` variants that `code` maps onto a two-face theme. **Palette**: the named colours above.
+- **Settings**: width, theme, the image cell size and whether links are clickable, everything a renderer reads.
+- **Picture**: a PNG with the cell box it occupies and the indent drawn left of each of its rows.
 - **Capabilities**: what the terminal can do (colour depth, images, cell size, background).

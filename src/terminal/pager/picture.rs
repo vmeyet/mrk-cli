@@ -56,7 +56,7 @@ pub fn placement(placed: &Placed, id: u32, top: usize, height: usize) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::Picture;
+    use crate::document::{Line, Picture};
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         [PNG_SIGNATURE, b"\0\0\0\rIHDR", &width.to_be_bytes(), &height.to_be_bytes(), b"rest"].concat()
@@ -114,7 +114,8 @@ mod tests {
 
     #[test]
     fn a_placement_uses_the_visible_rows_and_the_picture_columns() {
-        let placed = Placed { row: 10, picture: Picture { png: png(400, 120), cols: 40, rows: 6, alt: "flow".to_owned() } };
+        let placed =
+            Placed { row: 10, picture: Picture { png: png(400, 120), cols: 40, rows: 6, alt: "flow".to_owned(), indent: Line::blank() } };
 
         assert_eq!(
             placement(&placed, 3, 12, 20),

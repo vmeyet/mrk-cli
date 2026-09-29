@@ -1,19 +1,17 @@
-const TAB: &str = "    ";
+use crate::text::{TAB, is_forbidden};
+
 const MAX_LINK_BYTES: usize = 2048;
 const ALLOWED_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
-
-fn is_bidi_control(character: char) -> bool {
-    matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-}
-
-fn is_forbidden(character: char) -> bool {
-    character.is_control() || is_bidi_control(character)
-}
 
 /// The text with every character a terminal could interpret removed: C0 and C1 controls, DEL, bidi overrides and isolates.
 /// A tab becomes spaces.
 pub fn text(raw: &str) -> String {
     raw.split('\t').map(|part| part.chars().filter(|&character| !is_forbidden(character)).collect::<String>()).collect::<Vec<_>>().join(TAB)
+}
+
+/// `text` for a message of several lines: each line is cleaned, the newlines between them are kept.
+pub fn lines(raw: &str) -> String {
+    raw.split('\n').map(text).collect::<Vec<_>>().join("\n")
 }
 
 fn percent_encode(raw: &str) -> String {
@@ -94,6 +92,11 @@ mod tests {
     #[test]
     fn a_tab_becomes_spaces() {
         assert_eq!(text("a\tb"), "a    b");
+    }
+
+    #[test]
+    fn lines_keep_their_newlines_and_lose_everything_else() {
+        assert_eq!(lines("a\x1b]0;t\x07\r\nb\u{9b}\n"), "a]0;t\nb\n");
     }
 
     #[test]

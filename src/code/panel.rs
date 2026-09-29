@@ -1,5 +1,5 @@
 use crate::document::{Line, Span, Style};
-use crate::text::display_width;
+use crate::text::{WIDEST_GRAPHEME, cut, display_width};
 use crate::theme::Palette;
 
 const PADDING: &str = "  ";
@@ -28,12 +28,8 @@ fn fit(text: &str, width: usize) -> String {
         return text.to_string();
     }
 
-    let room = width.saturating_sub(display_width(ELLIPSIS));
-    let kept = text.chars().scan(0, |used, character| {
-        *used += char_width(character);
-        (*used <= room).then_some(character)
-    });
-    kept.chain(ELLIPSIS.chars()).collect()
+    let (kept, _) = cut(text, width.saturating_sub(display_width(ELLIPSIS)));
+    format!("{kept}{ELLIPSIS}")
 }
 
 /// Hard-wraps one source row to `width` cells, each continuation row opening with the marker; code is never re-flowed at spaces.
@@ -41,30 +37,32 @@ fn wrap(row: &[Span], width: usize, continuation: &Span) -> Vec<Vec<Span>> {
     let mut rows: Vec<Vec<Span>> = vec![Vec::new()];
     let mut used = 0;
     let mut row_start = 0;
-    for (character, style) in row.iter().flat_map(|span| span.text.chars().map(|character| (character, span.style))) {
-        let cells = char_width(character);
-        if used > row_start && used + cells > width {
-            rows.push(vec![continuation.clone()]);
-            row_start = display_width(&continuation.text);
-            used = row_start;
+    for span in row {
+        let mut rest = span.text.as_str();
+        while !rest.is_empty() {
+            let free = width.saturating_sub(used);
+            let (head, tail) = cut(rest, if used == row_start { free.max(WIDEST_GRAPHEME) } else { free });
+            if head.is_empty() {
+                rows.push(vec![continuation.clone()]);
+                row_start = display_width(&continuation.text);
+                used = row_start;
+                continue;
+            }
+            if let Some(current) = rows.last_mut() {
+                append(current, head, span.style);
+            }
+            used += display_width(head);
+            rest = tail;
         }
-        if let Some(current) = rows.last_mut() {
-            append(current, character, style);
-        }
-        used += cells;
     }
     rows
 }
 
-fn append(row: &mut Vec<Span>, character: char, style: Style) {
+fn append(row: &mut Vec<Span>, text: &str, style: Style) {
     match row.last_mut() {
-        Some(last) if last.style == style => last.text.push(character),
-        _ => row.push(Span::new(character.to_string(), style)),
+        Some(last) if last.style == style => last.text.push_str(text),
+        _ => row.push(Span::new(text, style)),
     }
-}
-
-fn char_width(character: char) -> usize {
-    display_width(character.encode_utf8(&mut [0; 4]))
 }
 
 fn pad(content: &[Span], width: usize, palette: &Palette) -> Line {

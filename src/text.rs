@@ -1,9 +1,48 @@
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::document::{Line, Span};
 
+/// What a tab becomes on screen.
+pub const TAB: &str = "    ";
+
+/// Terminals draw a grapheme in one or two cells, so a row this wide always has room for the next one.
+pub const WIDEST_GRAPHEME: usize = 2;
+
+fn is_bidi_control(character: char) -> bool {
+    matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// The characters a terminal could interpret: C0 and C1 controls, DEL, bidi overrides and isolates.
+/// `terminal::sanitize` removes them, so they take no cell.
+pub fn is_forbidden(character: char) -> bool {
+    character.is_control() || is_bidi_control(character)
+}
+
+/// The cells `text` takes once sanitized, counted one grapheme at a time.
 pub fn display_width(text: &str) -> usize {
-    text.width()
+    if text.bytes().all(|byte| byte == b' ' || byte.is_ascii_graphic()) {
+        return text.len();
+    }
+    text.graphemes(true).map(grapheme_width).sum()
+}
+
+fn grapheme_width(grapheme: &str) -> usize {
+    match grapheme {
+        "\t" => TAB.len(),
+        _ if grapheme.chars().any(is_forbidden) => 0,
+        _ => grapheme.width().min(WIDEST_GRAPHEME),
+    }
+}
+
+/// The longest start of `text` that fits in `width` cells, and the rest; a grapheme is never split.
+pub fn cut(text: &str, width: usize) -> (&str, &str) {
+    let mut used = 0;
+    let end = text.grapheme_indices(true).find_map(|(index, grapheme)| {
+        used += grapheme_width(grapheme);
+        (used > width).then_some(index)
+    });
+    text.split_at(end.unwrap_or(text.len()))
 }
 
 /// A word longer than a whole line starts on the current line only when this much room is left.
@@ -69,7 +108,7 @@ fn split_span(span: &Span) -> Vec<Token> {
 }
 
 fn piece(span: &Span, text: String) -> Span {
-    Span { text, ..span.clone() }
+    Span { text, style: span.style, link: span.link.clone() }
 }
 
 fn spans_width(spans: &[Span]) -> usize {
@@ -119,12 +158,22 @@ impl Layout {
             (true, false) => self.close(indent),
             (false, _) => Self { space: None, ..self },
         };
-        word.iter().flat_map(|span| span.text.chars().map(move |character| (span, character))).fold(start, |layout, (span, character)| {
-            let character_width = character.width().unwrap_or(0);
-            let is_full = layout.used + layout.space_width() + character_width > width && layout.has_content();
-            let layout = if is_full { layout.close(indent) } else { layout };
-            layout.push_spaced(vec![piece(span, character.to_string())], character_width)
-        })
+        word.iter().fold(start, |layout, span| layout.push_cut(span, width, indent))
+    }
+
+    /// `span` placed as much as fits at a time, a new line opening whenever the current one is full.
+    fn push_cut(self, span: &Span, width: usize, indent: &[Span]) -> Self {
+        let mut layout = self;
+        let mut rest = span.text.as_str();
+        while !rest.is_empty() {
+            let free = width.saturating_sub(layout.used + layout.space_width());
+            let room = if layout.has_content() { free } else { free.max(WIDEST_GRAPHEME) };
+            (layout, rest) = match cut(rest, room) {
+                ("", _) => (layout.close(indent), rest),
+                (head, tail) => (layout.push_spaced(vec![piece(span, head.to_owned())], display_width(head)), tail),
+            };
+        }
+        layout
     }
 
     fn close(self, indent: &[Span]) -> Self {
@@ -236,6 +285,40 @@ mod tests {
     #[test]
     fn empty_input_is_one_empty_line() {
         assert_eq!(wrap(&[], 10, &[]), [Line::blank()]);
+    }
+
+    #[test]
+    fn an_emoji_with_its_presentation_selector_is_two_cells() {
+        assert_eq!(display_width("❤️"), 2);
+        assert_eq!(display_width("👩‍💻"), 2);
+    }
+
+    #[test]
+    fn what_sanitize_removes_takes_no_cell_and_a_tab_takes_four() {
+        assert_eq!(display_width("a\x1b[31mb\u{9b}\u{202e}c\r\n"), 7);
+        assert_eq!(display_width("a\tb"), 6);
+    }
+
+    #[test]
+    fn cut_keeps_whole_graphemes_that_fit() {
+        assert_eq!(cut("❤️❤️❤️", 5), ("❤️❤️", "❤️"));
+        assert_eq!(cut("e\u{301}xyz", 2), ("e\u{301}x", "yz"));
+        assert_eq!(cut("漢字", 1), ("", "漢字"));
+        assert_eq!(cut("abc", 10), ("abc", ""));
+    }
+
+    #[test]
+    fn emoji_presentation_sequences_never_overflow_the_line() {
+        let lines = wrap(&[Span::plain("❤️".repeat(30))], 20, &[]);
+
+        assert_eq!(lines.iter().map(Line::width).collect::<Vec<_>>(), [20, 20, 20]);
+    }
+
+    #[test]
+    fn a_wide_character_on_a_one_cell_line_still_moves_forward() {
+        let lines = wrap(&[Span::plain("漢字")], 1, &[]);
+
+        assert_eq!(plain_lines(&lines), ["漢", "字"]);
     }
 
     #[test]

@@ -13,9 +13,15 @@ env:
 
 jobs:
   check:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-noto-cjk fonts-noto-core
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -24,6 +30,15 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo check --no-default-features
       - run: cargo test --all-targets
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.92
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +1.92 check --all-targets --locked
+      - run: cargo +1.92 check --no-default-features --locked
 
   deny:
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 use super::state::Pager;
 use crate::document::{Line, Span, Style};
-use crate::text::display_width;
+use crate::text::{cut, display_width};
 use crate::theme::Palette;
 
 const HINT: &str = "q quit · / search";
@@ -14,19 +14,11 @@ fn width(spans: &[Span]) -> usize {
     spans.iter().map(|span| display_width(&span.text)).sum()
 }
 
-fn cut(text: &str, columns: usize) -> String {
-    let widths = text.chars().scan(0, |used, character| {
-        *used += display_width(&character.to_string());
-        Some((*used, character))
-    });
-    widths.take_while(|&(used, _)| used <= columns).map(|(_, character)| character).collect()
-}
-
 fn truncated(text: &str, columns: usize) -> String {
     match columns {
         _ if display_width(text) <= columns => text.to_owned(),
         0 => String::new(),
-        _ => format!("{}{ELLIPSIS}", cut(text, columns - 1)),
+        _ => format!("{}{ELLIPSIS}", cut(text, columns - 1).0),
     }
 }
 
@@ -87,9 +79,9 @@ fn clipped(spans: Vec<Span>, columns: usize) -> Vec<Span> {
     spans
         .into_iter()
         .map(|span| {
-            let text = cut(&span.text, left);
-            left -= display_width(&text);
-            Span { text, ..span }
+            let (text, _) = cut(&span.text, left);
+            left -= display_width(text);
+            Span { text: text.to_owned(), ..span }
         })
         .filter(|span| !span.text.is_empty())
         .collect()

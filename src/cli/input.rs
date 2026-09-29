@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use super::UsageError;
+use crate::terminal::sanitize;
 
 const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const USAGE_HINT: &str = "no input: name a Markdown file (mrk README.md) or pipe one in (cat notes.md | mrk)";
@@ -21,7 +22,7 @@ fn read_capped(reader: impl Read, name: &str) -> Result<Vec<u8>> {
 /// and U+FFFD is inert on a terminal.
 fn decode(bytes: Vec<u8>, name: &str) -> String {
     String::from_utf8(bytes).unwrap_or_else(|error| {
-        eprintln!("⚠ {name} is not valid UTF-8: invalid bytes show as �");
+        eprintln!("⚠ {} is not valid UTF-8: invalid bytes show as �", sanitize::text(name));
         String::from_utf8_lossy(error.as_bytes()).into_owned()
     })
 }
@@ -38,7 +39,7 @@ fn read_stdin() -> Result<String> {
 
 pub fn read_input(file: Option<&Path>) -> Result<String> {
     match file {
-        None if io::stdin().is_terminal() => Err(UsageError(USAGE_HINT).into()),
+        None if io::stdin().is_terminal() => Err(UsageError(USAGE_HINT.to_owned()).into()),
         Some(path) if path != Path::new("-") => read_file(path),
         _ => read_stdin(),
     }
