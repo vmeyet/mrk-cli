@@ -35,13 +35,28 @@ pub struct Palette {
     pub caution: Rgb,
 }
 
+/// The syntax themes the presets use; `code` maps each onto the one embedded in two-face.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyntaxTheme {
+    CatppuccinLatte,
+    CatppuccinMacchiato,
+    CatppuccinMocha,
+    Dracula,
+    GitHub,
+    GruvboxDark,
+    GruvboxLight,
+    Nord,
+    OneHalfDark,
+    OneHalfLight,
+    TwoDark,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Theme {
     pub name: &'static str,
     pub appearance: Appearance,
     pub palette: Palette,
-    /// A theme name from `two_face::theme::EmbeddedThemeName`, as syntect knows it.
-    pub syntax: &'static str,
+    pub syntax: SyntaxTheme,
 }
 
 pub const DEFAULT_WIDTH: usize = 100;
@@ -150,15 +165,6 @@ mod tests {
         ];
 
         assert_eq!(names().collect::<Vec<_>>(), expected);
-    }
-
-    #[test]
-    fn every_syntax_theme_is_embedded_in_two_face() {
-        let embedded: Vec<&str> = two_face::theme::EmbeddedLazyThemeSet::theme_names().iter().map(|name| name.as_name()).collect();
-
-        for theme in all() {
-            assert!(embedded.contains(&theme.syntax), "{} uses missing syntax theme {}", theme.name, theme.syntax);
-        }
     }
 
     #[test]

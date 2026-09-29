@@ -4,18 +4,19 @@ use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::fontdb::Database;
 use resvg::usvg::{ImageHrefResolver, Options, Tree};
 
+use super::DiagramError;
 use super::frame::Frame;
 
 /// An SVG parsed with every external resource refused: fonts come only from `fonts`.
-pub fn parse(svg: &str, fonts: Arc<Database>) -> Result<Tree, String> {
-    Tree::from_str(svg, &isolated_options(fonts)).map_err(|error| format!("unreadable SVG ({error})"))
+pub fn parse(svg: &str, fonts: Arc<Database>) -> Result<Tree, DiagramError> {
+    Tree::from_str(svg, &isolated_options(fonts)).map_err(|error| DiagramError::UnreadableSvg(error.to_string()))
 }
 
 /// The tree drawn at the frame's scale onto a transparent canvas of the frame's pixel size, as PNG bytes.
-pub fn draw(tree: &Tree, frame: &Frame) -> Result<Vec<u8>, String> {
-    let mut pixmap = Pixmap::new(frame.width_px, frame.height_px).ok_or("empty picture")?;
+pub fn draw(tree: &Tree, frame: &Frame) -> Result<Vec<u8>, DiagramError> {
+    let mut pixmap = Pixmap::new(frame.width_px, frame.height_px).ok_or(DiagramError::Empty)?;
     resvg::render(tree, Transform::from_scale(frame.scale, frame.scale), &mut pixmap.as_mut());
-    pixmap.encode_png().map_err(|error| format!("PNG encoding failed ({error})"))
+    pixmap.encode_png().map_err(|error| DiagramError::PngEncoding(error.to_string()))
 }
 
 fn isolated_options(fonts: Arc<Database>) -> Options<'static> {

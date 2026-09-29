@@ -2,6 +2,7 @@ use std::panic::{self, AssertUnwindSafe};
 
 use mermaid_rs_renderer::{LayoutConfig, RenderOptions, Theme};
 
+use super::DiagramError;
 use crate::document::Rgb;
 use crate::theme::Palette;
 
@@ -11,13 +12,13 @@ pub const FONT_SIZE_PX: f32 = 14.0;
 const TRANSPARENT: &str = "none";
 
 /// Mermaid source drawn as an SVG in the palette's colours on a transparent background.
-pub fn render(source: &str, palette: &Palette) -> Result<String, String> {
+pub fn render(source: &str, palette: &Palette) -> Result<String, DiagramError> {
     let options = RenderOptions { theme: themed(palette), layout: layout() };
     let rendered = panic::catch_unwind(AssertUnwindSafe(|| mermaid_rs_renderer::render_with_options(source, options)));
     match rendered {
         Ok(Ok(svg)) => Ok(with_accents(&svg, palette)),
-        Ok(Err(error)) => Err(first_line(&error.to_string())),
-        Err(_) => Err("the diagram engine crashed".to_owned()),
+        Ok(Err(error)) => Err(DiagramError::Invalid(first_line(&error.to_string()))),
+        Err(_) => Err(DiagramError::Crashed),
     }
 }
 
@@ -154,7 +155,7 @@ mod tests {
 
     #[test]
     fn invalid_source_is_an_error() {
-        assert!(render("hello", &MRK_DARK.palette).is_err());
+        assert!(matches!(render("hello", &MRK_DARK.palette), Err(DiagramError::Invalid(_))));
     }
 
     #[test]

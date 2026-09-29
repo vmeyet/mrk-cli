@@ -61,7 +61,7 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `p
 
 - **Document**: the rendered output, a list of blocks. **Block**: text lines or a picture.
 - **Line**: spans that fit the width. **Span**: text with one style and an optional link.
-- **Theme**: a palette plus a syntax theme name. **Palette**: the named colours above.
+- **Theme**: a palette plus a syntax theme, one of the `SyntaxTheme` variants that `code` maps onto a two-face theme. **Palette**: the named colours above.
 - **Settings**: width, theme and the image cell size, everything a renderer reads.
 - **Picture**: a PNG with the cell box it occupies.
 - **Capabilities**: what the terminal can do (colour depth, images, cell size, background).

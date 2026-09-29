@@ -6,38 +6,70 @@ mod source;
 mod svg;
 mod text;
 
+use std::fmt;
+
 use crate::document::{Block, CellSize, Picture, Settings};
 
 /// Mermaid blocks above this size are shown as source (`specs/02-security.md` rule 4).
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
 
+/// Why a diagram is not drawn; the source fallback shows it in its note.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiagramError {
+    Oversized,
+    UnsafeSubgraphs,
+    Invalid(String),
+    Crashed,
+    Empty,
+    TooWide(usize),
+    TooLarge,
+    UnreadableSvg(String),
+    PngEncoding(String),
+}
+
+impl fmt::Display for DiagramError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Oversized => write!(formatter, "diagram over 64 KiB"),
+            Self::UnsafeSubgraphs => write!(formatter, "subgraph id reused or nested too deep"),
+            Self::Invalid(message) => write!(formatter, "{message}"),
+            Self::Crashed => write!(formatter, "the diagram renderer crashed"),
+            Self::Empty => write!(formatter, "nothing to draw"),
+            Self::TooWide(width) => write!(formatter, "the diagram is wider than {width} columns"),
+            Self::TooLarge => write!(formatter, "diagram too large to draw"),
+            Self::UnreadableSvg(message) => write!(formatter, "unreadable SVG ({message})"),
+            Self::PngEncoding(message) => write!(formatter, "PNG encoding failed ({message})"),
+        }
+    }
+}
+
 /// A ```mermaid block: a picture when `settings.cell` is set and the diagram renders, text otherwise.
 pub fn render(source: &str, settings: &Settings) -> Block {
     if source.len() > MAX_SOURCE_BYTES {
-        return as_source(source, "diagram over 64 KiB", settings);
+        return as_source(source, &DiagramError::Oversized, settings);
     }
 
     match settings.cell.and_then(|cell| picture(source, cell, settings).ok()) {
         Some(picture) => Block::Picture(picture),
-        None => as_text(source, settings).unwrap_or_else(|reason| as_source(source, &reason, settings)),
+        None => as_text(source, settings).unwrap_or_else(|error| as_source(source, &error, settings)),
     }
 }
 
-fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture, String> {
+fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture, DiagramError> {
     let svg = svg::render(source, &settings.theme.palette)?;
     let tree = raster::parse(&svg, fonts::for_text(source))?;
     let size = tree.size();
-    let frame = frame::fit(size.width(), size.height(), svg::FONT_SIZE_PX, cell, settings.width).ok_or("diagram too large to draw")?;
+    let frame = frame::fit(size.width(), size.height(), svg::FONT_SIZE_PX, cell, settings.width).ok_or(DiagramError::TooLarge)?;
     let png = raster::draw(&tree, &frame)?;
     Ok(Picture { png, cols: frame.cols, rows: frame.rows, alt: kind::describe(source).to_owned() })
 }
 
-fn as_text(source: &str, settings: &Settings) -> Result<Block, String> {
+fn as_text(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
     text::render(source, settings.width, &settings.theme.palette).map(Block::Lines)
 }
 
-fn as_source(source: &str, reason: &str, settings: &Settings) -> Block {
-    Block::Lines(source::render(source, reason, settings.width, &settings.theme.palette))
+fn as_source(source: &str, error: &DiagramError, settings: &Settings) -> Block {
+    Block::Lines(source::render(source, &error.to_string(), settings.width, &settings.theme.palette))
 }
 
 #[cfg(test)]
@@ -113,6 +145,14 @@ mod tests {
         let lines = lines(render(&source, &with_cell()));
 
         assert_eq!(lines[0].plain(), "mermaid: diagram over 64 KiB");
+        assert_eq!(lines[1].plain(), "graph TD");
+    }
+
+    #[test]
+    fn a_subgraph_inside_itself_is_shown_as_source() {
+        let lines = lines(render("graph TD\n subgraph a\n subgraph a\n end\n end", &test_settings()));
+
+        assert_eq!(lines[0].plain(), "mermaid: subgraph id reused or nested too deep");
         assert_eq!(lines[1].plain(), "graph TD");
     }
 

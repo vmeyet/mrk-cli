@@ -1,4 +1,4 @@
-use super::{Appearance, Palette, Theme};
+use super::{Appearance, Palette, SyntaxTheme, Theme};
 use crate::document::Rgb;
 
 pub const MRK_DARK: Theme = Theme {
@@ -22,7 +22,7 @@ pub const MRK_DARK: Theme = Theme {
         warning: Rgb(0xf0, 0xc6, 0x74),
         caution: Rgb(0xf2, 0x8b, 0x8b),
     },
-    syntax: "OneHalfDark",
+    syntax: SyntaxTheme::OneHalfDark,
 };
 
 pub const MRK_LIGHT: Theme = Theme {
@@ -46,7 +46,7 @@ pub const MRK_LIGHT: Theme = Theme {
         warning: Rgb(0x9a, 0x67, 0x00),
         caution: Rgb(0xc5, 0x3a, 0x3a),
     },
-    syntax: "OneHalfLight",
+    syntax: SyntaxTheme::OneHalfLight,
 };
 
 pub const CATPPUCCIN_MOCHA: Theme = Theme {
@@ -70,7 +70,7 @@ pub const CATPPUCCIN_MOCHA: Theme = Theme {
         warning: Rgb(0xf9, 0xe2, 0xaf),
         caution: Rgb(0xf3, 0x8b, 0xa8),
     },
-    syntax: "Catppuccin Mocha",
+    syntax: SyntaxTheme::CatppuccinMocha,
 };
 
 pub const CATPPUCCIN_LATTE: Theme = Theme {
@@ -94,7 +94,7 @@ pub const CATPPUCCIN_LATTE: Theme = Theme {
         warning: Rgb(0xdf, 0x8e, 0x1d),
         caution: Rgb(0xd2, 0x0f, 0x39),
     },
-    syntax: "Catppuccin Latte",
+    syntax: SyntaxTheme::CatppuccinLatte,
 };
 
 pub const TOKYO_NIGHT: Theme = Theme {
@@ -118,7 +118,7 @@ pub const TOKYO_NIGHT: Theme = Theme {
         warning: Rgb(0xe0, 0xaf, 0x68),
         caution: Rgb(0xf7, 0x76, 0x8e),
     },
-    syntax: "Catppuccin Macchiato",
+    syntax: SyntaxTheme::CatppuccinMacchiato,
 };
 
 pub const NORD: Theme = Theme {
@@ -142,7 +142,7 @@ pub const NORD: Theme = Theme {
         warning: Rgb(0xeb, 0xcb, 0x8b),
         caution: Rgb(0xbf, 0x61, 0x6a),
     },
-    syntax: "Nord",
+    syntax: SyntaxTheme::Nord,
 };
 
 pub const DRACULA: Theme = Theme {
@@ -166,7 +166,7 @@ pub const DRACULA: Theme = Theme {
         warning: Rgb(0xff, 0xb8, 0x6c),
         caution: Rgb(0xff, 0x55, 0x55),
     },
-    syntax: "Dracula",
+    syntax: SyntaxTheme::Dracula,
 };
 
 pub const GRUVBOX_DARK: Theme = Theme {
@@ -190,7 +190,7 @@ pub const GRUVBOX_DARK: Theme = Theme {
         warning: Rgb(0xfa, 0xbd, 0x2f),
         caution: Rgb(0xfb, 0x49, 0x34),
     },
-    syntax: "gruvbox-dark",
+    syntax: SyntaxTheme::GruvboxDark,
 };
 
 pub const GRUVBOX_LIGHT: Theme = Theme {
@@ -214,7 +214,7 @@ pub const GRUVBOX_LIGHT: Theme = Theme {
         warning: Rgb(0xb5, 0x76, 0x14),
         caution: Rgb(0x9d, 0x00, 0x06),
     },
-    syntax: "gruvbox-light",
+    syntax: SyntaxTheme::GruvboxLight,
 };
 
 pub const GITHUB_DARK: Theme = Theme {
@@ -238,7 +238,7 @@ pub const GITHUB_DARK: Theme = Theme {
         warning: Rgb(0xd2, 0x99, 0x22),
         caution: Rgb(0xf8, 0x51, 0x49),
     },
-    syntax: "TwoDark",
+    syntax: SyntaxTheme::TwoDark,
 };
 
 pub const GITHUB_LIGHT: Theme = Theme {
@@ -262,7 +262,7 @@ pub const GITHUB_LIGHT: Theme = Theme {
         warning: Rgb(0x9a, 0x67, 0x00),
         caution: Rgb(0xd1, 0x24, 0x2f),
     },
-    syntax: "GitHub",
+    syntax: SyntaxTheme::GitHub,
 };
 
 pub const ALL: [Theme; 11] = [
