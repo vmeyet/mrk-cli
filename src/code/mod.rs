@@ -49,6 +49,14 @@ mod tests {
     }
 
     #[test]
+    fn escape_bytes_in_code_do_not_shorten_the_background() {
+        let lines = render("printf '\x1b[31mred\x1b[0m'\n", None, &at_width(24));
+        let visible = |line: &Line| line.plain().chars().filter(|character| !character.is_control()).count();
+
+        assert!(lines.iter().all(|line| visible(line) == 24), "{}", framed(&lines));
+    }
+
+    #[test]
     fn every_line_is_exactly_the_width() {
         let code = "fn wide() {\n\tlet 漢字 = \"日本語のテキストはとても長いのでここで折り返されるはずです\";\n}\n";
         for width in [8, 12, 20, 40, 80, 100] {

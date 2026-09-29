@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::color::ansi256;
 use super::{Capabilities, ColorDepth, sanitize};
 use crate::document::{Line, Rgb, Span, Style};
@@ -11,27 +13,27 @@ struct Pen {
     link: Option<String>,
 }
 
-fn toggle(from: bool, to: bool, on: &str, off: &str) -> Option<String> {
-    (from != to).then(|| if to { on } else { off }.to_owned())
+fn toggle(from: bool, to: bool, on: &'static str, off: &'static str) -> Option<Cow<'static, str>> {
+    (from != to).then_some(Cow::Borrowed(if to { on } else { off }))
 }
 
-fn color_code(color: Option<Rgb>, depth: ColorDepth, layer: u8) -> String {
+fn color_code(color: Option<Rgb>, depth: ColorDepth, layer: u8) -> Cow<'static, str> {
     match (color, depth) {
-        (None, _) | (_, ColorDepth::None) => format!("{layer}9"),
-        (Some(Rgb(red, green, blue)), ColorDepth::TrueColor) => format!("{layer}8;2;{red};{green};{blue}"),
-        (Some(color), ColorDepth::Ansi256) => format!("{layer}8;5;{}", ansi256(color)),
+        (None, _) | (_, ColorDepth::None) => Cow::Borrowed(if layer == 3 { "39" } else { "49" }),
+        (Some(Rgb(red, green, blue)), ColorDepth::TrueColor) => Cow::Owned(format!("{layer}8;2;{red};{green};{blue}")),
+        (Some(color), ColorDepth::Ansi256) => Cow::Owned(format!("{layer}8;5;{}", ansi256(color))),
     }
 }
 
-fn intensity_codes(from: Style, to: Style) -> Vec<String> {
+fn intensity_codes(from: Style, to: Style) -> [Option<Cow<'static, str>>; 3] {
     let loses_intensity = (from.bold && !to.bold) || (from.dim && !to.dim);
-    let reset = loses_intensity.then(|| "22".to_owned());
-    let bold = (to.bold && (loses_intensity || !from.bold)).then(|| "1".to_owned());
-    let dim = (to.dim && (loses_intensity || !from.dim)).then(|| "2".to_owned());
-    [reset, bold, dim].into_iter().flatten().collect()
+    let reset = loses_intensity.then_some(Cow::Borrowed("22"));
+    let bold = (to.bold && (loses_intensity || !from.bold)).then_some(Cow::Borrowed("1"));
+    let dim = (to.dim && (loses_intensity || !from.dim)).then_some(Cow::Borrowed("2"));
+    [reset, bold, dim]
 }
 
-fn color_change(from: Option<Rgb>, to: Option<Rgb>, depth: ColorDepth, layer: u8) -> Option<String> {
+fn color_change(from: Option<Rgb>, to: Option<Rgb>, depth: ColorDepth, layer: u8) -> Option<Cow<'static, str>> {
     (from != to).then(|| color_code(to, depth, layer))
 }
 
@@ -43,7 +45,7 @@ fn sgr(from: Style, to: Style, depth: ColorDepth) -> String {
         color_change(from.fg, to.fg, depth, 3),
         color_change(from.bg, to.bg, depth, 4),
     ];
-    let codes: Vec<String> = intensity_codes(from, to).into_iter().chain(changes.into_iter().flatten()).collect();
+    let codes: Vec<Cow<'static, str>> = intensity_codes(from, to).into_iter().chain(changes).flatten().collect();
     if codes.is_empty() { String::new() } else { format!("\x1b[{}m", codes.join(";")) }
 }
 
@@ -78,12 +80,15 @@ pub fn line(line: &Line, capabilities: &Capabilities, margin: usize) -> String {
 
     let mut out = " ".repeat(margin);
     let mut pen = Pen::default();
+    let mut pen_source_link: Option<&str> = None;
     for span in &line.spans {
         let text = sanitize::text(&span.text);
         if text.is_empty() {
             continue;
         }
-        let next = Pen { style: visible_style(span.style, capabilities.color), link: visible_link(span, capabilities) };
+        let link = if span.link.as_deref() == pen_source_link { pen.link.clone() } else { visible_link(span, capabilities) };
+        pen_source_link = span.link.as_deref();
+        let next = Pen { style: visible_style(span.style, capabilities.color), link };
         out.push_str(&hyperlink(pen.link.as_deref(), next.link.as_deref()));
         out.push_str(&sgr(pen.style, next.style, capabilities.color));
         out.push_str(&text);

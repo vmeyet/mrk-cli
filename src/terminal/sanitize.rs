@@ -1,14 +1,7 @@
-const TAB: &str = "    ";
+use crate::text::{TAB, is_forbidden};
+
 const MAX_LINK_BYTES: usize = 2048;
 const ALLOWED_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
-
-fn is_bidi_control(character: char) -> bool {
-    matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-}
-
-fn is_forbidden(character: char) -> bool {
-    character.is_control() || is_bidi_control(character)
-}
 
 /// The text with every character a terminal could interpret removed: C0 and C1 controls, DEL, bidi overrides and isolates.
 /// A tab becomes spaces.

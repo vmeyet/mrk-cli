@@ -8,9 +8,8 @@ use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
 use super::language;
 use crate::document::{Rgb, Span, Style};
+use crate::text::TAB;
 use crate::theme::{SyntaxTheme, Theme};
-
-const TAB: &str = "    ";
 
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 static THEMES: LazyLock<EmbeddedLazyThemeSet> = LazyLock::new(two_face::theme::extra);

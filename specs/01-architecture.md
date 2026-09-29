@@ -36,7 +36,7 @@ src/
     output.rs      Output (print, pager, MRK_PAGER command), Layout: the render closure the pager calls on resize
   config.rs        Config { theme, width, images, align, pager }, strict TOML (unknown keys rejected)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, CellSize, plain(), highlight()
-  text.rs          display_width, wrap
+  text.rs          display_width, cut, wrap
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, resolve, names
   update.rs        `mrk update`: latest release tag from `git ls-remote --tags`, compared with the running version, installed with `cargo install --tag`
   version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
@@ -72,6 +72,8 @@ src/
 - Escape sequences are produced only inside `terminal/`: `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `query.rs` for the capability queries, `error_report` for dimmed error causes.
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
 - A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` helps.
+- Every width is `text::display_width`: counted per grapheme (at most two cells), a tab as four, the characters `terminal::sanitize` removes as none.
+  Every cut to a width goes through `text::cut`, which never splits a grapheme.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 
 ## Performance
