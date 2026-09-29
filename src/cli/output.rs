@@ -50,7 +50,12 @@ pub struct Layout {
 impl Layout {
     pub fn render(&self, columns: u16) -> Rendered {
         let capabilities = Capabilities { columns, ..self.capabilities };
-        let settings = Settings { width: width(self.requested_width, columns), theme: self.theme.clone(), cell: capabilities.cell };
+        let settings = Settings {
+            width: width(self.requested_width, columns),
+            theme: self.theme.clone(),
+            cell: capabilities.cell,
+            hyperlinks: capabilities.hyperlinks,
+        };
         let margin = terminal::margin(self.align, &capabilities, settings.width);
         Rendered { document: crate::markdown::render(&self.source, &settings), margin }
     }

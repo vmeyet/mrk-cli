@@ -65,6 +65,7 @@ src/
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
 - `terminal::pager::run(session: &Session, render: impl Fn(u16) -> Rendered)`: `render` lays the source out for a window that many columns wide and returns the Document and its margin.
 - `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: the only place escape sequences are produced; `margin` columns before every line and picture, from `terminal::margin`, then a picture's indent on each of its rows (centred on a wide terminal, `LEFT_MARGIN` otherwise).
+- `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
 - A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` helps.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 

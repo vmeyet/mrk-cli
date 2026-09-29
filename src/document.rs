@@ -125,6 +125,8 @@ pub struct Settings {
     pub width: usize,
     pub theme: Theme,
     pub cell: Option<CellSize>,
+    /// Whether the terminal makes links clickable; when it does not, a link's target is printed after its text.
+    pub hyperlinks: bool,
 }
 
 /// The document as bare text, one `[picture: alt cols×rows]` line per picture: what snapshot tests compare.

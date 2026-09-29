@@ -42,8 +42,8 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `p
 | Paragraph | `text`, wrapped to width, one blank line between blocks |
 | Emphasis | bold / italic / strikethrough (strike also dimmed) |
 | Inline code | `code` colour on `surface`, one space of padding each side |
-| Link | underlined `link`, OSC 8 hyperlink; autolinks likewise |
-| Image | `▣ alt text` in `muted`, hyperlinked to the source; never fetched |
+| Link | underlined `link`, OSC 8 hyperlink; autolinks likewise. Without hyperlinks (piped, no colour, dumb terminal) the text is followed by ` <url>` in `muted`, except when the text already is the URL |
+| Image | `▣ alt text` in `muted`, hyperlinked to the source (` <source>` after it without hyperlinks); never fetched |
 | Bullets | `•` `◦` `▪` by depth, in `accent`; numbers right-aligned in `accent` |
 | Task | `✔` in `success` / `○` in `muted`; done items dimmed |
 | Blockquote | `│ ` bar in `subtle`, text italic `muted` |
@@ -62,6 +62,6 @@ Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `p
 - **Document**: the rendered output, a list of blocks. **Block**: text lines or a picture.
 - **Line**: spans that fit the width. **Span**: text with one style and an optional link.
 - **Theme**: a palette plus a syntax theme, one of the `SyntaxTheme` variants that `code` maps onto a two-face theme. **Palette**: the named colours above.
-- **Settings**: width, theme and the image cell size, everything a renderer reads.
+- **Settings**: width, theme, the image cell size and whether links are clickable, everything a renderer reads.
 - **Picture**: a PNG with the cell box it occupies and the indent drawn left of each of its rows.
 - **Capabilities**: what the terminal can do (colour depth, images, cell size, background).

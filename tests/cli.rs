@@ -107,6 +107,11 @@ fn forced_colour_carries_hyperlinks() {
 }
 
 #[test]
+fn piped_links_print_their_target() {
+    mrk().write_stdin("[docs](https://example.com)").assert().success().stdout(predicate::str::contains("docs <https://example.com>"));
+}
+
+#[test]
 
 fn hostile_input_never_reaches_the_terminal() {
     let hostile = "# \x1b]0;title\x07 \x1b]52;c;AAAA\x07\n\n\x1b[2J text \u{9b}31m [x](javascript:alert(1))\n\n```\n\x1b[31m\n```\n";

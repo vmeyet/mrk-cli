@@ -65,7 +65,7 @@ const MAX_SUGGESTION_DISTANCE: usize = 3;
 
 /// The settings unit tests render with: dark theme, 80 columns, no pictures.
 pub fn test_settings() -> crate::document::Settings {
-    crate::document::Settings { width: 80, theme: MRK_DARK, cell: None }
+    crate::document::Settings { width: 80, theme: MRK_DARK, cell: None, hyperlinks: true }
 }
 
 /// Every built-in theme name, defaults first.

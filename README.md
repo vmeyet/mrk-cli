@@ -20,7 +20,7 @@ mrk -p notes.md   # read in the pager; diagrams stay images
 | `--width N` | `MRK_WIDTH` | `width` | terminal width, capped at 100 |
 | `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol, not under tmux |
 | `--align center\|left` | `MRK_ALIGN` | `align` | `center`: the text column sits in the middle of a wide window; piped output is never centred |
-| `--color auto\|always\|never` | `NO_COLOR` | | `auto`: colour on a tty |
+| `--color auto\|always\|never` | `NO_COLOR` | | `auto`: colour on a tty; without colour there are no hyperlinks, so links print their target as ` <url>` |
 | `-p`, `--pager` | `MRK_PAGER` | `pager` | off; the built-in pager keeps diagrams as images and stays open until `q`; `MRK_PAGER` pipes into that command instead (diagrams as text); piped output is never paged |
 | `--completions SHELL` | | | |
 
