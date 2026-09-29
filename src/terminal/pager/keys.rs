@@ -20,43 +20,78 @@ pub enum Action {
     Cancel,
 }
 
+/// The keys that trigger an action, `Ctrl` with `control` as one more, and what the help says the action does.
+struct Binding {
+    action: Action,
+    keys: &'static [KeyCode],
+    control: Option<char>,
+    meaning: &'static str,
+}
+
+const fn bind(action: Action, keys: &'static [KeyCode], control: Option<char>, meaning: &'static str) -> Binding {
+    Binding { action, keys, control, meaning }
+}
+
+const READING: &[Binding] = &[
+    bind(Action::LineDown, &[KeyCode::Char('j'), KeyCode::Down, KeyCode::Enter], None, "down a row"),
+    bind(Action::LineUp, &[KeyCode::Char('k'), KeyCode::Up], None, "up a row"),
+    bind(Action::PageDown, &[KeyCode::Char(' '), KeyCode::Char('f'), KeyCode::PageDown], Some('f'), "down a page"),
+    bind(Action::PageUp, &[KeyCode::Char('b'), KeyCode::PageUp], Some('b'), "up a page"),
+    bind(Action::HalfDown, &[KeyCode::Char('d')], Some('d'), "down half a page"),
+    bind(Action::HalfUp, &[KeyCode::Char('u')], Some('u'), "up half a page"),
+    bind(Action::Top, &[KeyCode::Char('g'), KeyCode::Home], None, "to the top"),
+    bind(Action::Bottom, &[KeyCode::Char('G'), KeyCode::End], None, "to the bottom"),
+    bind(Action::StartSearch, &[KeyCode::Char('/')], None, "search"),
+    bind(Action::NextMatch, &[KeyCode::Char('n')], None, "next match"),
+    bind(Action::PreviousMatch, &[KeyCode::Char('N')], None, "previous match"),
+    bind(Action::Quit, &[KeyCode::Char('q'), KeyCode::Esc], Some('c'), "quit"),
+];
+
+const PROMPTING: &[Binding] = &[
+    bind(Action::Confirm, &[KeyCode::Enter], None, "in a search: run it"),
+    bind(Action::Cancel, &[KeyCode::Esc], None, "in a search: cancel it"),
+    bind(Action::Erase, &[KeyCode::Backspace], None, "in a search: erase a character"),
+];
+
+fn find(bindings: &[Binding], is_bound: impl Fn(&Binding) -> bool) -> Option<Action> {
+    bindings.iter().find(|binding| is_bound(binding)).map(|binding| binding.action.clone())
+}
+
 fn control(code: KeyCode) -> Option<Action> {
-    match code {
-        KeyCode::Char('c') => Some(Action::Quit),
-        KeyCode::Char('f') => Some(Action::PageDown),
-        KeyCode::Char('b') => Some(Action::PageUp),
-        KeyCode::Char('d') => Some(Action::HalfDown),
-        KeyCode::Char('u') => Some(Action::HalfUp),
-        _ => None,
-    }
+    let KeyCode::Char(character) = code else { return None };
+    find(READING, |binding| binding.control == Some(character))
 }
 
 fn reading(code: KeyCode) -> Option<Action> {
-    match code {
-        KeyCode::Char('j') | KeyCode::Down | KeyCode::Enter => Some(Action::LineDown),
-        KeyCode::Char('k') | KeyCode::Up => Some(Action::LineUp),
-        KeyCode::Char(' ' | 'f') | KeyCode::PageDown => Some(Action::PageDown),
-        KeyCode::Char('b') | KeyCode::PageUp => Some(Action::PageUp),
-        KeyCode::Char('d') => Some(Action::HalfDown),
-        KeyCode::Char('u') => Some(Action::HalfUp),
-        KeyCode::Char('g') | KeyCode::Home => Some(Action::Top),
-        KeyCode::Char('G') | KeyCode::End => Some(Action::Bottom),
-        KeyCode::Char('/') => Some(Action::StartSearch),
-        KeyCode::Char('n') => Some(Action::NextMatch),
-        KeyCode::Char('N') => Some(Action::PreviousMatch),
-        KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
-        _ => None,
-    }
+    find(READING, |binding| binding.keys.contains(&code))
 }
 
 fn prompting(code: KeyCode) -> Option<Action> {
     match code {
-        KeyCode::Enter => Some(Action::Confirm),
-        KeyCode::Esc => Some(Action::Cancel),
-        KeyCode::Backspace => Some(Action::Erase),
         KeyCode::Char(character) => Some(Action::Type(character)),
-        _ => None,
+        _ => find(PROMPTING, |binding| binding.keys.contains(&code)),
     }
+}
+
+/// Spelled the same on every platform, where crossterm says `Return` on macOS.
+fn key_name(code: KeyCode) -> String {
+    match code {
+        KeyCode::Char(' ') => "Space".to_owned(),
+        KeyCode::Char(character) => character.to_string(),
+        KeyCode::Enter => "Enter".to_owned(),
+        KeyCode::Backspace => "Backspace".to_owned(),
+        other => other.to_string(),
+    }
+}
+
+fn keys_label(binding: &Binding) -> String {
+    let control = binding.control.map(|character| format!("Ctrl-{character}"));
+    binding.keys.iter().map(|code| key_name(*code)).chain(control).collect::<Vec<_>>().join(", ")
+}
+
+/// Every binding as its keys and what they do: the reading keys first, then the search prompt's.
+pub fn help() -> Vec<(String, &'static str)> {
+    READING.iter().chain(PROMPTING).map(|binding| (keys_label(binding), binding.meaning)).collect()
 }
 
 /// What a key press does, while reading or while typing a search query.
@@ -127,5 +162,14 @@ mod tests {
         assert_eq!(action(press(KeyCode::Backspace), true), Some(Action::Erase));
         assert_eq!(action(ctrl('f'), true), None);
         assert_eq!(action(ctrl('c'), true), Some(Action::Quit));
+    }
+
+    #[test]
+    fn the_help_names_every_key_of_an_action() {
+        let help = help();
+
+        assert!(help.contains(&("Space, f, Page Down, Ctrl-f".to_owned(), "down a page")), "{help:?}");
+        assert!(help.contains(&("q, Esc, Ctrl-c".to_owned(), "quit")), "{help:?}");
+        assert_eq!(help.len(), READING.len() + PROMPTING.len());
     }
 }

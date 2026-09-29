@@ -4,7 +4,7 @@ Crate `mrk`, binary `mrk`, edition 2024.
 
 ## Features
 
-- `cli` (default): the binary and the `cli`, `config`, `terminal` and `update` modules, with `clap`, `clap_complete`, `crossterm`, `dirs`, `toml`, `serde`, `shell-words`, `rustix` and `base64`.
+- `cli` (default): the binary and the `cli`, `config`, `terminal` and `update` modules, with `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `dirs`, `toml`, `serde`, `shell-words`, `rustix` and `base64`.
 - Always on, the library core: `document`, `text`, `theme`, `markdown`, `code`, `mermaid`, `version`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
 
 ## Pipeline
@@ -28,9 +28,10 @@ main ─▶ cli::run
 ```
 build.rs           embeds the git commit as GIT_HASH for version.rs
 src/
-  main.rs          calls cli::run, maps errors to `✗ message` and exit code 1
+  main.rs          calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
   lib.rs           module list; `cli`, `config`, `terminal`, `update` behind the `cli` feature
   cli/             clap arguments, precedence flags > env > config, orchestration
+    help.rs        the sections after the options (settings, config lookup, pager keys, exit status), as --help text and man roff
     input.rs       file or stdin, capped at 8 MiB, the name the pager shows
     output.rs      Output (print, pager, MRK_PAGER command), Layout: the render closure the pager calls on resize
   config.rs        Config { theme, width, images, align, pager }, strict TOML (unknown keys rejected)
@@ -52,7 +53,7 @@ src/
 `mrk -p` on a terminal takes the alternate screen until `q`, even when the document fits: it is meant to be the program another TUI hands the terminal to.
 `less` strips kitty graphics, so the pager is built in; `$MRK_PAGER` swaps it for a command, split into words with `shell-words` and run without a shell, fed the printed ANSI with pictures off.
 
-- Pure: `page.rs` flattens the Document into rows (a `Line` is one row, a `Picture` spans `rows`), once per render; `state.rs` holds the scroll position, clamped to `rows - height`, the search and the prompt, and changes only through `Pager::apply(Action)`; `keys.rs` maps keys to actions; `search.rs` finds case-insensitive literal matches over `Line::plain` and paints them with `document::highlight`; `status.rs` lays out the last row; `picture.rs` clips a picture to the rows on screen; `frame.rs` turns all of it into one string per frame.
+- Pure: `page.rs` flattens the Document into rows (a `Line` is one row, a `Picture` spans `rows`), once per render; `state.rs` holds the scroll position, clamped to `rows - height`, the search and the prompt, and changes only through `Pager::apply(Action)`; `keys.rs` maps keys to actions through one binding table that `--help` and the man page also list; `search.rs` finds case-insensitive literal matches over `Line::plain` and paints them with `document::highlight`; `status.rs` lays out the last row; `picture.rs` clips a picture to the rows on screen; `frame.rs` turns all of it into one string per frame.
 - Edge: `screen.rs` takes raw mode, the alternate screen, a hidden cursor and no autowrap, and gives them back from `Drop`, which also runs when a panic unwinds out of the pager (release builds unwind); while held, a panic hook only keeps the pager thread's panic report, printed once the terminal is back, so a panic the mermaid renderers catch leaves the pager running; `mod.rs` runs the crossterm event loop and redraws only after an event. A resize that changes the width renders the source again through the caller's closure; a burst of resizes renders once.
 - Pictures: each is sent once per render with an image id (`a=t,i=…`), then every frame first removes the placements (`a=d,d=i`, lowercase keeps the data) and places the visible ones at the cursor (`a=p,i=…,p=1,C=1`), after the indent drawn on their rows. A picture partly off screen is cropped with the source rectangle (`x,y,w,h`, the pixel band behind its visible rows) and drawn into `c×r` visible cells, so it scrolls row by row. On exit every pager id is freed (`a=d,d=R`). The frame is one write inside synchronized output (`CSI ?2026h … l`), so nothing flickers.
 - Input: keys come from the terminal even when the Markdown came from stdin; crossterm's `use-dev-tty` feature reads `/dev/tty` with `poll`/`select`, which kqueue refuses on macOS.

@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
+use super::UsageError;
 use crate::config::MIN_WIDTH;
 use crate::document::{Document, Settings};
 use crate::terminal::pager::{self, Rendered, Session};
@@ -26,7 +27,11 @@ pub fn choose(wants_pager: bool, is_terminal: bool, command: Option<&str>) -> Re
     if !wants_pager || !is_terminal {
         return Ok(Output::Print);
     }
-    let words = command.map(shell_words::split).transpose().context("MRK_PAGER does not split into words")?.unwrap_or_default();
+    let words = command
+        .map(shell_words::split)
+        .transpose()
+        .with_context(|| UsageError("MRK_PAGER does not split into words".to_owned()))?
+        .unwrap_or_default();
     Ok(if words.is_empty() { Output::Pager } else { Output::Command(words) })
 }
 
@@ -65,7 +70,7 @@ fn write_all(out: &mut impl Write, document: &Document, capabilities: &Capabilit
     terminal::write(document, capabilities, margin, out).and_then(|()| out.flush())
 }
 
-fn ignore_broken_pipe(written: io::Result<()>) -> io::Result<()> {
+pub fn ignore_broken_pipe(written: io::Result<()>) -> io::Result<()> {
     match written {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         other => other,
@@ -142,6 +147,6 @@ mod tests {
 
     #[test]
     fn an_unbalanced_quote_is_refused() {
-        assert!(choose(true, true, Some("less 'oops")).is_err());
+        assert!(choose(true, true, Some("less 'oops")).unwrap_err().is::<UsageError>());
     }
 }

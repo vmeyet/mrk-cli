@@ -18,13 +18,21 @@ mrk -p notes.md   # read in the pager; diagrams stay images
 |---|---|---|---|
 | `--theme NAME` | `MRK_THEME` | `theme` | `mrk-dark` / `mrk-light` from the terminal background |
 | `--width N` | `MRK_WIDTH` | `width` | terminal width, capped at 100 |
-| `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol, not under tmux |
+| `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol, not under tmux or screen; `always` tries inside them too; piped output never gets pictures |
 | `--align center\|left` | `MRK_ALIGN` | `align` | `center`: the text column sits in the middle of a wide window; piped output is never centred |
 | `--color auto\|always\|never` | `NO_COLOR` | | `auto`: colour on a tty; without colour there are no hyperlinks, so links print their target as ` <url>` |
-| `-p`, `--pager` | `MRK_PAGER` | `pager` | off; the built-in pager keeps diagrams as images and stays open until `q`; `MRK_PAGER` pipes into that command instead (diagrams as text); piped output is never paged |
+| `-p`, `--pager` | | `pager` | off; the built-in pager keeps diagrams as images and stays open until `q`; piped output is never paged |
+| | `MRK_PAGER` | | the command `-p` pipes into instead of the built-in pager (diagrams as text); setting it does not turn paging on |
 | `--completions SHELL` | | | |
 
-Config lives in `~/.config/mrk/config.toml`:
+Flags win over the environment, the environment over the config file.
+A bad flag, environment value or config file exits with 2, any other failure with 1.
+
+The config file is the first of these that exists:
+
+1. `$XDG_CONFIG_HOME/mrk/config.toml` when `XDG_CONFIG_HOME` is set, `~/.config/mrk/config.toml` otherwise
+2. `~/Library/Application Support/mrk/config.toml` on macOS
+
 
 ```toml
 theme = "tokyo-night"
@@ -34,7 +42,28 @@ align = "left"
 pager = true
 ```
 
-Pager keys: `j`/`k`/arrows scroll a row, `space`/`b` a page, `d`/`u` half a page, `g`/`G` top and bottom, `/` searches, `n`/`N` move between matches, `q` quits.
+## Pager keys
+
+| Keys | Action |
+|---|---|
+| `j`, `↓`, `Enter` / `k`, `↑` | down / up a row |
+| `Space`, `f`, `Page Down`, `Ctrl-f` / `b`, `Page Up`, `Ctrl-b` | down / up a page |
+| `d`, `Ctrl-d` / `u`, `Ctrl-u` | down / up half a page |
+| `g`, `Home` / `G`, `End` | top / bottom |
+| `/` | search; then `Enter` runs it, `Esc` cancels, `Backspace` erases |
+| `n` / `N` | next / previous match |
+| `q`, `Esc`, `Ctrl-c` | quit |
+
+`mrk --help` prints the same list, from the pager's own key table.
+
+## Completions and man page
+
+```sh
+mrk --completions zsh > ~/.zfunc/_mrk                          # with fpath+=~/.zfunc before compinit
+mrk --completions bash > ~/.local/share/bash-completion/completions/mrk
+mrk --completions fish > ~/.config/fish/completions/mrk.fish
+mkdir -p ~/.local/share/man/man1 && mrk --man > ~/.local/share/man/man1/mrk.1   # then: man mrk
+```
 
 ## Library
 

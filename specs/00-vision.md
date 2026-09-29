@@ -21,16 +21,22 @@ mrk FILE            render a file
 mrk                 render stdin (cat notes.md | mrk)
 mrk --theme NAME    pick a theme; mrk --list-themes shows them with a swatch
 mrk --width N       wrap width in columns (default: terminal width, capped at 100)
-mrk --images auto|always|never   Mermaid as images (auto: when the terminal supports it)
+mrk --images auto|always|never   Mermaid as images (auto: when the terminal supports it, outside tmux/screen; always: inside them too)
 mrk --align center|left          centre the text column in a wide window (default center; piped output is never centred)
 mrk --color auto|always|never    auto honours NO_COLOR and a non-tty stdout
 mrk -p FILE         read in the pager: diagrams stay images, j/k/space/b/g/G scroll, / n N search, q quits
-MRK_PAGER="less -R" mrk -p FILE  pipe into that command instead (split into words, no shell), diagrams as text
+MRK_PAGER="less -R" mrk -p FILE  pipe into that command instead (split into words, no shell), diagrams as text; MRK_PAGER alone never pages
 mrk --completions zsh
 mrk update          install the latest release tag with cargo when it is newer (--force reinstalls); the only command that uses the network
+mrk --man           the man page as roff (hidden from --help)
+mrk --list-themes   names with a swatch on a terminal, bare names one per line when piped
 ```
 
-Config: `~/.config/mrk/config.toml` with `theme`, `width`, `images`, `align`, `pager`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+Config: the first of `$XDG_CONFIG_HOME/mrk/config.toml` (or `~/.config/mrk/config.toml`) and, on macOS, `~/Library/Application Support/mrk/config.toml`, with `theme`, `width`, `images`, `align`, `pager`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+`--help` ends with that lookup, the environment, the pager keys and the exit status; the man page carries the same sections.
+
+Exit status: 0 on success, 2 for a usage mistake (a bad flag, environment value or config file, an unknown theme from any of them), 1 for any other failure.
+An unknown theme gets a "did you mean" only when the closest name is at most one edit per three typed characters away.
 
 ## Visual language
 

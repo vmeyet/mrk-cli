@@ -17,12 +17,12 @@ fn mrk() -> Command {
 }
 
 #[test]
-fn list_themes_prints_every_theme() {
+fn list_themes_prints_bare_names_when_piped() {
     mrk()
         .arg("--list-themes")
         .assert()
         .success()
-        .stdout(predicate::str::contains("mrk-dark"))
+        .stdout(predicate::str::starts_with("mrk-dark\nmrk-light\n"))
         .stdout(predicate::str::contains('\x1b').not());
 }
 
@@ -42,6 +42,32 @@ fn completions_print_a_script() {
 }
 
 #[test]
+fn the_man_page_is_roff_with_the_pager_keys() {
+    mrk()
+        .arg("--man")
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with(".ie \\n(.g .ds Aq"))
+        .stdout(predicate::str::contains(".SH \"PAGER KEYS\""));
+}
+
+#[test]
+fn the_man_flag_stands_alone() {
+    mrk().args(["--man", "a.md"]).assert().code(2);
+}
+
+#[test]
+fn long_help_names_the_config_file_and_the_pager_keys() {
+    mrk().arg("--help").assert().success().stdout(
+        predicate::str::contains("~/.config/mrk/config.toml")
+            .and(predicate::str::contains("~/Library/Application Support/mrk/config.toml"))
+            .and(predicate::str::contains("Flags win over the environment"))
+            .and(predicate::str::contains("q, Esc, Ctrl-c"))
+            .and(predicate::str::contains("does not turn paging on")),
+    );
+}
+
+#[test]
 fn a_missing_file_is_an_error_naming_it() {
     mrk().arg("does-not-exist.md").assert().code(1).stderr(predicate::str::contains("✗ reading does-not-exist.md"));
 }
@@ -52,13 +78,18 @@ fn oversized_input_is_refused() {
 }
 
 #[test]
-fn an_unknown_theme_is_an_error() {
-    mrk().args(["--theme", "nope", "-"]).write_stdin("# hi").assert().code(1).stderr(predicate::str::contains("unknown theme \"nope\""));
+fn an_unknown_theme_exits_with_2() {
+    mrk().args(["--theme", "nope", "-"]).write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("unknown theme \"nope\""));
 }
 
 #[test]
-fn an_unknown_theme_from_the_environment_is_an_error() {
-    mrk().env("MRK_THEME", "nope").write_stdin("# hi").assert().code(1).stderr(predicate::str::contains("unknown theme"));
+fn an_unknown_theme_from_the_environment_exits_with_2() {
+    mrk().env("MRK_THEME", "nope").write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("unknown theme"));
+}
+
+#[test]
+fn a_far_theme_name_gets_no_suggestion() {
+    mrk().args(["--theme", "bad", "-"]).write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("did you mean").not());
 }
 
 #[test]
@@ -67,12 +98,12 @@ fn a_bad_flag_exits_with_2() {
 }
 
 #[test]
-fn a_malformed_config_is_an_error_naming_it() {
+fn a_malformed_config_exits_with_2_naming_it() {
     let home = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("malformed-config");
     std::fs::create_dir_all(home.join("mrk")).unwrap();
     std::fs::write(home.join("mrk/config.toml"), "colour = \"always\"\n").unwrap();
 
-    mrk().env("XDG_CONFIG_HOME", &home).write_stdin("# hi").assert().code(1).stderr(
+    mrk().env("XDG_CONFIG_HOME", &home).write_stdin("# hi").assert().code(2).stderr(
         predicate::str::contains("invalid config").and(predicate::str::contains("config.toml")).and(predicate::str::contains("line 1")),
     );
 }

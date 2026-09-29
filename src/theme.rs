@@ -62,6 +62,8 @@ pub struct Theme {
 pub const DEFAULT_WIDTH: usize = 100;
 
 const MAX_SUGGESTION_DISTANCE: usize = 3;
+/// A suggestion allows one edit per this many typed characters, so a short name is only matched by a near twin.
+const CHARS_PER_EDIT: usize = 3;
 
 /// The settings unit tests render with: dark theme, 80 columns, no pictures.
 pub fn test_settings() -> crate::document::Settings {
@@ -103,9 +105,10 @@ fn unknown_theme(name: &str) -> anyhow::Error {
 
 fn closest_name(name: &str) -> Option<&'static str> {
     let wanted = name.trim().to_ascii_lowercase();
+    let allowed = wanted.chars().count().div_ceil(CHARS_PER_EDIT).min(MAX_SUGGESTION_DISTANCE);
     names()
         .map(|candidate| (distance(&wanted, candidate), candidate))
-        .filter(|(distance, _)| *distance <= MAX_SUGGESTION_DISTANCE)
+        .filter(|(distance, _)| *distance <= allowed)
         .min_by_key(|(distance, _)| *distance)
         .map(|(_, candidate)| candidate)
 }
@@ -218,6 +221,13 @@ mod tests {
 
         assert!(message.contains("did you mean \"dracula\"?"), "{message}");
         assert!(message.contains("github-light"), "{message}");
+    }
+
+    #[test]
+    fn a_short_name_is_only_matched_by_a_near_twin() {
+        assert_eq!(closest_name("nrod"), Some("nord"));
+        assert_eq!(closest_name("bad"), None);
+        assert_eq!(closest_name("x"), None);
     }
 
     #[test]

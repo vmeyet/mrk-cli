@@ -38,7 +38,7 @@ fn read_stdin() -> Result<String> {
 
 pub fn read_input(file: Option<&Path>) -> Result<String> {
     match file {
-        None if io::stdin().is_terminal() => Err(UsageError(USAGE_HINT).into()),
+        None if io::stdin().is_terminal() => Err(UsageError(USAGE_HINT.to_owned()).into()),
         Some(path) if path != Path::new("-") => read_file(path),
         _ => read_stdin(),
     }
