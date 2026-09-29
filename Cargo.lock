@@ -889,6 +889,7 @@ dependencies = [
  "syntect",
  "tempfile",
  "toml",
+ "ttf-parser",
  "two-face",
  "unicode-width",
 ]

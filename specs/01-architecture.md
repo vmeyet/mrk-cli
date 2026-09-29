@@ -70,6 +70,6 @@ src/
 ## Performance
 
 - syntect's syntax and theme sets load lazily, once, on the first code block (`std::sync::LazyLock`).
-- The mermaid engine and font database load lazily on the first diagram; fonts are the system set filtered to what the SVG asks for.
+- The mermaid engine and font database load lazily on the first diagram; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; the whole system set loads only when those fallbacks miss a glyph.
 - Terminal queries (kitty graphics support, background colour) share one round trip ended by a DA1 request, with a 100 ms timeout, and only run when stdout is a tty and the answer is not already known from the environment.
 - Release profile: thin LTO, one codegen unit, stripped.
