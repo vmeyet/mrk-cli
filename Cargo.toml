@@ -1,5 +1,5 @@
 [package]
-name = "mrk"
+name = "mrk-cli"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.92"
@@ -11,6 +11,9 @@ homepage = "https://github.com/vmeyet/mrk-cli"
 keywords = ["markdown", "terminal", "mermaid", "cli", "renderer"]
 categories = ["command-line-utilities", "text-processing", "visualization"]
 include = ["/src/**/*.rs", "/build.rs", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+
+[lib]
+name = "mrk"
 
 [[bin]]
 name = "mrk"
@@ -58,6 +61,9 @@ opt-level = "s"
 lto = "fat"
 strip = true
 codegen-units = 1
+
+[profile.dist]
+inherits = "release"
 
 [lints.rust]
 unsafe_code = "forbid"

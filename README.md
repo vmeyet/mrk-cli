@@ -2,8 +2,20 @@
 
 Render Markdown beautifully in the terminal: syntax-highlighted code, tables, alerts, footnotes, themes, and Mermaid diagrams drawn as real images in Ghostty, kitty and WezTerm (box-drawing text elsewhere).
 
+## Install
+
 ```sh
-cargo install --git https://github.com/vmeyet/mrk-cli
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vmeyet/mrk-cli/releases/latest/download/mrk-cli-installer.sh | sh
+brew install vmeyet/tap/mrk-cli
+cargo install --locked --git https://github.com/vmeyet/mrk-cli   # Rust 1.92 or newer
+```
+
+Release builds cover macOS and Linux on x86_64 and arm64.
+`mrk update` installs the latest release tag with cargo when it is newer.
+
+## Use
+
+```sh
 mrk update        # install the latest release when it is newer; dependencies stay built in the cache
 mrk README.md
 cat notes.md | mrk
@@ -67,10 +79,10 @@ mkdir -p ~/.local/share/man/man1 && mrk --man > ~/.local/share/man/man1/mrk.1   
 
 ## Library
 
-Render Markdown into styled lines and pictures from Rust, without the CLI and terminal dependencies:
+Render Markdown into styled lines and pictures from Rust, without the CLI and terminal dependencies; the package is `mrk-cli`, the crate stays `mrk`:
 
 ```toml
-mrk = { git = "https://github.com/vmeyet/mrk-cli", tag = "v0.2.0", default-features = false }
+mrk-cli = { git = "https://github.com/vmeyet/mrk-cli", default-features = false }
 ```
 
 ```rust

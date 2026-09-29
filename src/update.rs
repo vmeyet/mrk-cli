@@ -150,7 +150,7 @@ mod tests {
     fn forgetting_mrk_drops_only_its_own_fingerprints() {
         let build = tempfile::tempdir().unwrap();
         let fingerprints = build.path().join("release").join(".fingerprint");
-        for name in ["mrk-3483aceb8f1a5a28", "mrk-e613dd567bc7d97f", "serde-0123456789abcdef", "mrkdown-0000000000000000"] {
+        for name in ["mrk-cli-3483aceb8f1a5a28", "mrk-cli-e613dd567bc7d97f", "mrk-client-0000000000000000", "serde-0123456789abcdef"] {
             std::fs::create_dir_all(fingerprints.join(name)).unwrap();
         }
 
@@ -159,7 +159,7 @@ mod tests {
         let mut left: Vec<String> =
             std::fs::read_dir(&fingerprints).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
-        assert_eq!(left, ["mrkdown-0000000000000000", "serde-0123456789abcdef"]);
+        assert_eq!(left, ["mrk-client-0000000000000000", "serde-0123456789abcdef"]);
     }
 
     #[test]
