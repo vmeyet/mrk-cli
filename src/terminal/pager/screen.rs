@@ -5,9 +5,10 @@ use std::thread;
 
 use super::frame;
 
-/// Alternate screen, cursor hidden, no line wrap so a line never spills onto the next row.
-const ENTER: &str = "\x1b[?1049h\x1b[?25l\x1b[?7l";
-const LEAVE: &str = "\x1b[?2026l\x1b[?7h\x1b[?25h\x1b[?1049l";
+/// Alternate screen, cursor hidden, no line wrap so a line never spills onto the next row, and the wheel sent as
+/// arrow keys (alternate scroll) so it scrolls without capturing the mouse, which would break text selection.
+const ENTER: &str = "\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1007h";
+const LEAVE: &str = "\x1b[?1007l\x1b[?2026l\x1b[?7h\x1b[?25h\x1b[?1049l";
 
 type Hook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send>;
 
