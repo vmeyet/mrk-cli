@@ -3,7 +3,7 @@
 All notable changes to mrk are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and mrk follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-09-30
 
 ### Changed
 
@@ -49,5 +49,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
-[Unreleased]: https://github.com/vmeyet/mrk-cli/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/vmeyet/mrk-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vmeyet/mrk-cli/releases/tag/v0.2.0
