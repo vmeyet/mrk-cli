@@ -3,6 +3,13 @@
 All notable changes to mrk are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and mrk follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-30
+
+### Fixed
+
+- iTerm2 shows Mermaid diagrams as text instead of blank space: it answers the kitty graphics query but draws no picture.
+- The pager scrolls with the mouse wheel on terminals that honour alternate scroll mode, iTerm2 included, and text selection keeps working.
+
 ## [0.3.0] - 2026-09-30
 
 ### Changed
@@ -49,5 +56,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.3.1]: https://github.com/vmeyet/mrk-cli/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/vmeyet/mrk-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vmeyet/mrk-cli/releases/tag/v0.2.0
