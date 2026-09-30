@@ -23,7 +23,8 @@ const TRUECOLOR_PROGRAMS: [&str; 4] = ["ghostty", "WezTerm", "iTerm.app", "vscod
 const TRUECOLOR_TERMS: [&str; 3] = ["xterm-kitty", "xterm-ghostty", "wezterm"];
 const GRAPHICS_PROGRAMS: [&str; 2] = ["ghostty", "WezTerm"];
 const GRAPHICS_TERMS: [&str; 2] = ["xterm-kitty", "xterm-ghostty"];
-const NO_GRAPHICS_PROGRAMS: [&str; 2] = ["Apple_Terminal", "vscode"];
+/// iTerm2 answers the kitty graphics query with `OK` yet draws none of mrk's pictures.
+const NO_GRAPHICS_PROGRAMS: [&str; 3] = ["Apple_Terminal", "iTerm.app", "vscode"];
 
 /// The environment variables detection reads, and whether stdout is a terminal.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -192,6 +193,7 @@ mod tests {
             assert_eq!(known_graphics(&tty(&variables)), Some(true), "{variables:?}");
         }
         assert_eq!(known_graphics(&tty(&[("TERM_PROGRAM", "Apple_Terminal")])), Some(false));
+        assert_eq!(known_graphics(&tty(&[("TERM_PROGRAM", "iTerm.app")])), Some(false));
         assert_eq!(known_graphics(&tty(&[("TERM", "xterm-256color")])), None);
     }
 
