@@ -57,7 +57,7 @@ src/
 - Edge: `screen.rs` takes raw mode, the alternate screen, a hidden cursor and no autowrap, and gives them back from `Drop`, which also runs when a panic unwinds out of the pager (release builds unwind); while held, a panic hook only keeps the pager thread's panic report, printed once the terminal is back, so a panic the mermaid renderers catch leaves the pager running; `mod.rs` runs the crossterm event loop and redraws only after an event. A resize that changes the width renders the source again through the caller's closure; a burst of resizes renders once.
 - Pictures: each is sent once per render with an image id (`a=t,i=…`), then every frame first removes the placements (`a=d,d=i`, lowercase keeps the data) and places the visible ones at the cursor (`a=p,i=…,p=1,C=1`), after the indent drawn on their rows. A picture partly off screen is cropped with the source rectangle (`x,y,w,h`, the pixel band behind its visible rows) and drawn into `c×r` visible cells, so it scrolls row by row. On exit every pager id is freed (`a=d,d=R`). The frame is one write inside synchronized output (`CSI ?2026h … l`), so nothing flickers.
 - Input: keys come from the terminal even when the Markdown came from stdin; crossterm's `use-dev-tty` feature reads `/dev/tty` with `poll`/`select`, which kqueue refuses on macOS.
-- The mouse is not captured, so text selection keeps working; terminals that translate the wheel into arrow keys on the alternate screen (Ghostty, kitty, WezTerm) scroll the pager with it.
+- The mouse is not captured, so text selection keeps working; the pager turns on alternate scroll mode (`?1007`), so terminals that honour it send the wheel as arrow keys and scroll the pager with it.
 
 ## Contracts
 
