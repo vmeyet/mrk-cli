@@ -58,7 +58,7 @@ impl Layout {
         let settings = Settings {
             width: width(self.requested_width, columns),
             theme: self.theme.clone(),
-            cell: capabilities.cell,
+            cell: capabilities.graphics.map(|graphics| graphics.cell),
             hyperlinks: capabilities.hyperlinks,
         };
         let margin = terminal::margin(self.align, &capabilities, settings.width);

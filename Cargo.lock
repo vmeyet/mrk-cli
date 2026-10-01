@@ -892,6 +892,7 @@ dependencies = [
  "insta",
  "mermaid-rs-renderer",
  "mermaid-text",
+ "png",
  "predicates",
  "resvg",
  "roff",

@@ -1,4 +1,4 @@
-use crate::document::Rgb;
+use crate::document::{CellSize, Rgb};
 
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
@@ -8,7 +8,11 @@ const KITTY_QUERY_ID: &str = "i=31";
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Replies {
     pub graphics: bool,
+    /// The DA1 reply lists attribute 4, Sixel graphics.
+    pub sixel: bool,
     pub background: Option<Rgb>,
+    /// The cell size in pixels, from the reply to `CSI 16 t`.
+    pub cell: Option<CellSize>,
     /// The DA1 reply arrived, so every earlier reply has too.
     pub answered: bool,
 }
@@ -73,6 +77,21 @@ fn is_primary_attributes(body: &[u8]) -> bool {
     body.first() == Some(&b'?') && body.last() == Some(&b'c')
 }
 
+/// `?62;4;22c` lists the terminal's attributes between the `?` and the `c`.
+fn has_sixel(body: &[u8]) -> bool {
+    let attributes = body.get(1..body.len() - 1).unwrap_or_default();
+    attributes.split(|&byte| byte == b';').any(|attribute| attribute == b"4")
+}
+
+/// `6;height;width t`, both in pixels and above zero.
+fn cell_size(body: &[u8]) -> Option<CellSize> {
+    let text = std::str::from_utf8(body).ok()?;
+    let sizes: Vec<u16> = text.strip_prefix("6;")?.strip_suffix('t')?.split(';').map(str::parse).collect::<Result<_, _>>().ok()?;
+    let [height_px, width_px] = sizes.as_slice() else { return None };
+    let cell = CellSize { width_px: *width_px, height_px: *height_px };
+    (cell.width_px > 0 && cell.height_px > 0).then_some(cell)
+}
+
 fn is_graphics_ok(body: &[u8]) -> bool {
     let text = String::from_utf8_lossy(body);
     let Some((keys, message)) = text.strip_prefix('G').and_then(|rest| rest.split_once(';')) else { return false };
@@ -95,10 +114,11 @@ fn background(body: &[u8]) -> Option<Rgb> {
 
 fn record(replies: Replies, sequence: &Sequence<'_>) -> Replies {
     match sequence {
-        Sequence::Csi(body) if is_primary_attributes(body) => Replies { answered: true, ..replies },
+        Sequence::Csi(body) if is_primary_attributes(body) => Replies { answered: true, sixel: has_sixel(body), ..replies },
+        Sequence::Csi(body) => Replies { cell: cell_size(body).or(replies.cell), ..replies },
         Sequence::Apc(body) if is_graphics_ok(body) => Replies { graphics: true, ..replies },
         Sequence::Osc(body) => Replies { background: background(body).or(replies.background), ..replies },
-        _ => replies,
+        Sequence::Apc(_) => replies,
     }
 }
 
@@ -127,13 +147,33 @@ mod tests {
     fn a_kitty_ok_then_da1_means_graphics() {
         let replies = parse(&[b"\x1b_Gi=31;OK\x1b\\".as_slice(), DA1].concat());
 
-        assert_eq!(replies, Replies { graphics: true, background: None, answered: true });
+        assert_eq!(replies, Replies { graphics: true, answered: true, ..Replies::default() });
     }
 
     #[test]
     fn a_kitty_error_is_no_graphics() {
         assert!(!parse(b"\x1b_Gi=31;ENOTSUPPORTED:x\x1b\\").graphics);
         assert!(!parse(b"\x1b_Gi=7;OK\x1b\\").graphics);
+    }
+
+    #[test]
+    fn attribute_4_in_the_da1_reply_means_sixel() {
+        assert!(parse(b"\x1b[?62;4;22c").sixel);
+        assert!(parse(b"\x1b[?4c").sixel);
+        assert!(!parse(DA1).sixel);
+        assert!(!parse(b"\x1b[?62;44;22c").sixel);
+    }
+
+    #[test]
+    fn the_cell_size_reply_is_height_then_width() {
+        assert_eq!(parse(&[b"\x1b[6;20;10t".as_slice(), DA1].concat()).cell, Some(CellSize { width_px: 10, height_px: 20 }));
+    }
+
+    #[test]
+    fn a_malformed_cell_size_is_ignored() {
+        for reply in [b"\x1b[6;0;10t".as_slice(), b"\x1b[6;20t", b"\x1b[4;400;800t", b"\x1b[6;20;10;5t", b"\x1b[6;99999;10t"] {
+            assert_eq!(parse(reply).cell, None, "{reply:?}");
+        }
     }
 
     #[test]
@@ -162,14 +202,14 @@ mod tests {
     fn all_three_replies_in_one_buffer() {
         let replies = parse(&[b"\x1b_Gi=31;OK\x1b\\".as_slice(), b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\", DA1].concat());
 
-        assert_eq!(replies, Replies { graphics: true, background: Some(Rgb(255, 255, 255)), answered: true });
+        assert_eq!(replies, Replies { graphics: true, background: Some(Rgb(255, 255, 255)), answered: true, ..Replies::default() });
     }
 
     #[test]
     fn parsing_stops_at_unexpected_bytes() {
         let replies = parse(&[b"\x1b_Gi=31;OK\x1b\\".as_slice(), b"garbage", DA1].concat());
 
-        assert_eq!(replies, Replies { graphics: true, background: None, answered: false });
+        assert_eq!(replies, Replies { graphics: true, ..Replies::default() });
     }
 
     #[test]

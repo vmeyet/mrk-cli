@@ -7,6 +7,7 @@ mrk's job is to make rendering a hostile file equivalent to rendering a boring o
 ## Rules
 
 1. **One gate to the terminal.** Every span text and every link passes `terminal::sanitize` before being written: C0 controls (except tab, expanded to spaces, and newline, which never reaches a span), DEL, C1 controls (U+0080–U+009F) and bidi overrides/isolates (U+202A–U+202E, U+2066–U+2069) are removed. Tests feed ESC, BEL, OSC 52 and CSI sequences through every block kind.
+   Picture sequences (kitty, Sixel) carry only bytes mrk derives from its own raster, never input text; the PNG decoder only reads the PNGs mrk drew.
    Stderr is a terminal too: error reports, warnings and clap's usage errors pass `sanitize` before being written, since they quote file names, arguments, environment values and git's output.
 2. **Links are data.** An OSC 8 target is sanitized, capped at 2,048 bytes, and dropped (text kept) when it contains a character outside printable ASCII after percent-encoding or when its scheme is not `http`, `https`, `mailto` or `file`.
 3. **No network, no surprise reads.** mrk reads the file named on the command line, stdin, and its config file. Markdown images are never fetched or opened; they render as their alt text.

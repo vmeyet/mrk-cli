@@ -1,12 +1,14 @@
 use std::ops::RangeInclusive;
 
-use super::page::{Page, Placed, Row};
+use super::page::{Page, Row};
 use super::picture;
 use super::search::{self, Match};
 use super::state::Pager;
 use super::status;
 use crate::document::Line;
-use crate::terminal::{Capabilities, ansi, kitty};
+use crate::terminal::kitty::Placement;
+use crate::terminal::sixel::Image;
+use crate::terminal::{Capabilities, Protocol, ansi, kitty};
 use crate::theme::Palette;
 
 /// "mrk" in ASCII, so the pager's image ids stay clear of the small ids other programs pick.
@@ -28,6 +30,26 @@ pub struct Look<'a> {
     pub capabilities: &'a Capabilities,
     pub margin: usize,
     pub columns: usize,
+}
+
+/// The page's pictures as the terminal draws them: kitty keeps them once sent and only places them, Sixel has no
+/// ids, so each frame sends again what shows.
+#[derive(Clone, Debug)]
+pub enum Pictures {
+    Off,
+    Kitty,
+    /// Each picture of the page, `None` when its PNG cannot be read.
+    Sixel(Vec<Option<Image>>),
+}
+
+impl Pictures {
+    pub fn new(page: &Page, protocol: Option<Protocol>) -> Self {
+        match protocol {
+            None => Self::Off,
+            Some(Protocol::Kitty) => Self::Kitty,
+            Some(Protocol::Sixel) => Self::Sixel(page.pictures.iter().map(|placed| Image::from_png(&placed.picture.png)).collect()),
+        }
+    }
 }
 
 fn image_id(index: usize) -> u32 {
@@ -75,21 +97,36 @@ fn hidden_pictures(page: &Page) -> String {
     (0..page.pictures.len()).map(|index| kitty::hide(image_id(index))).collect()
 }
 
-fn placed_pictures(pager: &Pager, look: &Look) -> String {
-    let placed = |(index, placed): (usize, &Placed)| {
+/// Each picture on screen: its index, the cursor move to its first visible cell, and what of it shows.
+fn on_screen<'a>(pager: &'a Pager, look: &'a Look) -> impl Iterator<Item = (usize, String, Placement)> + 'a {
+    pager.page.pictures.iter().enumerate().filter_map(|(index, placed)| {
         let (screen_row, placement) = picture::placement(placed, image_id(index), pager.top, pager.height)?;
-        Some(format!("{}{}", go_to(screen_row, look.margin + placed.picture.indent.width()), kitty::place(&placement)))
-    };
-    pager.page.pictures.iter().enumerate().filter_map(placed).collect()
+        Some((index, go_to(screen_row, look.margin + placed.picture.indent.width()), placement))
+    })
 }
 
-/// One whole screen, drawn at once: last frame's pictures taken off, every text row and the status bar written over,
-/// then the pictures on screen placed again, clipped to the rows that show.
-pub fn frame(pager: &Pager, look: &Look) -> String {
-    let has_pictures = look.capabilities.cell.is_some();
-    let hidden = if has_pictures { hidden_pictures(&pager.page) } else { String::new() };
-    let placed = if has_pictures { placed_pictures(pager, look) } else { String::new() };
-    [BEGIN_SYNCHRONIZED, &hidden, &text_rows(pager, look), &status_row(pager, look), &placed, END_SYNCHRONIZED].concat()
+fn placed_pictures(pager: &Pager, look: &Look) -> String {
+    on_screen(pager, look).map(|(_, at, placement)| at + &kitty::place(&placement)).collect()
+}
+
+fn sixel_pictures(pager: &Pager, look: &Look, images: &[Option<Image>]) -> String {
+    let drawn = |(index, at, placement): (usize, String, Placement)| {
+        let image = images.get(index)?.as_ref()?;
+        Some(at + &image.encode(placement.crop.y..placement.crop.y + placement.crop.height))
+    };
+    on_screen(pager, look).filter_map(drawn).collect()
+}
+
+/// One whole screen, drawn at once: last frame's kitty pictures taken off, every text row and the status bar written
+/// over, which also erases last frame's Sixel pictures, then the pictures on screen drawn again, clipped to the rows
+/// that show.
+pub fn frame(pager: &Pager, look: &Look, pictures: &Pictures) -> String {
+    let (hidden, drawn) = match pictures {
+        Pictures::Off => (String::new(), String::new()),
+        Pictures::Kitty => (hidden_pictures(&pager.page), placed_pictures(pager, look)),
+        Pictures::Sixel(images) => (String::new(), sixel_pictures(pager, look, images)),
+    };
+    [BEGIN_SYNCHRONIZED, &hidden, &text_rows(pager, look), &status_row(pager, look), &drawn, END_SYNCHRONIZED].concat()
 }
 
 /// Sends every picture of the page to the terminal once, so frames only place them.
@@ -106,18 +143,17 @@ pub fn forget_pictures() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{Block, CellSize, Document, Picture, Span, Style};
+    use crate::document::{Block, Document, Picture, Span, Style};
     use crate::terminal::ColorDepth;
     use crate::terminal::pager::keys::Action;
     use crate::terminal::pager::page::flatten;
     use crate::theme::MRK_DARK;
 
-    fn capabilities(cell: Option<CellSize>) -> Capabilities {
-        Capabilities { color: ColorDepth::TrueColor, hyperlinks: true, cell, background: None, columns: 40, is_terminal: true }
-    }
+    const CAPABILITIES: Capabilities =
+        Capabilities { color: ColorDepth::TrueColor, hyperlinks: true, graphics: None, background: None, columns: 40, is_terminal: true };
 
     fn png() -> Vec<u8> {
-        [b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice(), &200_u32.to_be_bytes(), &60_u32.to_be_bytes()].concat()
+        crate::terminal::sixel::test_png(200, 60, &vec![[255, 0, 0, 255]; 200 * 60])
     }
 
     fn text(value: &str) -> Line {
@@ -140,23 +176,19 @@ mod tests {
         frame.replace('\x1b', "␛").replace("␛[", "\n␛[")
     }
 
-    fn drawn(pager: &Pager, cell: Option<CellSize>) -> String {
-        let look = Look { name: "a.md", palette: &MRK_DARK.palette, capabilities: &capabilities(cell), margin: 2, columns: 40 };
-        frame(pager, &look)
+    fn drawn(pager: &Pager, protocol: Option<Protocol>) -> String {
+        let look = Look { name: "a.md", palette: &MRK_DARK.palette, capabilities: &CAPABILITIES, margin: 2, columns: 40 };
+        frame(pager, &look, &Pictures::new(&pager.page, protocol))
     }
 
     #[test]
     fn a_frame_with_a_picture_clipped_at_the_top() {
-        let cell = Some(CellSize { width_px: 10, height_px: 20 });
-
-        insta::assert_snapshot!(readable(&drawn(&sample(), cell)));
+        insta::assert_snapshot!(readable(&drawn(&sample(), Some(Protocol::Kitty))));
     }
 
     #[test]
     fn a_picture_is_placed_after_its_indent_drawn_on_each_visible_row() {
-        let cell = Some(CellSize { width_px: 10, height_px: 20 });
-
-        let frame = drawn(&indented_sample(text("│ ")), cell);
+        let frame = drawn(&indented_sample(text("│ ")), Some(Protocol::Kitty));
 
         assert_eq!(frame.matches("│ ").count(), 2, "{frame:?}");
         assert!(frame.contains("\x1b[1;5H\x1b_Ga=p,"), "{frame:?}");
@@ -164,7 +196,28 @@ mod tests {
 
     #[test]
     fn without_graphics_no_picture_command_is_sent() {
-        assert!(!drawn(&sample(), None).contains("\x1b_G"));
+        let frame = drawn(&sample(), None);
+
+        assert!(!frame.contains("\x1b_G") && !frame.contains("\x1bP"), "{frame:?}");
+    }
+
+    #[test]
+    fn a_sixel_frame_sends_the_visible_band_again_after_the_rows_that_erase_it() {
+        let frame = drawn(&indented_sample(text("│ ")), Some(Protocol::Sixel));
+        let (rows, pictures) = frame.split_once("\x1bP").unwrap_or_default();
+
+        assert!(rows.contains("\x1b[2K") && rows.ends_with("\x1b[1;5H"), "{rows:?}");
+        assert!(pictures.starts_with("0;1;0q\"1;1;200;36#"), "{pictures:?}");
+        assert!(!frame.contains("\x1b_G"), "{frame:?}");
+    }
+
+    #[test]
+    fn an_unreadable_sixel_picture_is_left_out() {
+        let page =
+            flatten(Document { blocks: vec![Block::Picture(Picture { png: vec![1, 2, 3], ..sample().page.pictures[0].picture.clone() })] });
+
+        assert!(matches!(Pictures::new(&page, Some(Protocol::Sixel)), Pictures::Sixel(images) if images.iter().all(Option::is_none)));
+        assert!(!drawn(&Pager::new(page, 3), Some(Protocol::Sixel)).contains("\x1bP"));
     }
 
     #[test]

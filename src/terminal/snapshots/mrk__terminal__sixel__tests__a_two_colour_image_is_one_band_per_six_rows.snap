@@ -1,0 +1,5 @@
+---
+source: src/terminal/sixel.rs
+expression: "readable(&image(5, 12, &left_red_right_blue).encode(0..12))"
+---
+␛P0;1;0q"1;1;5;12#0;2;100;0;0#1;2;0;0;100#0!4~$#1!4?~-#0!4~$#1!4?~-␛\

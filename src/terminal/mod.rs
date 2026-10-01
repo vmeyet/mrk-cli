@@ -7,6 +7,7 @@ pub mod pager;
 mod query;
 mod reply;
 pub mod sanitize;
+mod sixel;
 
 use std::io::Write;
 
@@ -28,11 +29,24 @@ pub enum ColorDepth {
 pub struct Capabilities {
     pub color: ColorDepth,
     pub hyperlinks: bool,
-    /// Set when the terminal draws kitty-protocol pictures and pictures are wanted.
-    pub cell: Option<CellSize>,
+    /// Set when the terminal draws pictures and pictures are wanted.
+    pub graphics: Option<Graphics>,
     pub background: Option<Appearance>,
     pub columns: u16,
     pub is_terminal: bool,
+}
+
+/// How the terminal draws pictures; kitty when it speaks both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Protocol {
+    Kitty,
+    Sixel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Graphics {
+    pub protocol: Protocol,
+    pub cell: CellSize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Deserialize)]
@@ -75,13 +89,33 @@ fn picture_indent(picture: &Picture, capabilities: &Capabilities, margin: usize)
     format!("{}{}", " ".repeat(margin), ansi::line(&picture.indent, capabilities, 0).trim_end_matches('\n'))
 }
 
+/// What stands in for a picture, after `indent`, when the terminal cannot draw it.
+fn placeholder(picture: &Picture, indent: &str) -> String {
+    format!("{indent}[picture: {}]\n", sanitize::text(&picture.alt))
+}
+
+/// The picture's rows written first, after `indent` on each, scrolling them into view; then `drawing` at the first of
+/// them, which leaves the cursor where it found it; then the cursor at the start of the line below the picture.
+/// Drawing at the bottom of the screen must not clip the picture.
+fn over_rows(picture: &Picture, indent: &str, drawing: &str) -> String {
+    let rows = picture.rows.max(1);
+    let reserve = format!("{indent}\n").repeat(usize::from(rows));
+    format!("{reserve}\x1b[{rows}A\r{indent}{drawing}\x1b[{rows}B\r")
+}
+
+fn picture(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
+    let indent = picture_indent(picture, capabilities, margin);
+    let drawing = capabilities.graphics.and_then(|graphics| match graphics.protocol {
+        Protocol::Kitty => Some(kitty::draw(picture)),
+        Protocol::Sixel => sixel::draw(picture),
+    });
+    drawing.map_or_else(|| placeholder(picture, &indent), |drawing| over_rows(picture, &indent, &drawing))
+}
+
 fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
     match block {
         Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin)).collect(),
-        Block::Picture(picture) => {
-            let indent = picture_indent(picture, capabilities, margin);
-            if capabilities.cell.is_some() { kitty::picture(picture, &indent) } else { kitty::placeholder(picture, &indent) }
-        }
+        Block::Picture(each) => picture(each, capabilities, margin),
     }
 }
 
@@ -143,8 +177,11 @@ mod tests {
         Document { blocks: vec![Block::Lines(vec![heading, Line::blank(), prose]), Block::Picture(picture)] }
     }
 
-    fn capabilities(color: ColorDepth, cell: Option<CellSize>) -> Capabilities {
-        Capabilities { color, hyperlinks: color != ColorDepth::None, cell, background: None, columns: 80, is_terminal: true }
+    const CELL: CellSize = CellSize { width_px: 10, height_px: 20 };
+    const KITTY: Option<Graphics> = Some(Graphics { protocol: Protocol::Kitty, cell: CELL });
+
+    fn capabilities(color: ColorDepth, graphics: Option<Graphics>) -> Capabilities {
+        Capabilities { color, hyperlinks: color != ColorDepth::None, graphics, background: None, columns: 80, is_terminal: true }
     }
 
     fn readable(ansi: &str) -> String {
@@ -153,9 +190,7 @@ mod tests {
 
     #[test]
     fn truecolor_with_links_and_pictures() {
-        let cell = Some(CellSize { width_px: 10, height_px: 20 });
-
-        insta::assert_snapshot!(readable(&ansi(&sample(), &capabilities(ColorDepth::TrueColor, cell), LEFT_MARGIN)));
+        insta::assert_snapshot!(readable(&ansi(&sample(), &capabilities(ColorDepth::TrueColor, KITTY), LEFT_MARGIN)));
     }
 
     #[test]
@@ -176,13 +211,48 @@ mod tests {
         let indent = Line::new(vec![Span::plain("│ ")]);
         let picture = Picture { png: vec![1, 2, 3], cols: 20, rows: 2, alt: "flow".to_owned(), indent };
         let document = Document { blocks: vec![Block::Picture(picture)] };
-        let cell = Some(CellSize { width_px: 10, height_px: 20 });
 
         assert_eq!(
-            ansi(&document, &capabilities(ColorDepth::None, cell), LEFT_MARGIN),
+            ansi(&document, &capabilities(ColorDepth::None, KITTY), LEFT_MARGIN),
             "  │ \n  │ \n\x1b[2A\r  │ \x1b_Ga=T,f=100,q=2,C=1,c=20,r=2,m=0;AQID\x1b\\\x1b[2B\r"
         );
         assert_eq!(ansi(&document, &capabilities(ColorDepth::None, None), LEFT_MARGIN), "  │ [picture: flow]\n");
+    }
+
+    const SIXEL: Option<Graphics> = Some(Graphics { protocol: Protocol::Sixel, cell: CELL });
+
+    #[test]
+    fn a_sixel_picture_is_drawn_after_its_indent_and_the_cursor_put_back() {
+        let picture = Picture {
+            png: sixel::test_png(1, 6, &[[255, 0, 0, 255]; 6]),
+            cols: 1,
+            rows: 1,
+            alt: "flow".to_owned(),
+            indent: Line::new(vec![Span::plain("│ ")]),
+        };
+        let document = Document { blocks: vec![Block::Picture(picture)] };
+
+        assert_eq!(
+            ansi(&document, &capabilities(ColorDepth::None, SIXEL), LEFT_MARGIN),
+            "  │ \n\x1b[1A\r  │ \x1b7\x1bP0;1;0q\"1;1;1;6#0;2;100;0;0#0~-\x1b\\\x1b8\x1b[1B\r"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_png_shows_the_placeholder_on_a_sixel_terminal() {
+        let picture = Picture { png: vec![1, 2, 3], cols: 20, rows: 2, alt: "flow".to_owned(), indent: Line::blank() };
+
+        assert_eq!(
+            ansi(&Document { blocks: vec![Block::Picture(picture)] }, &capabilities(ColorDepth::None, SIXEL), 2),
+            "  [picture: flow]\n"
+        );
+    }
+
+    #[test]
+    fn the_placeholder_sanitizes_the_alt_text() {
+        let picture = Picture { png: vec![], cols: 20, rows: 2, alt: "a\x1b]0;x\x07".to_owned(), indent: Line::blank() };
+
+        assert_eq!(placeholder(&picture, "  "), "  [picture: a]0;x]\n");
     }
 
     #[test]
