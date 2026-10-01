@@ -5,10 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-01
+
 ### Added
 
 - Mermaid diagrams drawn as Sixel images on terminals without kitty graphics that list Sixel in their DA1 reply, in the pager too.
 - Mermaid diagrams drawn as images inside tmux: kitty graphics through passthrough (`set -g allow-passthrough on`) with Unicode placeholders, Sixel when tmux draws it.
+- Static Linux binaries (musl, x86_64 and aarch64), which the shell installer picks on Alpine or an old glibc.
+- An embedded last-resort font, so diagram labels render on a system without fonts.
 
 ## [0.3.1] - 2026-09-30
 
@@ -63,6 +67,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.4.0]: https://github.com/vmeyet/mrk-cli/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/vmeyet/mrk-cli/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/vmeyet/mrk-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vmeyet/mrk-cli/releases/tag/v0.2.0
