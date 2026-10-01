@@ -90,6 +90,7 @@ fn current_style(palette: &Palette) -> Style {
 /// The line with the matches on it painted: the current one in `accent`, the others on `subtle`. Spans are split
 /// where a match starts or ends inside them and keep their link.
 pub fn highlight(line: &Line, matches: &[Match], current: Option<Match>, palette: &Palette) -> Line {
+    let current = current.filter(|each| matches.contains(each));
     let others: Vec<Range<usize>> = matches.iter().filter(|each| Some(**each) != current).map(|each| each.start..each.end).collect();
     let current: Vec<Range<usize>> = current.into_iter().map(|each| each.start..each.end).collect();
     let painted = document::highlight(std::slice::from_ref(line), &others, |_| matched_style(palette));
@@ -174,5 +175,16 @@ mod tests {
         assert_eq!(lit.spans[0], Span::new("ab", Style::fg(palette.text).on(palette.subtle)));
         assert_eq!(lit.spans[2].style.bg, Some(palette.accent));
         assert_eq!(lit.plain(), "ab ab");
+    }
+
+    #[test]
+    fn the_current_match_is_painted_only_on_its_own_row() {
+        let palette = MRK_DARK.palette;
+        let rows = rows(&["ab", "ab"]);
+        let matches = find(&rows, "ab");
+        let Row::Line(other_line) = &rows[1] else { unreachable!() };
+        let lit = highlight(other_line, &matches[1..], matches.first().copied(), &palette);
+
+        assert_eq!(lit.spans, [Span::new("ab", Style::fg(palette.text).on(palette.subtle))]);
     }
 }
