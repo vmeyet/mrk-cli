@@ -8,6 +8,7 @@ mod query;
 mod reply;
 pub mod sanitize;
 mod sixel;
+mod tmux;
 
 use std::io::Write;
 
@@ -40,6 +41,8 @@ pub struct Capabilities {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Protocol {
     Kitty,
+    /// Kitty graphics from inside tmux: passed through it and shown by Unicode placeholder cells.
+    KittyThroughTmux,
     Sixel,
 }
 
@@ -105,11 +108,12 @@ fn over_rows(picture: &Picture, indent: &str, drawing: &str) -> String {
 
 fn picture(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
     let indent = picture_indent(picture, capabilities, margin);
-    let drawing = capabilities.graphics.and_then(|graphics| match graphics.protocol {
-        Protocol::Kitty => Some(kitty::draw(picture)),
-        Protocol::Sixel => sixel::draw(picture),
+    let drawn = capabilities.graphics.and_then(|graphics| match graphics.protocol {
+        Protocol::Kitty => Some(over_rows(picture, &indent, &kitty::draw(picture))),
+        Protocol::KittyThroughTmux => kitty::draw_through_tmux(picture, &indent),
+        Protocol::Sixel => sixel::draw(picture).map(|drawing| over_rows(picture, &indent, &drawing)),
     });
-    drawing.map_or_else(|| placeholder(picture, &indent), |drawing| over_rows(picture, &indent, &drawing))
+    drawn.unwrap_or_else(|| placeholder(picture, &indent))
 }
 
 fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
@@ -236,6 +240,21 @@ mod tests {
             ansi(&document, &capabilities(ColorDepth::None, SIXEL), LEFT_MARGIN),
             "  │ \n\x1b[1A\r  │ \x1b7\x1bP0;1;0q\"1;1;1;6#0;2;100;0;0#0~-\x1b\\\x1b8\x1b[1B\r"
         );
+    }
+
+    #[test]
+    fn inside_tmux_a_picture_is_rows_of_placeholder_cells_after_its_indent() {
+        let picture =
+            Picture { png: vec![1, 2, 3], cols: 2, rows: 2, alt: "flow".to_owned(), indent: Line::new(vec![Span::plain("│ ")]) };
+        let document = Document { blocks: vec![Block::Picture(picture)] };
+        let through_tmux = Some(Graphics { protocol: Protocol::KittyThroughTmux, cell: CELL });
+
+        let drawn = ansi(&document, &capabilities(ColorDepth::None, through_tmux), LEFT_MARGIN);
+        let rows: Vec<&str> = drawn.lines().collect();
+
+        assert!(rows[0].starts_with("\x1bPtmux;") && rows[0].contains("  │ \x1b[38;5;"), "{drawn:?}");
+        assert!(rows[1].starts_with("  │ \x1b[38;5;") && rows[1].ends_with("\u{10eeee}\x1b[39m"), "{drawn:?}");
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]

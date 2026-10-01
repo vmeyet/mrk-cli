@@ -2,6 +2,7 @@ use std::io;
 use std::time::Duration;
 
 use super::reply::{self, Replies};
+use super::tmux;
 
 const TIMEOUT: Duration = Duration::from_millis(100);
 const GRAPHICS_QUERY: &str = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
@@ -15,6 +16,8 @@ pub struct Questions {
     pub graphics: bool,
     pub cell: bool,
     pub background: bool,
+    /// Inside tmux: the graphics query goes through to the terminal outside, which answers after tmux's own DA1.
+    pub passthrough: bool,
 }
 
 impl Questions {
@@ -24,7 +27,11 @@ impl Questions {
 }
 
 fn request(questions: Questions) -> String {
-    let graphics = if questions.graphics { GRAPHICS_QUERY } else { "" };
+    let graphics = match (questions.graphics, questions.passthrough) {
+        (false, _) => String::new(),
+        (true, true) => tmux::passthrough(GRAPHICS_QUERY),
+        (true, false) => GRAPHICS_QUERY.to_owned(),
+    };
     let cell = if questions.cell { CELL_SIZE_QUERY } else { "" };
     let background = if questions.background { BACKGROUND_QUERY } else { "" };
     format!("{graphics}{cell}{background}{PRIMARY_ATTRIBUTES_QUERY}")
@@ -38,7 +45,7 @@ mod tty {
 
     use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 
-    use super::reply;
+    use super::reply::{self, Replies};
 
     const MAX_REPLY_BYTES: usize = 4096;
     const READ_BYTES: usize = 256;
@@ -75,9 +82,9 @@ mod tty {
         }
     }
 
-    fn read_replies(tty: &File, deadline: Instant) -> io::Result<Vec<u8>> {
+    fn read_replies(tty: &File, deadline: Instant, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
         let mut received = Vec::new();
-        while !reply::parse(&received).answered && received.len() < MAX_REPLY_BYTES && Instant::now() < deadline {
+        while !is_complete(&reply::parse(&received)) && received.len() < MAX_REPLY_BYTES && Instant::now() < deadline {
             let chunk = read_available(tty)?;
             if chunk.is_empty() {
                 std::thread::sleep(IDLE_WAIT);
@@ -87,29 +94,36 @@ mod tty {
         Ok(received)
     }
 
-    pub fn exchange(request: &str, timeout: Duration) -> io::Result<Vec<u8>> {
+    pub fn exchange(request: &str, timeout: Duration, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
         let deadline = Instant::now() + timeout;
         let mut tty = open_nonblocking()?;
         let _raw = RawMode::enable()?;
         tty.write_all(request.as_bytes())?;
         tty.flush()?;
-        read_replies(&tty, deadline)
+        read_replies(&tty, deadline, is_complete)
     }
 }
 
 #[cfg(unix)]
-fn exchange(request: &str) -> io::Result<Vec<u8>> {
-    tty::exchange(request, TIMEOUT)
+fn exchange(request: &str, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
+    tty::exchange(request, TIMEOUT, is_complete)
 }
 
 #[cfg(not(unix))]
-fn exchange(_request: &str) -> io::Result<Vec<u8>> {
+fn exchange(_request: &str, _is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
     Err(io::ErrorKind::Unsupported.into())
+}
+
+/// The round is over once DA1 is answered, and through tmux once the terminal outside said yes to graphics too: one
+/// that does not speak kitty graphics never answers, so that round lasts until the timeout.
+fn is_complete(replies: &Replies, questions: Questions) -> bool {
+    let waits_outside = questions.passthrough && questions.graphics;
+    replies.answered && (!waits_outside || replies.graphics)
 }
 
 /// Asks the terminal on `/dev/tty` in one round trip ended by a DA1 request, in raw mode, for at most 100 ms.
 pub fn ask(questions: Questions) -> Replies {
-    exchange(&request(questions)).map(|bytes| reply::parse(&bytes)).unwrap_or_default()
+    exchange(&request(questions), |replies| is_complete(replies, questions)).map(|bytes| reply::parse(&bytes)).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -120,9 +134,28 @@ mod tests {
     fn every_request_ends_with_the_da1_sentinel() {
         assert_eq!(request(Questions::default()), "\x1b[c");
         assert_eq!(
-            request(Questions { graphics: true, cell: true, background: true }),
+            request(Questions { graphics: true, cell: true, background: true, passthrough: false }),
             format!("{GRAPHICS_QUERY}\x1b[16t{BACKGROUND_QUERY}\x1b[c")
         );
         assert_eq!(request(Questions { background: true, ..Questions::default() }), "\x1b]11;?\x1b\\\x1b[c");
+    }
+
+    #[test]
+    fn inside_tmux_only_the_graphics_query_passes_through() {
+        let asked = request(Questions { graphics: true, cell: true, passthrough: true, ..Questions::default() });
+
+        assert_eq!(asked, format!("{}\x1b[16t\x1b[c", tmux::passthrough(GRAPHICS_QUERY)));
+    }
+
+    #[test]
+    fn through_tmux_the_round_waits_for_the_graphics_reply_after_da1() {
+        let through_tmux = Questions { graphics: true, passthrough: true, ..Questions::default() };
+        let tmux_only = Replies { answered: true, ..Replies::default() };
+        let both = Replies { graphics: true, ..tmux_only };
+
+        assert!(!is_complete(&tmux_only, through_tmux));
+        assert!(is_complete(&both, through_tmux));
+        assert!(is_complete(&tmux_only, Questions { graphics: true, ..Questions::default() }));
+        assert!(is_complete(&tmux_only, Questions { passthrough: true, ..Questions::default() }));
     }
 }

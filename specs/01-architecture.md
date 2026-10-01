@@ -74,7 +74,7 @@ src/
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
 - `terminal::pager::run(session: &Session, render: impl Fn(u16) -> Rendered)`: `render` lays the source out for a window that many columns wide and returns the Document and its margin.
 - `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: writes a Document with its escape sequences; `margin` columns before every line and picture, from `terminal::margin`, then a picture's indent on each of its rows (centred on a wide terminal, `LEFT_MARGIN` otherwise).
-- Escape sequences are produced only inside `terminal/`: `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs` and `sixel.rs` for pictures, `query.rs` for the capability queries, `error_report` for dimmed error causes.
+- Escape sequences are produced only inside `terminal/`: `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs`, `sixel.rs` and `tmux.rs` for pictures, `query.rs` for the capability queries, `error_report` for dimmed error causes.
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
 - A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` helps.
 - Every width is `text::display_width`: counted per grapheme (at most two cells), a tab as four, the characters `terminal::sanitize` removes as none.
@@ -88,7 +88,13 @@ src/
   Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.
   Renamed, it never shadows a system family the SVG lists.
 - Terminal queries (kitty graphics support, the cell size, background colour) share one round trip ended by a DA1 request, with a 100 ms timeout, and only run when stdout is a tty and the answer is not already known from the environment.
-  The DA1 reply lists Sixel as attribute `4`; Sixel draws only when kitty graphics does not. The cell size comes from the window's pixel size, or from `CSI 16 t` when the window reports none.
+  The DA1 reply lists Sixel as attribute `4`; Sixel draws only when kitty graphics does not.
+  Inside tmux (`TMUX` set) the environment cannot vouch for kitty graphics, since it was inherited from whatever terminal started the server; only `LC_TERMINAL=iTerm2` still rules them out.
+  The kitty query goes through tmux (`ESC Ptmux; … ESC \`, inner ESCs doubled) and the round waits for its answer after tmux's own DA1, up to the timeout: no answer means passthrough is off or the terminal outside has no kitty graphics, and diagrams stay text.
+  mrk never runs `tmux` to read `allow-passthrough`.
+  A Sixel in tmux's own DA1 means tmux (3.4+, built with it) draws Sixel itself, so Sixel goes out unwrapped.
+  Through tmux, kitty pictures are sent once with a virtual placement (`U=1`) and shown by rows of `U+10EEEE` placeholder cells, coloured with a 256-colour index for the id's low byte and numbered by diacritics (row, column, the id's high byte), so tmux keeps, scrolls and redraws them like text; ids come from a hash of the PNG.
+  The pager writes the placeholder cells of the visible rows in place of the picture rows, with nothing to place or delete. The cell size comes from the window's pixel size, or from `CSI 16 t` when the window reports none.
   iTerm2 is known to have no graphics: it answers the kitty graphics query with `OK` but draws nothing.
 - Release profile: thin LTO, one codegen unit, stripped.
 

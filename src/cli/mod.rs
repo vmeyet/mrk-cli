@@ -38,7 +38,8 @@ pub struct Cli {
     pub width: Option<usize>,
     /// Draw Mermaid diagrams as images, on a terminal that speaks the kitty graphics protocol or Sixel.
     ///
-    /// `auto` draws them outside tmux and screen, `always` inside them too, `never` draws diagrams as text.
+    /// `auto` draws them outside screen and zellij, and inside tmux once `set -g allow-passthrough on`;
+    /// `always` tries inside screen and zellij too, `never` draws diagrams as text.
     /// Piped output never gets images.
     #[arg(long, value_enum, value_name = "WHEN")]
     pub images: Option<ImagesMode>,

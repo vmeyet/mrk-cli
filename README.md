@@ -32,12 +32,22 @@ mrk -p notes.md   # read in the pager; diagrams stay images
 |---|---|---|---|
 | `--theme NAME` | `MRK_THEME` | `theme` | `mrk-dark` / `mrk-light` from the terminal background |
 | `--width N` | `MRK_WIDTH` | `width` | terminal width, capped at 100 |
-| `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol or Sixel, not under tmux or screen; `always` tries inside them too; piped output never gets pictures |
+| `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol or Sixel, inside tmux too (see below), not under screen or zellij; `always` tries inside them too; piped output never gets pictures |
 | `--align center\|left` | `MRK_ALIGN` | `align` | `center`: the text column sits in the middle of a wide window; piped output is never centred |
 | `--color auto\|always\|never` | `NO_COLOR` | | `auto`: colour on a tty; without colour there are no hyperlinks, so links print their target as ` <url>` |
 | `-p`, `--pager` | | `pager` | off; the built-in pager keeps diagrams as images and stays open until `q`; piped output is never paged |
 | | `MRK_PAGER` | | the command `-p` pipes into instead of the built-in pager (diagrams as text); setting it does not turn paging on |
 | `--completions SHELL` | | | |
+
+### Diagrams inside tmux
+
+tmux passes kitty graphics through only when allowed; add this to `~/.tmux.conf` (tmux 3.3 or newer):
+
+```tmux
+set -g allow-passthrough on
+```
+
+Without it, diagrams stay text. A tmux built with Sixel (3.4 or newer) draws Sixel pictures itself.
 
 Flags win over the environment, the environment over the config file.
 A bad flag, environment value or config file exits with 2, any other failure with 1.
