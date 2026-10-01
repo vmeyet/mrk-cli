@@ -10,7 +10,7 @@ repository = "https://github.com/vmeyet/mrk-cli"
 homepage = "https://github.com/vmeyet/mrk-cli"
 keywords = ["markdown", "terminal", "mermaid", "cli", "renderer"]
 categories = ["command-line-utilities", "text-processing", "visualization"]
-include = ["/src/**/*.rs", "/build.rs", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+include = ["/src/**/*.rs", "/assets/fonts/*", "/build.rs", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [lib]
 name = "mrk"

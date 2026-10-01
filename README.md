@@ -112,3 +112,8 @@ cargo run -- tests/fixtures/showcase.md
 ```
 
 Design and rules: `AGENTS.md` and `specs/`.
+
+## License
+
+MIT.
+Mermaid labels fall back on an embedded Latin subset of [DejaVu Sans](https://dejavu-fonts.github.io/), renamed `mrk Sans`, under its own license in `assets/fonts/LICENSE-DejaVu`.
