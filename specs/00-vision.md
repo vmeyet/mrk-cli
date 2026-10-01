@@ -21,7 +21,7 @@ mrk FILE            render a file
 mrk                 render stdin (cat notes.md | mrk)
 mrk --theme NAME    pick a theme; mrk --list-themes shows them with a swatch
 mrk --width N       wrap width in columns (default: terminal width, capped at 100)
-mrk --images auto|always|never   Mermaid as images (auto: when the terminal speaks kitty graphics or Sixel, outside tmux/screen; always: inside them too)
+mrk --images auto|always|never   Mermaid as images (auto: when the terminal speaks kitty graphics or Sixel, inside tmux with passthrough allowed, not under screen/zellij; always: inside them too)
 mrk --align center|left          centre the text column in a wide window (default center; piped output is never centred)
 mrk --color auto|always|never    auto honours NO_COLOR and a non-tty stdout
 mrk -p FILE         read in the pager: diagrams stay images, j/k/space/b/g/G scroll, / n N search, q quits

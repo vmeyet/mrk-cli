@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Mermaid diagrams drawn as Sixel images on terminals without kitty graphics that list Sixel in their DA1 reply, in the pager too.
+- Mermaid diagrams drawn as images inside tmux: kitty graphics through passthrough (`set -g allow-passthrough on`) with Unicode placeholders, Sixel when tmux draws it.
 
 ## [0.3.1] - 2026-09-30
 

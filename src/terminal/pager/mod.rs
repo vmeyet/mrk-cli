@@ -79,13 +79,8 @@ fn latest_size(columns: u16, rows: u16) -> io::Result<((u16, u16), Option<Event>
     Ok((size, None))
 }
 
-/// Sends kitty pictures once per render, so frames only place them; Sixel pictures go out with every frame.
 fn store(out: &mut impl Write, view: &View) -> io::Result<()> {
-    if matches!(view.pictures, Pictures::Kitty) {
-        out.write_all(frame::forget_pictures().as_bytes())?;
-        out.write_all(frame::store_pictures(&view.pager.page).as_bytes())?;
-    }
-    Ok(())
+    out.write_all(view.pictures.store(&view.pager.page).as_bytes())
 }
 
 struct Reader<'a, R: Fn(u16) -> Rendered> {

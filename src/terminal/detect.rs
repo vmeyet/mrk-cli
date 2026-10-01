@@ -1,6 +1,6 @@
 use crossterm::terminal::WindowSize;
 
-use super::environment::{Environment, background_hint, color_depth, hyperlinks, known_graphics, wants_pictures};
+use super::environment::{Environment, background_hint, color_depth, hyperlinks, inside_tmux, known_graphics, wants_pictures};
 use super::query::{self, Questions};
 use super::reply::Replies;
 use super::{Capabilities, ColorChoice, ColorDepth, Graphics, ImagesMode, Protocol};
@@ -40,14 +40,17 @@ fn questions(environment: &Environment, color: ColorDepth, window_cell: Option<C
         graphics: may_draw && known.is_none(),
         cell: may_draw && window_cell.is_none(),
         background: is_background_unknown && environment.stdout_is_tty && color != ColorDepth::None,
+        passthrough: inside_tmux(environment),
     }
 }
 
-/// Kitty when the environment or the terminal says so, Sixel when only the DA1 reply lists it.
+/// Kitty when the environment or the terminal says so, through tmux when inside it; Sixel when only the DA1 reply
+/// lists it, which inside tmux is tmux's own reply, so tmux draws it.
 fn protocol(environment: &Environment, replies: &Replies) -> Option<Protocol> {
     match known_graphics(environment) {
         Some(true) => Some(Protocol::Kitty),
         Some(false) => None,
+        None if replies.graphics && inside_tmux(environment) => Some(Protocol::KittyThroughTmux),
         None if replies.graphics => Some(Protocol::Kitty),
         None => replies.sixel.then_some(Protocol::Sixel),
     }
@@ -132,7 +135,7 @@ mod tests {
         let preferences = Preferences { needs_background: true, ..Preferences::default() };
         let asked = questions(&environment(&[("TERM", "xterm-256color")]), ColorDepth::Ansi256, CELL, preferences);
 
-        assert_eq!(asked, Questions { graphics: true, cell: false, background: true });
+        assert_eq!(asked, Questions { graphics: true, background: true, ..Questions::default() });
     }
 
     #[test]
@@ -152,7 +155,7 @@ mod tests {
 
         assert!(questions(&environment(&[]), ColorDepth::TrueColor, None, never).is_empty());
         assert!(questions(&environment(&[("TERM_PROGRAM", "iTerm.app")]), ColorDepth::TrueColor, None, Preferences::default()).is_empty());
-        assert!(questions(&environment(&[("TMUX", "/tmp/tmux")]), ColorDepth::TrueColor, CELL, Preferences::default()).is_empty());
+        assert!(questions(&environment(&[("ZELLIJ", "0")]), ColorDepth::TrueColor, CELL, Preferences::default()).is_empty());
     }
 
     fn drawn_with(variables: &[(&str, &str)], replies: Replies) -> Option<Protocol> {
@@ -163,6 +166,19 @@ mod tests {
     fn kitty_wins_over_sixel() {
         assert_eq!(drawn_with(&[], Replies { graphics: true, sixel: true, ..Replies::default() }), Some(Protocol::Kitty));
         assert_eq!(drawn_with(&[("TERM", "xterm-kitty")], Replies { sixel: true, ..Replies::default() }), Some(Protocol::Kitty));
+    }
+
+    #[test]
+    fn inside_tmux_graphics_are_asked_through_it_and_drawn_through_it() {
+        let tmux = [("TMUX", "/tmp/tmux"), ("TERM", "tmux-256color"), ("GHOSTTY_RESOURCES_DIR", "/x")];
+
+        assert_eq!(
+            questions(&environment(&tmux), ColorDepth::TrueColor, CELL, Preferences::default()),
+            Questions { graphics: true, passthrough: true, ..Questions::default() }
+        );
+        assert_eq!(drawn_with(&tmux, Replies { graphics: true, sixel: true, ..Replies::default() }), Some(Protocol::KittyThroughTmux));
+        assert_eq!(drawn_with(&tmux, Replies { sixel: true, ..Replies::default() }), Some(Protocol::Sixel));
+        assert_eq!(drawn_with(&tmux, Replies::default()), None);
     }
 
     #[test]

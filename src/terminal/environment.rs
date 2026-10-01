@@ -4,12 +4,13 @@ use std::io::IsTerminal;
 use super::{ColorChoice, ColorDepth, ImagesMode};
 use crate::theme::Appearance;
 
-const VARIABLES: [&str; 13] = [
+const VARIABLES: [&str; 14] = [
     "COLORFGBG",
     "COLORTERM",
     "GHOSTTY_RESOURCES_DIR",
     "INSIDE_EMACS",
     "KITTY_WINDOW_ID",
+    "LC_TERMINAL",
     "NO_COLOR",
     "STY",
     "TERM",
@@ -59,9 +60,13 @@ impl Environment {
         self.term() == "dumb"
     }
 
+    fn is_tmux(&self) -> bool {
+        self.has("TMUX")
+    }
+
     fn is_multiplexed(&self) -> bool {
         let term = self.term();
-        self.has("TMUX") || self.has("STY") || self.has("ZELLIJ") || term.starts_with("screen") || term.starts_with("tmux")
+        self.is_tmux() || self.has("STY") || self.has("ZELLIJ") || term.starts_with("screen") || term.starts_with("tmux")
     }
 }
 
@@ -89,14 +94,23 @@ pub fn hyperlinks(environment: &Environment, color: ColorDepth) -> bool {
     color != ColorDepth::None && !is_known_bad
 }
 
-/// `Some` when the environment already says whether the terminal draws kitty-protocol pictures.
+/// Inside tmux, kitty graphics need passthrough and the environment it inherited may name another terminal.
+pub fn inside_tmux(environment: &Environment) -> bool {
+    environment.is_tmux()
+}
+
+/// `Some` when the environment already says whether the terminal draws kitty-protocol pictures; inside tmux it can
+/// only say no.
 pub fn known_graphics(environment: &Environment) -> Option<bool> {
     let is_known_term = GRAPHICS_TERMS.contains(&environment.term());
     let is_known_program = GRAPHICS_PROGRAMS.contains(&environment.program());
     let is_known_host = environment.has("KITTY_WINDOW_ID") || environment.has("GHOSTTY_RESOURCES_DIR");
-    let is_known_without = NO_GRAPHICS_PROGRAMS.contains(&environment.program()) || environment.is_dumb() || environment.term() == "linux";
+    let is_known_with = (is_known_term || is_known_program || is_known_host) && !environment.is_tmux();
+    let is_iterm = environment.get("LC_TERMINAL") == Some("iTerm2");
+    let is_known_without =
+        NO_GRAPHICS_PROGRAMS.contains(&environment.program()) || is_iterm || environment.is_dumb() || environment.term() == "linux";
     match () {
-        () if is_known_term || is_known_program || is_known_host => Some(true),
+        () if is_known_with => Some(true),
         () if is_known_without => Some(false),
         () => None,
     }
@@ -106,7 +120,7 @@ pub fn wants_pictures(environment: &Environment, images: ImagesMode) -> bool {
     match images {
         ImagesMode::Never => false,
         ImagesMode::Always => environment.stdout_is_tty,
-        ImagesMode::Auto => environment.stdout_is_tty && !environment.is_multiplexed(),
+        ImagesMode::Auto => environment.stdout_is_tty && (environment.is_tmux() || !environment.is_multiplexed()),
     }
 }
 
@@ -198,12 +212,21 @@ mod tests {
     }
 
     #[test]
-    fn pictures_need_a_terminal_and_no_multiplexer_unless_forced() {
+    fn inside_tmux_the_inherited_terminal_is_not_trusted_but_iterm_still_is_ruled_out() {
+        assert_eq!(known_graphics(&tty(&[("TMUX", "/tmp/tmux"), ("GHOSTTY_RESOURCES_DIR", "/x"), ("TERM", "tmux-256color")])), None);
+        assert_eq!(known_graphics(&tty(&[("TMUX", "/tmp/tmux"), ("LC_TERMINAL", "iTerm2")])), Some(false));
+        assert!(inside_tmux(&tty(&[("TMUX", "/tmp/tmux")])));
+        assert!(!inside_tmux(&tty(&[("TERM", "tmux-256color")])));
+    }
+
+    #[test]
+    fn pictures_need_a_terminal_and_no_multiplexer_but_tmux_unless_forced() {
         assert!(wants_pictures(&tty(&[]), ImagesMode::Auto));
+        assert!(wants_pictures(&tty(&[("TMUX", "/tmp/tmux")]), ImagesMode::Auto));
         assert!(!wants_pictures(&piped(&[]), ImagesMode::Auto));
         assert!(!wants_pictures(&piped(&[]), ImagesMode::Always));
         assert!(!wants_pictures(&tty(&[]), ImagesMode::Never));
-        for variables in [[("TMUX", "/tmp/tmux")], [("STY", "1.pts")], [("TERM", "screen-256color")], [("TERM", "tmux-256color")]] {
+        for variables in [[("ZELLIJ", "0")], [("STY", "1.pts")], [("TERM", "screen-256color")], [("TERM", "tmux-256color")]] {
             assert!(!wants_pictures(&tty(&variables), ImagesMode::Auto), "{variables:?}");
             assert!(wants_pictures(&tty(&variables), ImagesMode::Always), "{variables:?}");
         }

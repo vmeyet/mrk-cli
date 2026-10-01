@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use super::page::{Page, Row};
+use super::page::{Page, Placed, Row};
 use super::picture;
 use super::search::{self, Match};
 use super::state::Pager;
@@ -32,23 +32,45 @@ pub struct Look<'a> {
     pub columns: usize,
 }
 
-/// The page's pictures as the terminal draws them: kitty keeps them once sent and only places them, Sixel has no
-/// ids, so each frame sends again what shows.
+/// The page's pictures as the terminal draws them: kitty keeps them once sent and only places them, through tmux
+/// they show where their placeholder cells are written, Sixel has no ids, so each frame sends again what shows.
 #[derive(Clone, Debug)]
 pub enum Pictures {
     Off,
     Kitty,
+    /// The image id of each picture of the page.
+    KittyThroughTmux(Vec<u32>),
     /// Each picture of the page, `None` when its PNG cannot be read.
     Sixel(Vec<Option<Image>>),
 }
 
 impl Pictures {
     pub fn new(page: &Page, protocol: Option<Protocol>) -> Self {
+        let pngs = page.pictures.iter().map(|placed| placed.picture.png.as_slice());
         match protocol {
             None => Self::Off,
             Some(Protocol::Kitty) => Self::Kitty,
-            Some(Protocol::Sixel) => Self::Sixel(page.pictures.iter().map(|placed| Image::from_png(&placed.picture.png)).collect()),
+            Some(Protocol::KittyThroughTmux) => Self::KittyThroughTmux(pngs.map(kitty::placeholder_id).collect()),
+            Some(Protocol::Sixel) => Self::Sixel(pngs.map(Image::from_png).collect()),
         }
+    }
+
+    /// What to send once per render, before any frame: the kitty pictures, after freeing the last render's; through
+    /// tmux their ids follow their PNG, so sending one again replaces it.
+    pub fn store(&self, page: &Page) -> String {
+        match self {
+            Self::Kitty => forget_pictures() + &store_pictures(page),
+            Self::KittyThroughTmux(ids) => {
+                page.pictures.iter().zip(ids).map(|(placed, &id)| kitty::store_through_tmux(&placed.picture, id)).collect()
+            }
+            Self::Off | Self::Sixel(_) => String::new(),
+        }
+    }
+
+    /// The placeholder cells of row `row` of the picture at `index`, through tmux; nothing otherwise.
+    fn cells(&self, index: usize, placed: &Placed, row: usize) -> String {
+        let Self::KittyThroughTmux(ids) = self else { return String::new() };
+        ids.get(index).and_then(|&id| kitty::placeholder_row(id, row, placed.picture.cols)).unwrap_or_default()
     }
 }
 
@@ -70,21 +92,24 @@ fn drawn_line(line: &Line, look: &Look) -> String {
     ansi::line(line, look.capabilities, look.margin).trim_end_matches('\n').to_owned()
 }
 
-fn row_text(pager: &Pager, index: usize, look: &Look) -> String {
+fn picture_row(pager: &Pager, picture: usize, row: usize, look: &Look, pictures: &Pictures) -> String {
+    let Some(placed) = pager.page.pictures.get(picture) else { return String::new() };
+    drawn_line(&placed.picture.indent, look) + &pictures.cells(picture, placed, row - placed.row)
+}
+
+fn row_text(pager: &Pager, index: usize, look: &Look, pictures: &Pictures) -> String {
     let matches = row_matches(&pager.search.matches, index);
     match pager.page.rows.get(index) {
         Some(Row::Line(line)) if matches.is_empty() => drawn_line(line, look),
         Some(Row::Line(line)) => drawn_line(&search::highlight(line, matches, pager.search.current_match(), look.palette), look),
-        Some(Row::Picture(index)) => {
-            pager.page.pictures.get(*index).map_or_else(String::new, |placed| drawn_line(&placed.picture.indent, look))
-        }
+        Some(Row::Picture(picture)) => picture_row(pager, *picture, index, look, pictures),
         None => String::new(),
     }
 }
 
-fn text_rows(pager: &Pager, look: &Look) -> String {
+fn text_rows(pager: &Pager, look: &Look, pictures: &Pictures) -> String {
     (0..pager.height)
-        .map(|screen_row| format!("{}{CLEAR_LINE}{}", go_to(screen_row, 0), row_text(pager, pager.top + screen_row, look)))
+        .map(|screen_row| format!("{}{CLEAR_LINE}{}", go_to(screen_row, 0), row_text(pager, pager.top + screen_row, look, pictures)))
         .collect()
 }
 
@@ -122,11 +147,11 @@ fn sixel_pictures(pager: &Pager, look: &Look, images: &[Option<Image>]) -> Strin
 /// that show.
 pub fn frame(pager: &Pager, look: &Look, pictures: &Pictures) -> String {
     let (hidden, drawn) = match pictures {
-        Pictures::Off => (String::new(), String::new()),
+        Pictures::Off | Pictures::KittyThroughTmux(_) => (String::new(), String::new()),
         Pictures::Kitty => (hidden_pictures(&pager.page), placed_pictures(pager, look)),
         Pictures::Sixel(images) => (String::new(), sixel_pictures(pager, look, images)),
     };
-    [BEGIN_SYNCHRONIZED, &hidden, &text_rows(pager, look), &status_row(pager, look), &drawn, END_SYNCHRONIZED].concat()
+    [BEGIN_SYNCHRONIZED, &hidden, &text_rows(pager, look, pictures), &status_row(pager, look), &drawn, END_SYNCHRONIZED].concat()
 }
 
 /// Sends every picture of the page to the terminal once, so frames only place them.
@@ -209,6 +234,21 @@ mod tests {
         assert!(rows.contains("\x1b[2K") && rows.ends_with("\x1b[1;5H"), "{rows:?}");
         assert!(pictures.starts_with("0;1;0q\"1;1;200;36#"), "{pictures:?}");
         assert!(!frame.contains("\x1b_G"), "{frame:?}");
+    }
+
+    #[test]
+    fn through_tmux_the_visible_picture_rows_are_placeholder_cells_numbered_from_the_hidden_ones() {
+        let pager = indented_sample(text("│ "));
+        let pictures = Pictures::new(&pager.page, Some(Protocol::KittyThroughTmux));
+        let Pictures::KittyThroughTmux(ids) = &pictures else { panic!("{pictures:?}") };
+
+        let frame = drawn(&pager, Some(Protocol::KittyThroughTmux));
+
+        assert!(frame.contains(&kitty::placeholder_row(ids[0], 1, 20).unwrap_or_default()), "{frame:?}");
+        assert!(frame.contains(&kitty::placeholder_row(ids[0], 2, 20).unwrap_or_default()), "{frame:?}");
+        assert!(!frame.contains(&kitty::placeholder_row(ids[0], 0, 20).unwrap_or_default()), "{frame:?}");
+        assert!(!frame.contains("\x1b_G") && !frame.contains("\x1bP"), "{frame:?}");
+        assert_eq!(pictures.store(&pager.page).matches("\x1bPtmux;").count(), 1);
     }
 
     #[test]
