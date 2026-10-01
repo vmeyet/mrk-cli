@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Rebuilds assets/fonts/MrkSans.ttf from DejaVu Sans; needs fonttools (`pip install fonttools`).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+version=2.37
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+curl -sSL "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_${version//./_}/dejavu-fonts-ttf-$version.tar.bz2" | tar xj -C "$work"
+fonttools subset "$work/dejavu-fonts-ttf-$version/ttf/DejaVuSans.ttf" \
+  --unicodes="U+0020-007E,U+00A0-02FF,U+2010-2027,U+2030-203A,U+20AC,U+2122,U+2190-2199" \
+  --layout-features="kern" --drop-tables+=MATH --no-hinting --name-IDs="0,1,2,3,4,5,6,13,14,16,17" \
+  --output-file="$work/subset.ttf"
+# A family name of its own keeps the embedded face from shadowing a system DejaVu Sans, Noto Sans, Liberation Sans or Arial.
+python3 - "$work/subset.ttf" assets/fonts/MrkSans.ttf "$version" <<'PY'
+import sys
+from fontTools.ttLib import TTFont
+
+family = "mrk Sans"
+renamed = {1: family, 3: f"{family}, from DejaVu Sans {sys.argv[3]}", 4: family, 6: "MrkSans", 16: family}
+font = TTFont(sys.argv[1])
+for record in font["name"].names:
+    if record.nameID in renamed:
+        record.string = renamed[record.nameID]
+font.save(sys.argv[2])
+PY
+cp "$work/dejavu-fonts-ttf-$version/LICENSE" assets/fonts/LICENSE-DejaVu

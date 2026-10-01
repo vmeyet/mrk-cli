@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
-use resvg::usvg::fontdb::{Database, ID};
+use resvg::usvg::fontdb::{Database, ID, Source};
 
 /// File-name stems of the families in `svg::FONT_FAMILY`, lowercased without separators.
 const FAMILY_STEMS: [&str; 7] = ["inter", "helveticaneue", "helvetica", "dejavusans", "notosans", "liberationsans", "arial"];
@@ -27,11 +27,15 @@ const FALLBACK_STEMS: [&str; 15] = [
 const MAX_DIRECTORY_DEPTH: usize = 4;
 /// Above Latin Extended and IPA, labels need the scripts only the fallback or full system set covers.
 const LAST_LATIN_CODE_POINT: u32 = 0x02ff;
+/// The family of `LAST_RESORT_FONT`, renamed from DejaVu Sans so it never shadows a system font the SVG lists.
+const LAST_RESORT_FAMILY: &str = "mrk Sans";
+/// A Latin subset of DejaVu Sans (`assets/fonts/LICENSE-DejaVu`, rebuilt by `scripts/last-resort-font`), so labels render on a system without fonts.
+static LAST_RESORT_FONT: &[u8] = include_bytes!("../../assets/fonts/MrkSans.ttf");
 
-static LABEL_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(label_fonts()));
+static LABEL_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(with_last_resort(label_fonts())));
 static FALLBACK_FONTS: LazyLock<Arc<Database>> =
-    LazyLock::new(|| Arc::new(fonts_named(&[FAMILY_STEMS.as_slice(), &FALLBACK_STEMS].concat())));
-static SYSTEM_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(system_fonts()));
+    LazyLock::new(|| Arc::new(with_last_resort(fonts_named(&[FAMILY_STEMS.as_slice(), &FALLBACK_STEMS].concat()))));
+static SYSTEM_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(with_last_resort(system_fonts())));
 
 /// The fonts a diagram needs: the label families alone, the listed fallbacks when they cover every glyph, or the whole system set.
 pub fn for_text(text: &str) -> Arc<Database> {
@@ -79,6 +83,13 @@ fn label_fonts() -> Database {
     if database.is_empty() { system_fonts() } else { database }
 }
 
+/// usvg ends every font-family list on the generic `serif`, so pointing it at the embedded face makes that face the last match.
+fn with_last_resort(mut database: Database) -> Database {
+    database.load_font_source(Source::Binary(Arc::new(LAST_RESORT_FONT)));
+    database.set_serif_family(LAST_RESORT_FAMILY);
+    database
+}
+
 fn fonts_named(stems: &[&str]) -> Database {
     let mut database = Database::new();
     font_directories()
@@ -122,6 +133,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use crate::mermaid::{raster, svg::FONT_FAMILY};
+    use resvg::usvg::fontdb::{Family, Query};
 
     fn is_label_family(path: &str) -> bool {
         FAMILY_STEMS.contains(&family_stem(Path::new(path)).as_str())
@@ -159,6 +172,29 @@ mod tests {
     fn coverage_ignores_latin_and_needs_every_other_glyph() {
         assert!(covers(&Database::new(), "Start"));
         assert!(!covers(&Database::new(), "Start 開始"));
+    }
+
+    #[test]
+    fn a_system_without_fonts_still_matches_the_label_families() {
+        let database = with_last_resort(Database::new());
+        let families = [Family::Name("Inter"), Family::SansSerif, Family::Serif];
+        let face = database.query(&Query { families: &families, ..Query::default() }).and_then(|id| database.face(id)).unwrap();
+
+        assert_eq!(face.families[0].0, LAST_RESORT_FAMILY);
+        assert!(covers(&database, "Start → End"));
+    }
+
+    #[test]
+    fn labels_draw_with_the_last_resort_alone() {
+        let has_label = |database: Database| {
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"><text y="15" font-family='{FONT_FAMILY}'>Start</text></svg>"#
+            );
+            raster::parse(&svg, Arc::new(database)).unwrap().root().has_children()
+        };
+
+        assert!(!has_label(Database::new()));
+        assert!(has_label(with_last_resort(Database::new())));
     }
 
     #[test]
