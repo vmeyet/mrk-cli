@@ -145,7 +145,7 @@ mod tests {
                 Block::Lines(lines) => {
                     lines.into_iter().filter(|line| *line != Line::blank()).map(|line| Block::Lines(vec![line])).collect()
                 }
-                picture @ Block::Picture(_) => vec![picture],
+                other => vec![other],
             })
             .collect()
     }

@@ -5,6 +5,13 @@ use crate::theme::Theme;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rgb(pub u8, pub u8, pub u8);
 
+impl Rgb {
+    /// `#rrggbb`, as SVG and CSS write a colour.
+    pub fn hex(self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Style {
     pub fg: Option<Rgb>,
@@ -100,12 +107,16 @@ pub struct Picture {
     /// The bars and spaces of the lists and quotes around the picture, drawn left of each of its rows; the picture
     /// starts right after it.
     pub indent: Line,
+    /// Text written concealed in the picture's first row, under the picture, so selecting the picture copies it.
+    pub concealed_text: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
     Lines(Vec<Line>),
     Picture(Picture),
+    /// Lines twice as tall and wide, each written on two rows as its top and bottom half.
+    DoubleHeight(Vec<Line>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -120,6 +131,15 @@ pub struct CellSize {
     pub height_px: u16,
 }
 
+/// How a level-1 heading is drawn two rows tall, when asked for and the terminal can.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JumboTitle {
+    /// A picture of each line over its concealed text.
+    Picture,
+    /// Double-height text (DECDHL).
+    DoubleHeight,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub width: usize,
@@ -127,9 +147,11 @@ pub struct Settings {
     pub cell: Option<CellSize>,
     /// Whether the terminal makes links clickable; when it does not, a link's target is printed after its text.
     pub hyperlinks: bool,
+    pub jumbo_title: Option<JumboTitle>,
 }
 
-/// The document as bare text, one `[picture: alt cols×rows]` line per picture: what snapshot tests compare.
+/// The document as bare text, one `[picture: alt cols×rows]` line per picture and each double-height line twice:
+/// what snapshot tests compare.
 pub fn plain(document: &Document) -> String {
     document.blocks.iter().map(plain_block).collect()
 }
@@ -138,6 +160,7 @@ fn plain_block(block: &Block) -> String {
     match block {
         Block::Lines(lines) => lines.iter().map(|line| format!("{}\n", line.plain().trim_end())).collect(),
         Block::Picture(picture) => format!("{}[picture: {} {}×{}]\n", picture.indent.plain(), picture.alt, picture.cols, picture.rows),
+        Block::DoubleHeight(lines) => lines.iter().map(|line| format!("{0}\n{0}\n", line.plain().trim_end())).collect(),
     }
 }
 
@@ -197,9 +220,28 @@ mod tests {
 
     #[test]
     fn plain_draws_a_picture_after_its_indent() {
-        let picture = Picture { png: Vec::new(), cols: 4, rows: 2, alt: "flow".to_owned(), indent: Line::new(vec![Span::plain("│ ")]) };
+        let picture = Picture {
+            png: Vec::new(),
+            cols: 4,
+            rows: 2,
+            alt: "flow".to_owned(),
+            indent: Line::new(vec![Span::plain("│ ")]),
+            concealed_text: None,
+        };
 
         assert_eq!(plain(&Document { blocks: vec![Block::Picture(picture)] }), "│ [picture: flow 4×2]\n");
+    }
+
+    #[test]
+    fn plain_writes_a_double_height_line_on_its_two_rows() {
+        let document = Document { blocks: vec![Block::DoubleHeight(vec![Line::new(vec![Span::plain("Big ")])])] };
+
+        assert_eq!(plain(&document), "Big\nBig\n");
+    }
+
+    #[test]
+    fn hex_writes_two_digits_per_channel() {
+        assert_eq!(Rgb(0, 15, 255).hex(), "#000fff");
     }
 
     #[test]

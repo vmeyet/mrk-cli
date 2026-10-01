@@ -256,8 +256,14 @@ mod tests {
 
     #[test]
     fn a_drawn_picture_puts_the_cursor_back() {
-        let picture =
-            Picture { png: test_png(1, 6, &[RED; 6]), cols: 1, rows: 1, alt: "flow".to_owned(), indent: crate::document::Line::blank() };
+        let picture = Picture {
+            png: test_png(1, 6, &[RED; 6]),
+            cols: 1,
+            rows: 1,
+            alt: "flow".to_owned(),
+            indent: crate::document::Line::blank(),
+            concealed_text: None,
+        };
 
         let drawn = draw(&picture).unwrap();
 

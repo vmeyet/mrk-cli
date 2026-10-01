@@ -1,4 +1,5 @@
 use crate::document::{Block, Document, Line, Picture};
+use crate::terminal::ansi::Half;
 
 /// One screen row of the document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -6,6 +7,8 @@ pub enum Row {
     Line(Line),
     /// A row covered by the picture at this index of `Page::pictures`.
     Picture(usize),
+    /// One half of a double-height line.
+    DoubleHeight(Line, Half),
 }
 
 /// A picture and the first row it covers.
@@ -26,11 +29,16 @@ fn picture_rows(picture: &Picture, index: usize) -> impl Iterator<Item = Row> + 
     std::iter::repeat_n(Row::Picture(index), usize::from(picture.rows.max(1)))
 }
 
+fn double_height_rows(line: Line) -> [Row; 2] {
+    [Row::DoubleHeight(line.clone(), Half::Top), Row::DoubleHeight(line, Half::Bottom)]
+}
+
 pub fn flatten(document: Document) -> Page {
     let mut page = Page::default();
     for block in document.blocks {
         match block {
             Block::Lines(lines) => page.rows.extend(lines.into_iter().map(Row::Line)),
+            Block::DoubleHeight(lines) => page.rows.extend(lines.into_iter().flat_map(double_height_rows)),
             Block::Picture(picture) => {
                 page.rows.extend(picture_rows(&picture, page.pictures.len()));
                 let row = page.rows.len() - usize::from(picture.rows.max(1));
@@ -51,7 +59,7 @@ mod tests {
     }
 
     fn picture(rows: u16) -> Picture {
-        Picture { png: vec![], cols: 10, rows, alt: "flow".to_owned(), indent: Line::blank() }
+        Picture { png: vec![], cols: 10, rows, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None }
     }
 
     #[test]
@@ -80,6 +88,16 @@ mod tests {
             ]
         );
         assert_eq!(page.pictures.iter().map(|placed| placed.row).collect::<Vec<_>>(), [2, 6]);
+    }
+
+    #[test]
+    fn a_double_height_line_takes_its_top_then_its_bottom_row() {
+        let page = flatten(Document { blocks: vec![Block::DoubleHeight(vec![line("Big")]), Block::Lines(vec![line("c")])] });
+
+        assert_eq!(
+            page.rows,
+            [Row::DoubleHeight(line("Big"), Half::Top), Row::DoubleHeight(line("Big"), Half::Bottom), Row::Line(line("c"))]
+        );
     }
 
     #[test]

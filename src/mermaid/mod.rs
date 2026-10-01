@@ -1,7 +1,5 @@
-mod fonts;
 mod frame;
 mod kind;
-mod raster;
 mod source;
 mod svg;
 mod text;
@@ -9,6 +7,7 @@ mod text;
 use std::fmt;
 
 use crate::document::{Block, CellSize, Line, Picture, Settings};
+use crate::raster::{RasterError, Svg};
 
 /// Mermaid blocks above this size are shown as source (`specs/02-security.md` rule 4).
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
@@ -43,6 +42,16 @@ impl fmt::Display for DiagramError {
     }
 }
 
+impl From<RasterError> for DiagramError {
+    fn from(error: RasterError) -> Self {
+        match error {
+            RasterError::UnreadableSvg(message) => Self::UnreadableSvg(message),
+            RasterError::NoCanvas => Self::Empty,
+            RasterError::PngEncoding(message) => Self::PngEncoding(message),
+        }
+    }
+}
+
 /// A ```mermaid block: a picture when `settings.cell` is set and the diagram renders, text otherwise.
 pub fn render(source: &str, settings: &Settings) -> Block {
     if source.len() > MAX_SOURCE_BYTES {
@@ -56,12 +65,12 @@ pub fn render(source: &str, settings: &Settings) -> Block {
 }
 
 fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture, DiagramError> {
-    let svg = svg::render(source, &settings.theme.palette)?;
-    let tree = raster::parse(&svg, fonts::for_text(source))?;
-    let size = tree.size();
-    let frame = frame::fit(size.width(), size.height(), svg::FONT_SIZE_PX, cell, settings.width).ok_or(DiagramError::TooLarge)?;
-    let png = raster::draw(&tree, &frame)?;
-    Ok(Picture { png, cols: frame.cols, rows: frame.rows, alt: kind::describe(source).to_owned(), indent: Line::blank() })
+    let drawing = Svg::parse(&svg::render(source, &settings.theme.palette)?, source)?;
+    let (width, height) = drawing.size();
+    let frame = frame::fit(width, height, svg::FONT_SIZE_PX, cell, settings.width).ok_or(DiagramError::TooLarge)?;
+    let png = drawing.draw(frame.scale, frame.width_px, frame.height_px)?;
+    let alt = kind::describe(source).to_owned();
+    Ok(Picture { png, cols: frame.cols, rows: frame.rows, alt, indent: Line::blank(), concealed_text: None })
 }
 
 fn as_text(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
@@ -75,8 +84,6 @@ fn as_source(source: &str, error: &DiagramError, settings: &Settings) -> Block {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-
-    use resvg::tiny_skia::Pixmap;
 
     use super::*;
     use crate::document::Line;
@@ -93,23 +100,24 @@ mod tests {
     fn lines(block: Block) -> Vec<Line> {
         match block {
             Block::Lines(lines) => lines,
-            Block::Picture(picture) => panic!("expected lines, got a picture of {}", picture.alt),
+            other => panic!("expected lines, got {other:?}"),
         }
     }
 
     fn picture_of(source: &str) -> Picture {
         match render(source, &with_cell()) {
             Block::Picture(picture) => picture,
-            Block::Lines(lines) => panic!("expected a picture, got {:?}", lines.first().map(Line::plain)),
+            other => panic!("expected a picture, got {other:?}"),
         }
     }
 
     fn assert_fills_its_cells(picture: &Picture) {
-        let pixmap = Pixmap::decode_png(&picture.png).unwrap();
-        assert_eq!(pixmap.width(), u32::from(picture.cols) * u32::from(CELL.width_px));
-        assert_eq!(pixmap.height(), u32::from(picture.rows) * u32::from(CELL.height_px));
+        let drawn = crate::raster::inspect(&picture.png).unwrap();
+        assert_eq!(drawn.width, u32::from(picture.cols) * u32::from(CELL.width_px));
+        assert_eq!(drawn.height, u32::from(picture.rows) * u32::from(CELL.height_px));
+
         assert!(usize::from(picture.cols) <= with_cell().width);
-        assert!(pixmap.pixels().iter().any(|pixel| pixel.alpha() > 0));
+        assert!(drawn.has_ink);
     }
 
     #[test]

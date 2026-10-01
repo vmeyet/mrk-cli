@@ -2,10 +2,16 @@ use std::borrow::Cow;
 
 use super::color::ansi256;
 use super::{Capabilities, ColorDepth, sanitize};
-use crate::document::{Line, Rgb, Span, Style};
+use crate::document::{Line, Picture, Rgb, Span, Style};
 
 const RESET: &str = "\x1b[0m";
 const HYPERLINK_CLOSE: &str = "\x1b]8;;\x1b\\";
+const DOUBLE_HEIGHT_TOP: &str = "\x1b#3";
+const DOUBLE_HEIGHT_BOTTOM: &str = "\x1b#4";
+/// Back to a single-width, single-height line, which erasing the line does not do.
+pub const SINGLE_WIDTH: &str = "\x1b#5";
+const CONCEAL: &str = "\x1b[8m";
+const REVEAL: &str = "\x1b[28m";
 
 #[derive(Default)]
 struct Pen {
@@ -99,6 +105,27 @@ pub fn line(line: &Line, capabilities: &Capabilities, margin: usize) -> String {
     out
 }
 
+/// Which row of a double-height line: the top or the bottom half of its characters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Half {
+    Top,
+    Bottom,
+}
+
+/// One row of a double-height line. Every cell of the row is twice as wide, the margin's too, so it is halved.
+pub fn half(line: &Line, half: Half, capabilities: &Capabilities, margin: usize) -> String {
+    let size = match half {
+        Half::Top => DOUBLE_HEIGHT_TOP,
+        Half::Bottom => DOUBLE_HEIGHT_BOTTOM,
+    };
+    format!("{size}{}", self::line(line, capabilities, margin / 2))
+}
+
+/// The picture's concealed text: written where selection finds it, never shown.
+pub fn concealed(picture: &Picture) -> String {
+    picture.concealed_text.as_deref().map(|text| format!("{CONCEAL}{}{REVEAL}", sanitize::text(text))).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,7 +138,7 @@ mod tests {
     const RED: Rgb = Rgb(255, 0, 0);
 
     fn capabilities(color: ColorDepth, hyperlinks: bool) -> Capabilities {
-        Capabilities { color, hyperlinks, graphics: None, background: None, columns: 80, is_terminal: true }
+        Capabilities { color, hyperlinks, graphics: None, double_height: false, background: None, columns: 80, is_terminal: true }
     }
 
     fn truecolor() -> Capabilities {
@@ -206,6 +233,22 @@ mod tests {
         let span = Span::plain("click").linked("javascript:alert(1)");
 
         assert_eq!(line(&Line::new(vec![span]), &truecolor()), "  click\n");
+    }
+
+    #[test]
+    fn a_double_height_half_names_its_half_before_half_the_margin() {
+        let big = Line::new(vec![Span::plain("Big")]);
+
+        assert_eq!(half(&big, Half::Top, &truecolor(), 5), "\x1b#3  Big\n");
+        assert_eq!(half(&big, Half::Bottom, &truecolor(), 5), "\x1b#4  Big\n");
+    }
+
+    #[test]
+    fn concealed_text_is_sanitized_and_only_written_when_the_picture_has_some() {
+        let picture = Picture { png: Vec::new(), cols: 1, rows: 2, alt: "T".to_owned(), indent: Line::blank(), concealed_text: None };
+
+        assert_eq!(concealed(&picture), "");
+        assert_eq!(concealed(&Picture { concealed_text: Some("T\x1b[2J".to_owned()), ..picture }), "\x1b[8mT[2J\x1b[28m");
     }
 
     #[test]

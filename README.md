@@ -44,6 +44,7 @@ The [`examples/`](examples/) folder holds three real-looking documents to try it
 - **11 themes**, light or dark picked from your terminal background.
 - **A pager that keeps pictures**, with search: `less` drops images, `mrk -p` does not.
 - **Fits the window**: wraps at the terminal width (100 columns at most) and centres the text in a wide window.
+- **Big titles**, opt-in with `--jumbo-title`: level-1 headings two rows tall, as a picture on terminals that show images, as double-height text on xterm, Konsole, Windows Terminal, mlterm and iTerm2.
 
 ![mrk rendering a post-mortem with alerts, a timeline table and a sequence diagram](examples/pictures/example-postmortem.png)
 
@@ -75,9 +76,11 @@ theme = "tokyo-night"
 width = 90
 align = "left"
 pager = true
+jumbo_title = true
 ```
 
-`mrk --list-themes` shows every theme with a swatch of its colours:
+`mrk --list-themes`
+ shows every theme with a swatch of its colours:
 `mrk-dark`, `mrk-light`, `catppuccin-mocha`, `catppuccin-latte`, `tokyo-night`, `nord`, `dracula`, `gruvbox-dark`, `gruvbox-light`, `github-dark`, `github-light`.
 Without a theme, mrk picks `mrk-dark` or `mrk-light` from the terminal background.
 

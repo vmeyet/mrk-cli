@@ -22,6 +22,7 @@ mrk                 render stdin (cat notes.md | mrk)
 mrk --theme NAME    pick a theme; mrk --list-themes shows them with a swatch
 mrk --width N       wrap width in columns (default: terminal width, capped at 100)
 mrk --images auto|always|never   Mermaid as images (auto: when the terminal speaks kitty graphics or Sixel, inside tmux with passthrough allowed, not under screen/zellij; always: inside them too)
+mrk --jumbo-title                level-1 headings two rows tall (off by default; see Visual language)
 mrk --align center|left          centre the text column in a wide window (default center; piped output is never centred)
 mrk --color auto|always|never    auto honours NO_COLOR and a non-tty stdout
 mrk -p FILE         read in the pager: diagrams stay images, j/k/space/b/g/G scroll, / n N search, q quits
@@ -32,7 +33,7 @@ mrk --man           the man page as roff (hidden from --help)
 mrk --list-themes   names with a swatch on a terminal, bare names one per line when piped
 ```
 
-Config: the first of `$XDG_CONFIG_HOME/mrk/config.toml` (or `~/.config/mrk/config.toml`) and, on macOS, `~/Library/Application Support/mrk/config.toml`, with `theme`, `width`, `images`, `align`, `pager`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+Config: the first of `$XDG_CONFIG_HOME/mrk/config.toml` (or `~/.config/mrk/config.toml`) and, on macOS, `~/Library/Application Support/mrk/config.toml`, with `theme`, `width`, `images`, `align`, `pager`, `jumbo_title`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
 `--help` ends with that lookup, the environment, the pager keys and the exit status; the man page carries the same sections.
 
 Exit status: 0 on success, 2 for a usage mistake (a bad flag, environment value or config file, an unknown theme from any of them), 1 for any other failure.
@@ -43,6 +44,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Element | Rendering |
 |---|---|
 | H1 | bold, `h1` colour, followed by a `━` rule the width of the content in `subtle` |
+| Jumbo H1 (`--jumbo-title`) | the H1 two rows tall, wrapped at half the width, then its rule. With kitty graphics outside tmux: a picture of each line in bold `h1` (regular when only the embedded font is found), drawn under the line's text written concealed, so selecting it copies the words. Else on xterm, Konsole, Windows Terminal, mlterm and iTerm2 outside a multiplexer: double-height text (DECDHL) in the H1 style. Elsewhere, inside lists and quotes, piped or under `MRK_PAGER`: the plain H1 |
 | H2 | `▍ ` bar in `h2`, bold title in `h2` |
 | H3 | bold `h3` |
 | H4–H6 | bold `text`, H6 muted |
@@ -69,7 +71,9 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 - **Document**: the rendered output, a list of blocks. **Block**: text lines or a picture.
 - **Line**: spans that fit the width. **Span**: text with one style and an optional link.
 - **Theme**: a palette plus a syntax theme, one of the `SyntaxTheme` variants that `code` maps onto a two-face theme. **Palette**: the named colours above.
-- **Settings**: width, theme, the image cell size and whether links are clickable, everything a renderer reads.
-- **Picture**: a PNG with the cell box it occupies and the indent drawn left of each of its rows.
-- **Capabilities**: what the terminal can do (colour depth, graphics, cell size, background).
+- **Settings**: width, theme, the image cell size, whether links are clickable and how a jumbo title is drawn, everything a renderer reads.
+- **Picture**: a PNG with the cell box it occupies and the indent drawn left of each of its rows; a title's picture also carries the text concealed under it.
+- **Jumbo title**: a level-1 heading drawn two rows tall, as a picture or as double-height lines.
+- **Capabilities**: what the terminal can do (colour depth, graphics, double-height lines, cell size, background).
+
 - **Graphics**: the protocol pictures are drawn with, kitty or Sixel, and the cell size in pixels.

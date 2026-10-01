@@ -1,6 +1,6 @@
 ---
 source: src/terminal/pager/frame.rs
-expression: "readable(&drawn(&sample(), cell))"
+expression: "readable(&drawn(&sample(), Some(Protocol::Kitty)))"
 ---
 
 ␛[?2026h␛_Ga=d,d=i,i=1836215040,q=2␛\
@@ -20,5 +20,5 @@ expression: "readable(&drawn(&sample(), cell))"
 ␛[38;2;139;145;163m   q quit · / search
 ␛[39m 
 ␛[0m
-␛[1;3H␛_Ga=p,i=1836215040,p=1,x=0,y=20,w=200,h=40,c=20,r=2,C=1,q=2␛\
+␛[1;3H␛_Ga=p,i=1836215040,p=1,x=0,y=20,w=200,h=40,c=20,r=2,z=0,C=1,q=2␛\
 ␛[?2026l

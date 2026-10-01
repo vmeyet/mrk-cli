@@ -1,0 +1,14 @@
+---
+source: src/markdown/heading.rs
+expression: "plain(&render(TITLE, &jumbo(JumboTitle::DoubleHeight, None)))"
+---
+A jumbo title
+A jumbo title
+that wraps
+that wraps
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+▍ Two
+
+• Listed
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━

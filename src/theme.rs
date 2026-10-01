@@ -67,7 +67,7 @@ const CHARS_PER_EDIT: usize = 3;
 
 /// The settings unit tests render with: dark theme, 80 columns, no pictures.
 pub fn test_settings() -> crate::document::Settings {
-    crate::document::Settings { width: 80, theme: MRK_DARK, cell: None, hyperlinks: true }
+    crate::document::Settings { width: 80, theme: MRK_DARK, cell: None, hyperlinks: true, jumbo_title: None }
 }
 
 /// Every built-in theme name, defaults first.
