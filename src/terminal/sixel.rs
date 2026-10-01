@@ -83,11 +83,11 @@ fn decode(png: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     is_rgba.then_some((info.width, info.height, buffer))
 }
 
-fn is_opaque(pixel: &[u8]) -> bool {
+fn is_opaque(pixel: [u8; 4]) -> bool {
     pixel[3] >= MIN_ALPHA
 }
 
-fn bucket(pixel: &[u8]) -> usize {
+fn bucket(pixel: [u8; 4]) -> usize {
     let shift = 8 - BUCKET_BITS;
     pixel[..3].iter().fold(0, |bucket, channel| (bucket << BUCKET_BITS) | usize::from(channel >> shift))
 }
@@ -107,8 +107,8 @@ impl Tally {
 
 fn tallies(rgba: &[u8]) -> Vec<Tally> {
     let mut tallies = vec![Tally::default(); BUCKETS];
-    for pixel in rgba.chunks_exact(4).filter(|pixel| is_opaque(pixel)) {
-        let tally = &mut tallies[bucket(pixel)];
+    for pixel in rgba.as_chunks::<4>().0.iter().filter(|pixel| is_opaque(**pixel)) {
+        let tally = &mut tallies[bucket(*pixel)];
         tally.count += 1;
         tally.sums.iter_mut().zip(&pixel[..3]).for_each(|(sum, channel)| *sum += u64::from(*channel));
     }
@@ -135,7 +135,7 @@ fn quantize(width: u32, height: u32, rgba: &[u8]) -> Image {
     for &bucket in rare {
         lookup[bucket] = nearest(tallies[bucket].mean(), &palette);
     }
-    let pixels = rgba.chunks_exact(4).map(|pixel| is_opaque(pixel).then(|| lookup[bucket(pixel)])).collect();
+    let pixels = rgba.as_chunks::<4>().0.iter().map(|pixel| is_opaque(*pixel).then(|| lookup[bucket(*pixel)])).collect();
     Image { width, height, colors: colors(&palette), pixels }
 }
 
