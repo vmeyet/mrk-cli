@@ -2,7 +2,7 @@
 
 Read Markdown in your terminal as a well-set page, with Mermaid diagrams drawn as real images.
 
-<!-- screenshot: examples/plan.md -->
+![mrk rendering a technical plan with a table, code and a Mermaid flowchart](examples/pictures/example-plan.gif)
 
 `mrk` turns headings, tables, code, alerts, task lists and footnotes into calm colour and clean spacing, with no `#` or `*` left on screen.
 On terminals that can show pictures, Mermaid diagrams appear as images; everywhere else they become box-drawing text.
@@ -45,7 +45,7 @@ The [`examples/`](examples/) folder holds three real-looking documents to try it
 - **A pager that keeps pictures**, with search: `less` drops images, `mrk -p` does not.
 - **Fits the window**: wraps at the terminal width (100 columns at most) and centres the text in a wide window.
 
-<!-- screenshot: examples/postmortem.md -->
+![mrk rendering a post-mortem with alerts, a timeline table and a sequence diagram](examples/pictures/example-postmortem.png)
 
 ## Terminal support
 
@@ -81,7 +81,7 @@ pager = true
 `mrk-dark`, `mrk-light`, `catppuccin-mocha`, `catppuccin-latte`, `tokyo-night`, `nord`, `dracula`, `gruvbox-dark`, `gruvbox-light`, `github-dark`, `github-light`.
 Without a theme, mrk picks `mrk-dark` or `mrk-light` from the terminal background.
 
-<!-- screenshot: mrk --list-themes -->
+![mrk --list-themes showing each theme with a colour swatch](examples/pictures/mrk-list-theme.png)
 
 Every flag, variable, config key and exit code is in the [reference](docs/reference.md).
 
@@ -90,7 +90,7 @@ Every flag, variable, config key and exit code is in the [reference](docs/refere
 `mrk -p FILE`, or `pager = true` in the config, opens the built-in pager.
 It keeps diagrams as images and stays open until you press `q`.
 
-<!-- screenshot (GIF): mrk -p examples/release-notes.md, scroll then search "redis" -->
+![The mrk pager scrolling release notes with a diagram kept as an image](examples/pictures/example-redis.gif)
 
 | Keys                                    | Action                        |
 | :-------------------------------------- | :---------------------------- |
