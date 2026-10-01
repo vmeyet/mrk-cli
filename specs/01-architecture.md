@@ -96,7 +96,7 @@ src/
   Through tmux, kitty pictures are sent once with a virtual placement (`U=1`) and shown by rows of `U+10EEEE` placeholder cells, coloured with a 256-colour index for the id's low byte and numbered by diacritics (row, column, the id's high byte), so tmux keeps, scrolls and redraws them like text; ids come from a hash of the PNG.
   The pager writes the placeholder cells of the visible rows in place of the picture rows, with nothing to place or delete. The cell size comes from the window's pixel size, or from `CSI 16 t` when the window reports none.
   iTerm2 is known to have no graphics: it answers the kitty graphics query with `OK` but draws nothing.
-- Release profile: thin LTO, one codegen unit, stripped.
+- Release profile: `opt-level = "s"`, fat LTO, one codegen unit, stripped.
 
 ## Release
 
