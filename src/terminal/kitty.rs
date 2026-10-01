@@ -6,6 +6,8 @@ use crate::document::Picture;
 
 const CHUNK_BYTES: usize = 4096;
 const PLACEMENT_ID: u32 = 1;
+/// Under the text and above cell backgrounds, so a title's concealed text stays selectable over its picture.
+const UNDER_TEXT: i32 = -1;
 /// The cell kitty draws a piece of a virtual placement in; its diacritics say which row, and its colour which image.
 const PLACEHOLDER: char = '\u{10eeee}';
 /// The combining marks that number placeholder rows and columns, in kitty's order (`rowcolumn-diacritics.txt`).
@@ -62,10 +64,15 @@ fn chunked(png: &[u8], first_keys: &str) -> String {
     commands(png, first_keys).concat()
 }
 
+/// The layer the picture is drawn on: under its concealed text when it has some, over the text otherwise.
+pub fn z_index(picture: &Picture) -> i32 {
+    if picture.concealed_text.is_some() { UNDER_TEXT } else { 0 }
+}
+
 /// Draws the picture at the cursor into its cell box with `C=1`, cursor unmoved: where kitty, Ghostty and WezTerm
 /// would otherwise leave it differs.
 pub fn draw(picture: &Picture) -> String {
-    chunked(&picture.png, &format!("a=T,f=100,q=2,C=1,c={},r={}", picture.cols, picture.rows.max(1)))
+    chunked(&picture.png, &format!("a=T,f=100,q=2,C=1,c={},r={},z={}", picture.cols, picture.rows.max(1), z_index(picture)))
 }
 
 /// An image id a 256-colour placeholder can carry, the low byte as its colour and the high byte as a third diacritic,
@@ -110,13 +117,14 @@ pub struct Crop {
     pub height: u32,
 }
 
-/// A stored picture drawn at the cursor: the `crop` of its PNG scaled into `cols`×`rows` cells.
+/// A stored picture drawn at the cursor: the `crop` of its PNG scaled into `cols`×`rows` cells, on layer `z`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     pub id: u32,
     pub crop: Crop,
     pub cols: u16,
     pub rows: u16,
+    pub z: i32,
 }
 
 /// Sends the PNG once under `id` without drawing it, so frames can place it again and again.
@@ -127,8 +135,8 @@ pub fn store(png: &[u8], id: u32) -> String {
 /// Draws a stored picture at the cursor, leaving the cursor where it was. Placing the same image and placement id
 /// again replaces the previous placement.
 pub fn place(placement: &Placement) -> String {
-    let Placement { id, crop: Crop { x, y, width, height }, cols, rows } = *placement;
-    format!("\x1b_Ga=p,i={id},p={PLACEMENT_ID},x={x},y={y},w={width},h={height},c={cols},r={rows},C=1,q=2\x1b\\")
+    let Placement { id, crop: Crop { x, y, width, height }, cols, rows, z } = *placement;
+    format!("\x1b_Ga=p,i={id},p={PLACEMENT_ID},x={x},y={y},w={width},h={height},c={cols},r={rows},z={z},C=1,q=2\x1b\\")
 }
 
 /// Removes every placement of the picture but keeps its data, so it can be placed again without resending it.
@@ -151,12 +159,19 @@ mod tests {
     use super::*;
 
     fn sample(png: Vec<u8>) -> Picture {
-        Picture { png, cols: 40, rows: 3, alt: "flow".to_owned(), indent: crate::document::Line::blank() }
+        Picture { png, cols: 40, rows: 3, alt: "flow".to_owned(), indent: crate::document::Line::blank(), concealed_text: None }
     }
 
     #[test]
     fn a_small_picture_is_one_final_chunk() {
-        assert_eq!(draw(&sample(vec![1, 2, 3])), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,m=0;AQID\x1b\\");
+        assert_eq!(draw(&sample(vec![1, 2, 3])), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,z=0,m=0;AQID\x1b\\");
+    }
+
+    #[test]
+    fn a_picture_with_concealed_text_is_drawn_under_the_text() {
+        let title = Picture { concealed_text: Some("Title".to_owned()), ..sample(vec![1, 2, 3]) };
+
+        assert_eq!(draw(&title), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,z=-1,m=0;AQID\x1b\\");
     }
 
     #[test]
@@ -165,7 +180,7 @@ mod tests {
         let commands: Vec<&str> = out.split("\x1b_G").skip(1).collect();
 
         assert_eq!(commands.len(), 4);
-        assert!(commands[0].starts_with("a=T,f=100,q=2,C=1,c=40,r=3,m=1;"));
+        assert!(commands[0].starts_with("a=T,f=100,q=2,C=1,c=40,r=3,z=0,m=1;"));
         assert!(commands[1].starts_with("q=2,m=1;"));
         assert!(commands[3].starts_with("q=2,m=0;"));
         let payload = |command: &str| command.split([';', '\x1b']).nth(1).map_or(0, str::len);
@@ -178,7 +193,8 @@ mod tests {
 
     #[test]
     fn the_pager_commands_follow_the_kitty_protocol() {
-        let placement = Placement { id: 7, crop: Crop { x: 0, y: 40, width: 400, height: 60 }, cols: 40, rows: 3 };
+        let placement = Placement { id: 7, crop: Crop { x: 0, y: 40, width: 400, height: 60 }, cols: 40, rows: 3, z: -1 };
+
         let commands = [store(&[1, 2, 3], 7), place(&placement), hide(7), forget(7..=9)].map(|command| readable(&command));
 
         insta::assert_snapshot!(commands.join("\n"));

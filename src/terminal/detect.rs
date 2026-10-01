@@ -1,6 +1,8 @@
 use crossterm::terminal::WindowSize;
 
-use super::environment::{Environment, background_hint, color_depth, hyperlinks, inside_tmux, known_graphics, wants_pictures};
+use super::environment::{
+    Environment, background_hint, color_depth, double_height, hyperlinks, inside_tmux, known_graphics, wants_pictures,
+};
 use super::query::{self, Questions};
 use super::reply::Replies;
 use super::{Capabilities, ColorChoice, ColorDepth, Graphics, ImagesMode, Protocol};
@@ -81,6 +83,7 @@ pub fn detect(preferences: Preferences) -> Capabilities {
         color,
         hyperlinks: hyperlinks(&environment, color),
         graphics: graphics(&environment, preferences.images, window_cell, &replies),
+        double_height: double_height(&environment, color),
         background,
         columns,
         is_terminal: environment.stdout_is_tty,

@@ -61,7 +61,7 @@ fn children<'a>(node: &'a AstNode<'a>, context: &Context, spacing: Spacing) -> V
 fn block<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     match &node.data().value {
         NodeValue::Paragraph => layout::lines(crate::text::wrap(&inline::spans(node, context.text, context), context.width(), &[])),
-        NodeValue::Heading(heading) => layout::lines(heading::render(node, heading.level, context)),
+        NodeValue::Heading(heading) => heading::render(node, heading.level, context),
         NodeValue::List(list) => list::render(node, list, context),
         NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => quote::render(node, context),
         NodeValue::Alert(alert) => quote::alert(node, alert, context),
@@ -91,7 +91,7 @@ fn plain_with_pictures(source: &str) -> String {
 fn span_with(source: &str, needle: &str) -> crate::document::Span {
     let document = render(source, &crate::theme::test_settings());
     let spans = document.blocks.into_iter().flat_map(|block| match block {
-        Block::Lines(lines) => lines.into_iter().flat_map(|line| line.spans).collect(),
+        Block::Lines(lines) | Block::DoubleHeight(lines) => lines.into_iter().flat_map(|line| line.spans).collect(),
         Block::Picture(_) => Vec::new(),
     });
     spans.into_iter().find(|span| span.text.contains(needle)).unwrap_or_else(|| panic!("no span contains {needle:?}"))
@@ -117,7 +117,7 @@ mod tests {
             .blocks
             .into_iter()
             .flat_map(|block| match block {
-                Block::Lines(lines) => lines,
+                Block::Lines(lines) | Block::DoubleHeight(lines) => lines,
                 Block::Picture(_) => Vec::new(),
             })
             .collect()

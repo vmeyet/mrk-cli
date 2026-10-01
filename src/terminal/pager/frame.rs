@@ -6,6 +6,7 @@ use super::search::{self, Match};
 use super::state::Pager;
 use super::status;
 use crate::document::Line;
+use crate::terminal::ansi::Half;
 use crate::terminal::kitty::Placement;
 use crate::terminal::sixel::Image;
 use crate::terminal::{Capabilities, Protocol, ansi, kitty};
@@ -92,9 +93,14 @@ fn drawn_line(line: &Line, look: &Look) -> String {
     ansi::line(line, look.capabilities, look.margin).trim_end_matches('\n').to_owned()
 }
 
+fn drawn_half(line: &Line, half: Half, look: &Look) -> String {
+    ansi::half(line, half, look.capabilities, look.margin).trim_end_matches('\n').to_owned()
+}
+
 fn picture_row(pager: &Pager, picture: usize, row: usize, look: &Look, pictures: &Pictures) -> String {
     let Some(placed) = pager.page.pictures.get(picture) else { return String::new() };
-    drawn_line(&placed.picture.indent, look) + &pictures.cells(picture, placed, row - placed.row)
+    let concealed = if row == placed.row { ansi::concealed(&placed.picture) } else { String::new() };
+    drawn_line(&placed.picture.indent, look) + &concealed + &pictures.cells(picture, placed, row - placed.row)
 }
 
 fn row_text(pager: &Pager, index: usize, look: &Look, pictures: &Pictures) -> String {
@@ -103,19 +109,26 @@ fn row_text(pager: &Pager, index: usize, look: &Look, pictures: &Pictures) -> St
         Some(Row::Line(line)) if matches.is_empty() => drawn_line(line, look),
         Some(Row::Line(line)) => drawn_line(&search::highlight(line, matches, pager.search.current_match(), look.palette), look),
         Some(Row::Picture(picture)) => picture_row(pager, *picture, index, look, pictures),
+        Some(Row::DoubleHeight(line, half)) => drawn_half(line, *half, look),
         None => String::new(),
     }
 }
 
+/// The cursor at the start of the row, which a double-height line drawn there last frame is taken off.
+fn row_start(row: usize, look: &Look) -> String {
+    let single_width = if look.capabilities.double_height { ansi::SINGLE_WIDTH } else { "" };
+    format!("{}{single_width}", go_to(row, 0))
+}
+
 fn text_rows(pager: &Pager, look: &Look, pictures: &Pictures) -> String {
     (0..pager.height)
-        .map(|screen_row| format!("{}{CLEAR_LINE}{}", go_to(screen_row, 0), row_text(pager, pager.top + screen_row, look, pictures)))
+        .map(|screen_row| format!("{}{CLEAR_LINE}{}", row_start(screen_row, look), row_text(pager, pager.top + screen_row, look, pictures)))
         .collect()
 }
 
 fn status_row(pager: &Pager, look: &Look) -> String {
     let bar = status::bar(pager, look.name, look.palette, look.columns);
-    format!("{}{}", go_to(pager.height, 0), ansi::line(&bar, look.capabilities, 0).trim_end_matches('\n'))
+    format!("{}{}", row_start(pager.height, look), ansi::line(&bar, look.capabilities, 0).trim_end_matches('\n'))
 }
 
 fn hidden_pictures(page: &Page) -> String {
@@ -174,8 +187,15 @@ mod tests {
     use crate::terminal::pager::page::flatten;
     use crate::theme::MRK_DARK;
 
-    const CAPABILITIES: Capabilities =
-        Capabilities { color: ColorDepth::TrueColor, hyperlinks: true, graphics: None, background: None, columns: 40, is_terminal: true };
+    const CAPABILITIES: Capabilities = Capabilities {
+        color: ColorDepth::TrueColor,
+        hyperlinks: true,
+        graphics: None,
+        double_height: false,
+        background: None,
+        columns: 40,
+        is_terminal: true,
+    };
 
     fn png() -> Vec<u8> {
         crate::terminal::sixel::test_png(200, 60, &vec![[255, 0, 0, 255]; 200 * 60])
@@ -190,7 +210,7 @@ mod tests {
     }
 
     fn indented_sample(indent: Line) -> Pager {
-        let picture = Picture { png: png(), cols: 20, rows: 3, alt: "flow".to_owned(), indent };
+        let picture = Picture { png: png(), cols: 20, rows: 3, alt: "flow".to_owned(), indent, concealed_text: None };
         let document = Document {
             blocks: vec![Block::Lines(vec![text("Alpha"), text("beta")]), Block::Picture(picture), Block::Lines(vec![text("gamma")])],
         };
@@ -202,8 +222,35 @@ mod tests {
     }
 
     fn drawn(pager: &Pager, protocol: Option<Protocol>) -> String {
-        let look = Look { name: "a.md", palette: &MRK_DARK.palette, capabilities: &CAPABILITIES, margin: 2, columns: 40 };
+        drawn_on(pager, protocol, &CAPABILITIES)
+    }
+
+    fn drawn_on(pager: &Pager, protocol: Option<Protocol>, capabilities: &Capabilities) -> String {
+        let look = Look { name: "a.md", palette: &MRK_DARK.palette, capabilities, margin: 2, columns: 40 };
         frame(pager, &look, &Pictures::new(&pager.page, protocol))
+    }
+
+    #[test]
+    fn a_title_picture_is_placed_under_its_concealed_text() {
+        let title = Picture { concealed_text: Some("Title".to_owned()), ..sample().page.pictures[0].picture.clone() };
+        let frame = drawn(&Pager::new(flatten(Document { blocks: vec![Block::Picture(title)] }), 3), Some(Protocol::Kitty));
+
+        assert!(frame.contains("\x1b[8mTitle\x1b[28m"), "{frame:?}");
+        assert!(frame.contains(",z=-1,"), "{frame:?}");
+    }
+
+    #[test]
+    fn double_height_rows_are_drawn_as_halves_and_every_other_row_set_back_to_single_width() {
+        let document = Document { blocks: vec![Block::DoubleHeight(vec![text("Big")]), Block::Lines(vec![text("small")])] };
+        let pager = Pager::new(flatten(document), 3);
+        let capabilities = Capabilities { double_height: true, ..CAPABILITIES };
+
+        let frame = drawn_on(&pager, None, &capabilities);
+
+        assert!(frame.contains("\x1b[1;1H\x1b#5\x1b[2K\x1b#3 \x1b["), "{frame:?}");
+        assert!(frame.contains("\x1b[2;1H\x1b#5\x1b[2K\x1b#4 \x1b["), "{frame:?}");
+        assert!(frame.contains("\x1b[3;1H\x1b#5\x1b[2K  \x1b["), "{frame:?}");
+        assert!(!drawn(&pager, None).contains("\x1b#5"));
     }
 
     #[test]

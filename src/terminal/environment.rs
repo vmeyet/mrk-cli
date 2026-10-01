@@ -4,13 +4,15 @@ use std::io::IsTerminal;
 use super::{ColorChoice, ColorDepth, ImagesMode};
 use crate::theme::Appearance;
 
-const VARIABLES: [&str; 14] = [
+const VARIABLES: [&str; 17] = [
     "COLORFGBG",
     "COLORTERM",
     "GHOSTTY_RESOURCES_DIR",
     "INSIDE_EMACS",
     "KITTY_WINDOW_ID",
+    "KONSOLE_VERSION",
     "LC_TERMINAL",
+    "MLTERM",
     "NO_COLOR",
     "STY",
     "TERM",
@@ -18,6 +20,7 @@ const VARIABLES: [&str; 14] = [
     "TMUX",
     "WEZTERM_EXECUTABLE",
     "WT_SESSION",
+    "XTERM_VERSION",
     "ZELLIJ",
 ];
 const TRUECOLOR_PROGRAMS: [&str; 4] = ["ghostty", "WezTerm", "iTerm.app", "vscode"];
@@ -26,6 +29,8 @@ const GRAPHICS_PROGRAMS: [&str; 2] = ["ghostty", "WezTerm"];
 const GRAPHICS_TERMS: [&str; 2] = ["xterm-kitty", "xterm-ghostty"];
 /// iTerm2 answers the kitty graphics query with `OK` yet draws none of mrk's pictures.
 const NO_GRAPHICS_PROGRAMS: [&str; 3] = ["Apple_Terminal", "iTerm.app", "vscode"];
+/// Set by xterm, Konsole, mlterm and Windows Terminal, which draw DEC double-height lines; iTerm2 does too.
+const DOUBLE_HEIGHT_VARIABLES: [&str; 4] = ["XTERM_VERSION", "KONSOLE_VERSION", "MLTERM", "WT_SESSION"];
 
 /// The environment variables detection reads, and whether stdout is a terminal.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -58,6 +63,11 @@ impl Environment {
 
     fn is_dumb(&self) -> bool {
         self.term() == "dumb"
+    }
+
+    /// `LC_TERMINAL` also crosses ssh, where `TERM_PROGRAM` does not.
+    fn is_iterm(&self) -> bool {
+        self.program() == "iTerm.app" || self.get("LC_TERMINAL") == Some("iTerm2")
     }
 
     fn is_tmux(&self) -> bool {
@@ -106,14 +116,24 @@ pub fn known_graphics(environment: &Environment) -> Option<bool> {
     let is_known_program = GRAPHICS_PROGRAMS.contains(&environment.program());
     let is_known_host = environment.has("KITTY_WINDOW_ID") || environment.has("GHOSTTY_RESOURCES_DIR");
     let is_known_with = (is_known_term || is_known_program || is_known_host) && !environment.is_tmux();
-    let is_iterm = environment.get("LC_TERMINAL") == Some("iTerm2");
-    let is_known_without =
-        NO_GRAPHICS_PROGRAMS.contains(&environment.program()) || is_iterm || environment.is_dumb() || environment.term() == "linux";
+    let is_known_without = NO_GRAPHICS_PROGRAMS.contains(&environment.program())
+        || environment.is_iterm()
+        || environment.is_dumb()
+        || environment.term() == "linux";
     match () {
         () if is_known_with => Some(true),
         () if is_known_without => Some(false),
         () => None,
     }
+}
+
+/// Whether the terminal draws DEC double-height lines (`ESC # 3`, `ESC # 4`), which multiplexers drop. A terminal
+/// started from one of them inherits its variables but sets a `TERM_PROGRAM` of its own.
+pub fn double_height(environment: &Environment, color: ColorDepth) -> bool {
+    let is_listed = DOUBLE_HEIGHT_VARIABLES.iter().any(|name| environment.has(name)) || environment.is_iterm();
+    let is_own_program = matches!(environment.program(), "" | "iTerm.app");
+    let can_write = environment.stdout_is_tty && color != ColorDepth::None && !environment.is_multiplexed();
+    is_listed && is_own_program && can_write
 }
 
 pub fn wants_pictures(environment: &Environment, images: ImagesMode) -> bool {
@@ -230,6 +250,33 @@ mod tests {
             assert!(!wants_pictures(&tty(&variables), ImagesMode::Auto), "{variables:?}");
             assert!(wants_pictures(&tty(&variables), ImagesMode::Always), "{variables:?}");
         }
+    }
+
+    #[test]
+    fn double_height_lines_need_a_listed_terminal_outside_a_multiplexer() {
+        for variables in [
+            [("XTERM_VERSION", "XTerm(390)")],
+            [("KONSOLE_VERSION", "230800")],
+            [("MLTERM", "3.9.3")],
+            [("WT_SESSION", "8a3c")],
+            [("TERM_PROGRAM", "iTerm.app")],
+            [("LC_TERMINAL", "iTerm2")],
+        ] {
+            assert!(double_height(&tty(&variables), ColorDepth::TrueColor), "{variables:?}");
+        }
+        assert!(!double_height(&tty(&[("TERM", "xterm-256color")]), ColorDepth::TrueColor));
+        assert!(!double_height(&tty(&[("TERM_PROGRAM", "ghostty")]), ColorDepth::TrueColor));
+    }
+
+    #[test]
+    fn double_height_lines_are_off_in_a_multiplexer_a_pipe_without_colour_or_a_terminal_started_from_a_listed_one() {
+        let xterm = ("XTERM_VERSION", "XTerm(390)");
+
+        assert!(!double_height(&tty(&[xterm, ("TMUX", "/tmp/tmux")]), ColorDepth::TrueColor));
+        assert!(!double_height(&tty(&[xterm, ("TERM", "screen-256color")]), ColorDepth::TrueColor));
+        assert!(!double_height(&piped(&[xterm]), ColorDepth::TrueColor));
+        assert!(!double_height(&tty(&[xterm]), ColorDepth::None));
+        assert!(!double_height(&tty(&[("KONSOLE_VERSION", "230800"), ("TERM_PROGRAM", "vscode")]), ColorDepth::TrueColor));
     }
 
     #[test]

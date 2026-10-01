@@ -8,6 +8,7 @@ pub mod config;
 pub mod document;
 pub mod markdown;
 pub mod mermaid;
+pub mod raster;
 #[cfg(feature = "cli")]
 pub mod terminal;
 pub mod text;

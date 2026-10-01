@@ -4,7 +4,10 @@ use std::sync::{Arc, LazyLock};
 
 use resvg::usvg::fontdb::{Database, ID, Source};
 
-/// File-name stems of the families in `svg::FONT_FAMILY`, lowercased without separators.
+/// The families text is drawn in, the CSS `font-family` value of every SVG mrk draws.
+pub const FONT_FAMILY: &str =
+    "Inter, \"Helvetica Neue\", Helvetica, \"DejaVu Sans\", \"Noto Sans\", \"Liberation Sans\", Arial, sans-serif";
+/// File-name stems of the families in `FONT_FAMILY`, lowercased without separators.
 const FAMILY_STEMS: [&str; 7] = ["inter", "helveticaneue", "helvetica", "dejavusans", "notosans", "liberationsans", "arial"];
 /// File-name stems of macOS and Linux fonts for the common scripts beyond Latin, so a label in them skips loading every system font.
 const FALLBACK_STEMS: [&str; 15] = [
@@ -133,7 +136,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
-    use crate::mermaid::{raster, svg::FONT_FAMILY};
     use resvg::usvg::fontdb::{Family, Query};
 
     fn is_label_family(path: &str) -> bool {
@@ -190,7 +192,7 @@ mod tests {
             let svg = format!(
                 r#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"><text y="15" font-family='{FONT_FAMILY}'>Start</text></svg>"#
             );
-            raster::parse(&svg, Arc::new(database)).unwrap().root().has_children()
+            crate::raster::parse_with(&svg, Arc::new(database)).unwrap().root().has_children()
         };
 
         assert!(!has_label(Database::new()));

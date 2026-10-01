@@ -19,6 +19,7 @@ pub struct Config {
     pub images: Option<ImagesMode>,
     pub align: Option<Align>,
     pub pager: Option<bool>,
+    pub jumbo_title: Option<bool>,
 }
 
 fn candidates(xdg: Option<OsString>, home: Option<PathBuf>, platform: Option<PathBuf>) -> Vec<PathBuf> {
@@ -95,13 +96,15 @@ mod tests {
 
     #[test]
     fn every_key_is_read() {
-        let config = parse("theme = \"mrk-light\"\nwidth = 72\nimages = \"never\"\nalign = \"left\"\npager = true\n").unwrap();
+        let config =
+            parse("theme = \"mrk-light\"\nwidth = 72\nimages = \"never\"\nalign = \"left\"\npager = true\njumbo_title = true\n").unwrap();
         let expected = Config {
             theme: Some("mrk-light".to_owned()),
             width: Some(72),
             images: Some(ImagesMode::Never),
             align: Some(Align::Left),
             pager: Some(true),
+            jumbo_title: Some(true),
         };
 
         assert_eq!(config, expected);
@@ -123,6 +126,8 @@ mod tests {
     fn a_bad_value_is_refused() {
         assert!(parse("images = \"sometimes\"").is_err());
         assert!(parse("pager = \"yes\"").is_err());
+        assert!(parse("jumbo_title = 1").is_err());
+
         assert!(parse("width = \"wide\"").is_err());
         assert!(parse("width = 5").unwrap_err().to_string().contains("too narrow"));
     }

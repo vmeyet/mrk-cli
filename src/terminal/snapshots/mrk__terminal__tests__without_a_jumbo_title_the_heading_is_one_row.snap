@@ -1,0 +1,8 @@
+---
+source: src/terminal/mod.rs
+expression: "readable(&ansi(&jumbo_sample(None),\n&capabilities(ColorDepth::TrueColor, None), 5))"
+---
+     ␛[1;38;2;197;148;247mBig title␛[0m
+     ␛[38;2;62;68;85m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━␛[0m
+
+     ␛[38;2;212;215;224mText␛[0m

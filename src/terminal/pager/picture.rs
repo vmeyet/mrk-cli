@@ -1,5 +1,5 @@
 use super::page::Placed;
-use crate::terminal::kitty::{Crop, Placement};
+use crate::terminal::kitty::{self, Crop, Placement};
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 const IHDR_WIDTH: std::ops::Range<usize> = 16..20;
@@ -50,7 +50,7 @@ pub fn placement(placed: &Placed, id: u32, top: usize, height: usize) -> Option<
     let shown = visible(placed.row, rows, top, height)?;
     let size = png_size(&picture.png)?;
     let crop = crop(shown, rows, size);
-    Some((shown.screen_row, Placement { id, crop, cols: picture.cols, rows: shown.rows }))
+    Some((shown.screen_row, Placement { id, crop, cols: picture.cols, rows: shown.rows, z: kitty::z_index(picture) }))
 }
 
 #[cfg(test)]
@@ -114,12 +114,14 @@ mod tests {
 
     #[test]
     fn a_placement_uses_the_visible_rows_and_the_picture_columns() {
-        let placed =
-            Placed { row: 10, picture: Picture { png: png(400, 120), cols: 40, rows: 6, alt: "flow".to_owned(), indent: Line::blank() } };
+        let placed = Placed {
+            row: 10,
+            picture: Picture { png: png(400, 120), cols: 40, rows: 6, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None },
+        };
 
         assert_eq!(
             placement(&placed, 3, 12, 20),
-            Some((0, Placement { id: 3, crop: Crop { x: 0, y: 40, width: 400, height: 80 }, cols: 40, rows: 4 }))
+            Some((0, Placement { id: 3, crop: Crop { x: 0, y: 40, width: 400, height: 80 }, cols: 40, rows: 4, z: 0 }))
         );
         assert_eq!(placement(&placed, 3, 30, 20), None);
     }

@@ -1,7 +1,6 @@
 use crate::document::CellSize;
+use crate::raster::MAX_SIDE_PX;
 
-/// Pixels per side a picture may reach (`specs/02-security.md` rule 4).
-pub const MAX_SIDE_PX: u32 = 4096;
 /// A cell is about 1.2 font sizes tall, so this ratio turns cell height into font size.
 const CELL_HEIGHT_PER_FONT_SIZE: f32 = 1.2;
 

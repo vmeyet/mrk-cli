@@ -49,6 +49,8 @@ pub struct Layout {
     pub requested_width: Option<usize>,
     pub align: Align,
     pub theme: Theme,
+    /// Level-1 headings are wanted two rows tall, where the terminal can draw them so.
+    pub jumbo_title: bool,
     pub capabilities: Capabilities,
 }
 
@@ -60,7 +62,9 @@ impl Layout {
             theme: self.theme.clone(),
             cell: capabilities.graphics.map(|graphics| graphics.cell),
             hyperlinks: capabilities.hyperlinks,
+            jumbo_title: if self.jumbo_title { terminal::jumbo_title(&capabilities) } else { None },
         };
+
         let margin = terminal::margin(self.align, &capabilities, settings.width);
         Rendered { document: crate::markdown::render(&self.source, &settings), margin }
     }

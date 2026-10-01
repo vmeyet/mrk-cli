@@ -28,13 +28,14 @@ pub(super) fn is_empty(group: &[Block]) -> bool {
 
 /// Puts `first` before the first line and `rest` before every other. A picture is indented by `rest` on every row;
 /// when it comes first and `first` differs, as a list marker does, `first` gets a line of its own above it.
+/// Double-height lines become plain lines: a prefix cannot be drawn twice as wide.
 pub(super) fn prefix(blocks: Vec<Block>, first: &[Span], rest: &[Span]) -> Vec<Block> {
     let mut is_first_line = true;
     blocks
         .into_iter()
         .flat_map(|block| match block {
             Block::Lines(lines) if lines.is_empty() => vec![Block::Lines(lines)],
-            Block::Lines(lines) => {
+            Block::Lines(lines) | Block::DoubleHeight(lines) => {
                 let opening = if std::mem::take(&mut is_first_line) { first } else { rest };
                 vec![Block::Lines(prefix_lines(lines, opening, rest))]
             }
@@ -80,6 +81,7 @@ pub(super) fn restyle(blocks: Vec<Block>, change: impl Fn(Style) -> Style) -> Ve
         .into_iter()
         .map(|block| match block {
             Block::Lines(lines) => Block::Lines(lines.into_iter().map(restyle_line).collect()),
+            Block::DoubleHeight(lines) => Block::DoubleHeight(lines.into_iter().map(restyle_line).collect()),
             Block::Picture(picture) => Block::Picture(Picture { indent: restyle_line(picture.indent), ..picture }),
         })
         .collect()
@@ -103,14 +105,14 @@ mod tests {
     }
 
     fn picture() -> Block {
-        Block::Picture(Picture { png: Vec::new(), cols: 4, rows: 2, alt: "flow".to_owned(), indent: Line::blank() })
+        Block::Picture(Picture { png: Vec::new(), cols: 4, rows: 2, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None })
     }
 
     fn plain(blocks: &[Block]) -> Vec<String> {
         blocks
             .iter()
             .flat_map(|block| match block {
-                Block::Lines(lines) => lines.iter().map(Line::plain).collect(),
+                Block::Lines(lines) | Block::DoubleHeight(lines) => lines.iter().map(Line::plain).collect(),
                 Block::Picture(picture) => vec![format!("{}[picture]", picture.indent.plain())],
             })
             .collect()

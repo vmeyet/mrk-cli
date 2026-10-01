@@ -14,7 +14,8 @@ mrk-cli = { git = "https://github.com/vmeyet/mrk-cli", default-features = false 
 use mrk::document::{Block, Settings};
 use mrk::{markdown, theme};
 
-let settings = Settings { width: 80, theme: theme::find("tokyo-night").unwrap_or(theme::MRK_DARK), cell: None, hyperlinks: false };
+let theme = theme::find("tokyo-night").unwrap_or(theme::MRK_DARK);
+let settings = Settings { width: 80, theme, cell: None, hyperlinks: false, jumbo_title: None };
 for block in markdown::render_blocks(source, &settings) {
     println!("{:?}, lines {}-{}", block.kind, block.first_line, block.last_line);
     for part in &block.blocks {
@@ -29,5 +30,6 @@ for block in markdown::render_blocks(source, &settings) {
 - `markdown::render_blocks` cuts it into top-level blocks, each tagged with the source lines it came from.
 - `document::highlight` restyles character ranges of a block's text, for search or word-level diffs.
 - Set `cell` to the terminal cell size in pixels to get Mermaid diagrams as PNG pictures instead of text.
+- Set `jumbo_title` to draw level-1 headings two rows tall: `Picture` (with `cell` set) gives a picture per line, its text in `concealed_text`; `DoubleHeight` gives `Block::DoubleHeight` lines, for terminals that draw DEC double-height lines.
 
 The contracts behind these functions are in [`specs/01-architecture.md`](../specs/01-architecture.md).

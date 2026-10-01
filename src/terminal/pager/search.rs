@@ -50,7 +50,7 @@ pub fn find(rows: &[Row], query: &str) -> Vec<Match> {
         .enumerate()
         .flat_map(|(index, row)| match row {
             Row::Line(line) => line_matches(index, line, &query),
-            Row::Picture(_) => Vec::new(),
+            Row::Picture(_) | Row::DoubleHeight(..) => Vec::new(),
         })
         .collect()
 }

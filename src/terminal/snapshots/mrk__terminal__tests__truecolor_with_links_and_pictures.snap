@@ -1,10 +1,10 @@
 ---
 source: src/terminal/mod.rs
-expression: "readable(&ansi(&sample(), &capabilities(ColorDepth::TrueColor, cell),\nLEFT_MARGIN))"
+expression: "readable(&ansi(&sample(), &capabilities(ColorDepth::TrueColor, KITTY),\nLEFT_MARGIN))"
 ---
   ␛[1;38;2;197;148;247mTitle␛[0m
 
   ␛[38;2;212;215;224mRead ␛]8;;https://example.com/docs␛\␛[4;38;2;122;200;245mthe docs␛]8;;␛\␛[24;38;2;212;215;224m or run ␛[38;2;242;180;130;48;2;31;35;46m mrk ␛[38;2;212;215;224;49m.␛[0m
   
   
-␛[2A␍  ␛_Ga=T,f=100,q=2,C=1,c=20,r=2,m=0;iVBORw==␛\␛[2B␍
+␛[2A␍  ␛_Ga=T,f=100,q=2,C=1,c=20,r=2,z=0,m=0;iVBORw==␛\␛[2B␍

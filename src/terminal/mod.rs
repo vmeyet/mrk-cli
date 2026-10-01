@@ -16,7 +16,8 @@ use serde::Deserialize;
 
 pub use detect::{Preferences, detect};
 
-use crate::document::{Block, CellSize, Document, Picture};
+use self::ansi::Half;
+use crate::document::{Block, CellSize, Document, JumboTitle, Picture};
 use crate::theme::Appearance;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +33,8 @@ pub struct Capabilities {
     pub hyperlinks: bool,
     /// Set when the terminal draws pictures and pictures are wanted.
     pub graphics: Option<Graphics>,
+    /// Whether the terminal draws DEC double-height lines.
+    pub double_height: bool,
     pub background: Option<Appearance>,
     pub columns: u16,
     pub is_terminal: bool,
@@ -87,6 +90,16 @@ pub fn margin(align: Align, capabilities: &Capabilities, width: usize) -> usize 
     if is_centred { centred.max(LEFT_MARGIN) } else { LEFT_MARGIN }
 }
 
+/// How this terminal draws a jumbo title: a picture where kitty graphics reach it straight, double-height text where
+/// it draws that, `None` otherwise.
+pub fn jumbo_title(capabilities: &Capabilities) -> Option<JumboTitle> {
+    match capabilities.graphics.map(|graphics| graphics.protocol) {
+        Some(Protocol::Kitty) => Some(JumboTitle::Picture),
+        _ if capabilities.double_height => Some(JumboTitle::DoubleHeight),
+        _ => None,
+    }
+}
+
 /// What stands left of each row of a picture: the margin, then its indent.
 fn picture_indent(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
     format!("{}{}", " ".repeat(margin), ansi::line(&picture.indent, capabilities, 0).trim_end_matches('\n'))
@@ -97,13 +110,14 @@ fn placeholder(picture: &Picture, indent: &str) -> String {
     format!("{indent}[picture: {}]\n", sanitize::text(&picture.alt))
 }
 
-/// The picture's rows written first, after `indent` on each, scrolling them into view; then `drawing` at the first of
-/// them, which leaves the cursor where it found it; then the cursor at the start of the line below the picture.
-/// Drawing at the bottom of the screen must not clip the picture.
+/// The picture's rows written first, after `indent` on each and its concealed text on the first, scrolling them into
+/// view; then `drawing` at the first of them, which leaves the cursor where it found it; then the cursor at the start
+/// of the line below the picture. Drawing at the bottom of the screen must not clip the picture.
 fn over_rows(picture: &Picture, indent: &str, drawing: &str) -> String {
     let rows = picture.rows.max(1);
-    let reserve = format!("{indent}\n").repeat(usize::from(rows));
-    format!("{reserve}\x1b[{rows}A\r{indent}{drawing}\x1b[{rows}B\r")
+    let first = format!("{indent}{}\n", ansi::concealed(picture));
+    let rest = format!("{indent}\n").repeat(usize::from(rows - 1));
+    format!("{first}{rest}\x1b[{rows}A\r{indent}{drawing}\x1b[{rows}B\r")
 }
 
 fn picture(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
@@ -120,6 +134,9 @@ fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
     match block {
         Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin)).collect(),
         Block::Picture(each) => picture(each, capabilities, margin),
+        Block::DoubleHeight(lines) => {
+            lines.iter().flat_map(|line| [Half::Top, Half::Bottom].map(|half| ansi::half(line, half, capabilities, margin))).collect()
+        }
     }
 }
 
@@ -177,7 +194,14 @@ mod tests {
             Span::new(" mrk ", Style::fg(palette.code).on(palette.surface)),
             Span::new(".", Style::fg(palette.text)),
         ]);
-        let picture = Picture { png: vec![0x89, b'P', b'N', b'G'], cols: 20, rows: 2, alt: "flow".to_owned(), indent: Line::blank() };
+        let picture = Picture {
+            png: vec![0x89, b'P', b'N', b'G'],
+            cols: 20,
+            rows: 2,
+            alt: "flow".to_owned(),
+            indent: Line::blank(),
+            concealed_text: None,
+        };
         Document { blocks: vec![Block::Lines(vec![heading, Line::blank(), prose]), Block::Picture(picture)] }
     }
 
@@ -185,7 +209,15 @@ mod tests {
     const KITTY: Option<Graphics> = Some(Graphics { protocol: Protocol::Kitty, cell: CELL });
 
     fn capabilities(color: ColorDepth, graphics: Option<Graphics>) -> Capabilities {
-        Capabilities { color, hyperlinks: color != ColorDepth::None, graphics, background: None, columns: 80, is_terminal: true }
+        Capabilities {
+            color,
+            hyperlinks: color != ColorDepth::None,
+            graphics,
+            double_height: false,
+            background: None,
+            columns: 80,
+            is_terminal: true,
+        }
     }
 
     fn readable(ansi: &str) -> String {
@@ -213,12 +245,12 @@ mod tests {
     #[test]
     fn a_picture_is_drawn_after_its_indent_on_every_row() {
         let indent = Line::new(vec![Span::plain("│ ")]);
-        let picture = Picture { png: vec![1, 2, 3], cols: 20, rows: 2, alt: "flow".to_owned(), indent };
+        let picture = Picture { png: vec![1, 2, 3], cols: 20, rows: 2, alt: "flow".to_owned(), indent, concealed_text: None };
         let document = Document { blocks: vec![Block::Picture(picture)] };
 
         assert_eq!(
             ansi(&document, &capabilities(ColorDepth::None, KITTY), LEFT_MARGIN),
-            "  │ \n  │ \n\x1b[2A\r  │ \x1b_Ga=T,f=100,q=2,C=1,c=20,r=2,m=0;AQID\x1b\\\x1b[2B\r"
+            "  │ \n  │ \n\x1b[2A\r  │ \x1b_Ga=T,f=100,q=2,C=1,c=20,r=2,z=0,m=0;AQID\x1b\\\x1b[2B\r"
         );
         assert_eq!(ansi(&document, &capabilities(ColorDepth::None, None), LEFT_MARGIN), "  │ [picture: flow]\n");
     }
@@ -233,6 +265,7 @@ mod tests {
             rows: 1,
             alt: "flow".to_owned(),
             indent: Line::new(vec![Span::plain("│ ")]),
+            concealed_text: None,
         };
         let document = Document { blocks: vec![Block::Picture(picture)] };
 
@@ -244,8 +277,14 @@ mod tests {
 
     #[test]
     fn inside_tmux_a_picture_is_rows_of_placeholder_cells_after_its_indent() {
-        let picture =
-            Picture { png: vec![1, 2, 3], cols: 2, rows: 2, alt: "flow".to_owned(), indent: Line::new(vec![Span::plain("│ ")]) };
+        let picture = Picture {
+            png: vec![1, 2, 3],
+            cols: 2,
+            rows: 2,
+            alt: "flow".to_owned(),
+            indent: Line::new(vec![Span::plain("│ ")]),
+            concealed_text: None,
+        };
         let document = Document { blocks: vec![Block::Picture(picture)] };
         let through_tmux = Some(Graphics { protocol: Protocol::KittyThroughTmux, cell: CELL });
 
@@ -259,7 +298,8 @@ mod tests {
 
     #[test]
     fn an_unreadable_png_shows_the_placeholder_on_a_sixel_terminal() {
-        let picture = Picture { png: vec![1, 2, 3], cols: 20, rows: 2, alt: "flow".to_owned(), indent: Line::blank() };
+        let picture =
+            Picture { png: vec![1, 2, 3], cols: 20, rows: 2, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
 
         assert_eq!(
             ansi(&Document { blocks: vec![Block::Picture(picture)] }, &capabilities(ColorDepth::None, SIXEL), 2),
@@ -269,9 +309,58 @@ mod tests {
 
     #[test]
     fn the_placeholder_sanitizes_the_alt_text() {
-        let picture = Picture { png: vec![], cols: 20, rows: 2, alt: "a\x1b]0;x\x07".to_owned(), indent: Line::blank() };
+        let picture =
+            Picture { png: vec![], cols: 20, rows: 2, alt: "a\x1b]0;x\x07".to_owned(), indent: Line::blank(), concealed_text: None };
 
         assert_eq!(placeholder(&picture, "  "), "  [picture: a]0;x]\n");
+    }
+
+    #[test]
+    fn a_jumbo_title_is_a_picture_with_kitty_double_height_text_where_drawn_and_normal_elsewhere() {
+        let double_height = |graphics| Capabilities { double_height: true, ..capabilities(ColorDepth::TrueColor, graphics) };
+        let through_tmux = Some(Graphics { protocol: Protocol::KittyThroughTmux, cell: CELL });
+
+        assert_eq!(jumbo_title(&capabilities(ColorDepth::TrueColor, KITTY)), Some(JumboTitle::Picture));
+        assert_eq!(jumbo_title(&double_height(KITTY)), Some(JumboTitle::Picture));
+        assert_eq!(jumbo_title(&double_height(SIXEL)), Some(JumboTitle::DoubleHeight));
+        assert_eq!(jumbo_title(&double_height(None)), Some(JumboTitle::DoubleHeight));
+        for graphics in [None, SIXEL, through_tmux] {
+            assert_eq!(jumbo_title(&capabilities(ColorDepth::TrueColor, graphics)), None, "{graphics:?}");
+        }
+    }
+
+    fn jumbo_sample(jumbo_title: Option<JumboTitle>) -> Document {
+        let settings = crate::document::Settings { width: 30, jumbo_title, ..crate::theme::test_settings() };
+        crate::markdown::render("# Big title\n\nText", &settings)
+    }
+
+    #[test]
+    fn a_double_height_title_writes_each_line_as_its_two_halves_at_half_the_margin() {
+        let capabilities = Capabilities { double_height: true, ..capabilities(ColorDepth::TrueColor, None) };
+
+        insta::assert_snapshot!(readable(&ansi(&jumbo_sample(Some(JumboTitle::DoubleHeight)), &capabilities, 5)));
+    }
+
+    #[test]
+    fn without_a_jumbo_title_the_heading_is_one_row() {
+        insta::assert_snapshot!(readable(&ansi(&jumbo_sample(None), &capabilities(ColorDepth::TrueColor, None), 5)));
+    }
+
+    #[test]
+    fn a_title_picture_has_its_text_concealed_on_its_first_row_and_is_drawn_under_it() {
+        let picture = Picture {
+            png: vec![1, 2, 3],
+            cols: 20,
+            rows: 2,
+            alt: "T".to_owned(),
+            indent: Line::blank(),
+            concealed_text: Some("T\x1b]0;x\x07".to_owned()),
+        };
+
+        assert_eq!(
+            ansi(&Document { blocks: vec![Block::Picture(picture)] }, &capabilities(ColorDepth::TrueColor, KITTY), LEFT_MARGIN),
+            "  \x1b[8mT]0;x\x1b[28m\n  \n\x1b[2A\r  \x1b_Ga=T,f=100,q=2,C=1,c=20,r=2,z=-1,m=0;AQID\x1b\\\x1b[2B\r"
+        );
     }
 
     #[test]

@@ -6,8 +6,6 @@ use super::DiagramError;
 use crate::document::Rgb;
 use crate::theme::Palette;
 
-pub const FONT_FAMILY: &str =
-    "Inter, \"Helvetica Neue\", Helvetica, \"DejaVu Sans\", \"Noto Sans\", \"Liberation Sans\", Arial, sans-serif";
 pub const FONT_SIZE_PX: f32 = 14.0;
 const TRANSPARENT: &str = "none";
 
@@ -24,7 +22,7 @@ pub fn render(source: &str, palette: &Palette) -> Result<String, DiagramError> {
 
 // Decision shapes are the only polygons drawn straight on the canvas; arrowheads are polygons in a transformed group or marker paths.
 fn with_accents(svg: &str, palette: &Palette) -> String {
-    let accent = hex(palette.accent);
+    let accent = palette.accent.hex();
     let style =
         format!("<style>svg > polygon {{ stroke: {accent}; }} g > polygon, marker path {{ fill: {accent}; stroke: {accent}; }}</style>");
     match svg.split_once('>') {
@@ -42,10 +40,6 @@ fn layout() -> LayoutConfig {
     LayoutConfig { fast_text_metrics: true, ..LayoutConfig::default() }
 }
 
-fn hex(color: Rgb) -> String {
-    format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2)
-}
-
 fn relative_luminance(color: Rgb) -> f32 {
     let channel = |value: u8| f32::from(value) / 255.0;
     0.2126 * channel(color.0) + 0.7152 * channel(color.1) + 0.0722 * channel(color.2)
@@ -56,7 +50,7 @@ fn ink_on(fill: Rgb, palette: &Palette) -> String {
     let text_contrast = (relative_luminance(palette.text) - fill_luminance).abs();
     let surface_contrast = (relative_luminance(palette.surface) - fill_luminance).abs();
     let ink = if text_contrast >= surface_contrast { palette.text } else { palette.surface };
-    hex(ink)
+    ink.hex()
 }
 
 fn series(palette: &Palette) -> [Rgb; 12] {
@@ -78,7 +72,7 @@ fn series(palette: &Palette) -> [Rgb; 12] {
 
 fn git_colors(palette: &Palette) -> [String; 8] {
     let colors = series(palette);
-    std::array::from_fn(|index| hex(colors[index]))
+    std::array::from_fn(|index| colors[index].hex())
 }
 
 fn git_label_colors(palette: &Palette) -> [String; 8] {
@@ -87,13 +81,13 @@ fn git_label_colors(palette: &Palette) -> [String; 8] {
 }
 
 fn themed(palette: &Palette) -> Theme {
-    let text = hex(palette.text);
-    let muted = hex(palette.muted);
-    let subtle = hex(palette.subtle);
-    let surface = hex(palette.surface);
-    let accent = hex(palette.accent);
+    let text = palette.text.hex();
+    let muted = palette.muted.hex();
+    let subtle = palette.subtle.hex();
+    let surface = palette.surface.hex();
+    let accent = palette.accent.hex();
     Theme {
-        font_family: FONT_FAMILY.to_owned(),
+        font_family: crate::raster::FONT_FAMILY.to_owned(),
         font_size: FONT_SIZE_PX,
         primary_color: surface.clone(),
         primary_text_color: text.clone(),
@@ -121,11 +115,11 @@ fn themed(palette: &Palette) -> Theme {
         git_tag_label_color: text.clone(),
         git_tag_label_background: surface.clone(),
         git_tag_label_border: accent,
-        pie_colors: series(palette).map(hex),
+        pie_colors: series(palette).map(Rgb::hex),
         pie_title_text_size: FONT_SIZE_PX * 1.4,
         pie_title_text_color: text.clone(),
         pie_section_text_size: FONT_SIZE_PX,
-        pie_section_text_color: hex(palette.surface),
+        pie_section_text_color: palette.surface.hex(),
         pie_legend_text_size: FONT_SIZE_PX,
         pie_legend_text_color: text,
         pie_stroke_color: surface,
@@ -147,8 +141,8 @@ mod tests {
     fn flowchart_uses_the_palette_on_a_transparent_background() {
         let svg = render("graph TD\n  A[Start] --> B{Ready?}", &MRK_DARK.palette).unwrap();
 
-        assert!(svg.contains(&hex(MRK_DARK.palette.text)));
-        assert!(svg.contains(&hex(MRK_DARK.palette.muted)));
+        assert!(svg.contains(&MRK_DARK.palette.text.hex()));
+        assert!(svg.contains(&MRK_DARK.palette.muted.hex()));
         assert!(svg.contains("fill=\"none\""));
         assert!(!svg.contains("#FFFFFF"));
     }
@@ -160,7 +154,7 @@ mod tests {
 
     #[test]
     fn labels_on_bright_fills_take_the_darker_ink() {
-        assert_eq!(ink_on(MRK_DARK.palette.warning, &MRK_DARK.palette), hex(MRK_DARK.palette.surface));
-        assert_eq!(ink_on(MRK_DARK.palette.subtle, &MRK_DARK.palette), hex(MRK_DARK.palette.text));
+        assert_eq!(ink_on(MRK_DARK.palette.warning, &MRK_DARK.palette), MRK_DARK.palette.surface.hex());
+        assert_eq!(ink_on(MRK_DARK.palette.subtle, &MRK_DARK.palette), MRK_DARK.palette.text.hex());
     }
 }

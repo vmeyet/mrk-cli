@@ -18,7 +18,7 @@ The design lives in `specs/`; read `specs/00-vision.md` then `specs/01-architect
 - Everything between reading the input and writing the output is pure: `markdown::render` returns a `Document`, it never prints.
 - Flat bodies of named steps at one level of abstraction; signatures designed from the call site.
 - One word per concept, the words in `specs/00-vision.md` § Vocabulary.
-- A module owns its dependency: only `markdown/` sees comrak, only `code/` sees syntect, only `mermaid/` sees the mermaid crates and resvg, only `terminal/` writes escape sequences.
+- A module owns its dependency: only `markdown/` sees comrak, only `code/` sees syntect, only `mermaid/` sees the mermaid crates, only `raster/` sees resvg, only `terminal/` writes escape sequences.
 
 ## Tests
 

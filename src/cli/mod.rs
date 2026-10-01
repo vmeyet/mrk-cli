@@ -52,6 +52,12 @@ pub struct Cli {
     /// Piped output is never paged.
     #[arg(short, long)]
     pub pager: bool,
+    /// Draw level-1 headings two rows tall.
+    ///
+    /// As a picture over the concealed title on a terminal that speaks the kitty graphics protocol, outside tmux;
+    /// as double-height text on xterm, Konsole, Windows Terminal, mlterm and iTerm2; as a normal heading elsewhere.
+    #[arg(long)]
+    pub jumbo_title: bool,
     /// Colour the output; `auto` honours NO_COLOR and a stdout that is not a terminal.
     #[arg(long, value_enum, value_name = "WHEN", default_value_t)]
     pub color: ColorChoice,
@@ -148,7 +154,9 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
     let wants_pager = cli.pager || config.pager.unwrap_or_default();
     let output = output::choose(wants_pager, io::stdout().is_terminal(), std::env::var("MRK_PAGER").ok().as_deref())?;
     let wanted_images = cli.images.or(config.images).unwrap_or_default();
-    let images = if matches!(output, Output::Command(_)) { ImagesMode::Never } else { wanted_images };
+    let is_command = matches!(output, Output::Command(_));
+    let images = if is_command { ImagesMode::Never } else { wanted_images };
+    let wants_jumbo_title = cli.jumbo_title || config.jumbo_title.unwrap_or_default();
     let capabilities = terminal::detect(Preferences { color: cli.color, images, needs_background: theme.is_none() });
 
     let layout = Layout {
@@ -156,6 +164,7 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
         requested_width: cli.width.or(config.width),
         align: cli.align.or(config.align).unwrap_or_default(),
         theme: theme.unwrap_or_else(|| default_theme(capabilities.background)),
+        jumbo_title: wants_jumbo_title && !is_command,
         capabilities,
     };
     output::show(&output, &layout, &input::name(cli.file.as_deref()))
@@ -208,13 +217,14 @@ mod tests {
 
     #[test]
     fn every_flag_of_the_usage_parses() {
-        let cli = parse(&["--theme", "mrk-dark", "--width", "72", "--images", "never", "--color", "always", "notes.md"]);
+        let cli = parse(&["--theme", "mrk-dark", "--width", "72", "--images", "never", "--color", "always", "--jumbo-title", "notes.md"]);
 
         assert_eq!(cli.file, Some(PathBuf::from("notes.md")));
         assert_eq!(cli.theme.as_deref(), Some("mrk-dark"));
         assert_eq!(cli.width, Some(72));
         assert_eq!(cli.images, Some(ImagesMode::Never));
         assert_eq!(cli.color, ColorChoice::Always);
+        assert!(cli.jumbo_title);
     }
 
     #[test]

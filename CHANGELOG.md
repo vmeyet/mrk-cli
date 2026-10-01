@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `--jumbo-title`, or `jumbo_title = true` in the config, draws level-1 headings two rows tall: as a picture over the selectable title text on kitty, Ghostty and WezTerm, as double-height text on xterm, Konsole, Windows Terminal, mlterm and iTerm2.
+
+### Changed
+
+- Library: `Settings` has a `jumbo_title` field, `Picture` a `concealed_text` field, and `Block` a `DoubleHeight` variant.
+
+
 ## [0.4.1] - 2026-10-01
 
 ### Fixed
