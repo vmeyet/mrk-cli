@@ -119,7 +119,7 @@ mod tests {
             [Match { row: 0, start: 0, end: 3 }, Match { row: 0, start: 4, end: 7 }, Match { row: 3, start: 0, end: 3 }]
         );
         assert_eq!(find(&rows, "."), [Match { row: 1, start: 1, end: 2 }]);
-        assert!(find(&rows, "").is_empty());
+        assert_eq!(find(&rows, ""), []);
     }
 
     #[test]
