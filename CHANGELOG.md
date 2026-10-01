@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-01
+
+### Fixed
+
+- In the pager, `n` and `N` light up only the current match, not the matches at the same columns on other lines.
+
 ## [0.4.0] - 2026-10-01
 
 ### Added
@@ -67,6 +73,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.4.1]: https://github.com/vmeyet/mrk-cli/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/vmeyet/mrk-cli/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/vmeyet/mrk-cli/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/vmeyet/mrk-cli/compare/v0.2.0...v0.3.0
