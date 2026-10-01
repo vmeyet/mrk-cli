@@ -11,6 +11,7 @@ cargo install --locked --git https://github.com/vmeyet/mrk-cli   # Rust 1.92 or 
 ```
 
 Release builds cover macOS and Linux on x86_64 and arm64.
+Linux also gets static musl builds, which the shell installer picks on Alpine or when glibc is too old.
 `mrk update` installs the latest release tag with cargo when it is newer.
 When brew installed mrk, `mrk update` runs `brew upgrade vmeyet/tap/mrk` instead.
 
