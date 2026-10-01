@@ -36,7 +36,7 @@ pub struct Cli {
     /// Wrap width in columns; by default the terminal width, capped at 100.
     #[arg(long, env = "MRK_WIDTH", value_name = "N", value_parser = parse_width)]
     pub width: Option<usize>,
-    /// Draw Mermaid diagrams as images, on a terminal that speaks the kitty graphics protocol.
+    /// Draw Mermaid diagrams as images, on a terminal that speaks the kitty graphics protocol or Sixel.
     ///
     /// `auto` draws them outside tmux and screen, `always` inside them too, `never` draws diagrams as text.
     /// Piped output never gets images.

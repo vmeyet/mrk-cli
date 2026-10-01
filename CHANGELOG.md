@@ -3,6 +3,12 @@
 All notable changes to mrk are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and mrk follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Mermaid diagrams drawn as Sixel images on terminals without kitty graphics that list Sixel in their DA1 reply, in the pager too.
+
 ## [0.3.1] - 2026-09-30
 
 ### Fixed

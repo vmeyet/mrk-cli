@@ -13,7 +13,7 @@ fn gray_level(step: u8) -> u8 {
     8 + 10 * step
 }
 
-fn distance(a: Rgb, b: Rgb) -> u32 {
+pub fn distance(a: Rgb, b: Rgb) -> u32 {
     let square = |x: u8, y: u8| u32::from(x.abs_diff(y)).pow(2);
     square(a.0, b.0) + square(a.1, b.1) + square(a.2, b.2)
 }

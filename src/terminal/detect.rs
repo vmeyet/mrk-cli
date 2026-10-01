@@ -3,7 +3,7 @@ use crossterm::terminal::WindowSize;
 use super::environment::{Environment, background_hint, color_depth, hyperlinks, known_graphics, wants_pictures};
 use super::query::{self, Questions};
 use super::reply::Replies;
-use super::{Capabilities, ColorChoice, ColorDepth, ImagesMode};
+use super::{Capabilities, ColorChoice, ColorDepth, Graphics, ImagesMode, Protocol};
 use crate::document::{CellSize, Rgb};
 use crate::theme::Appearance;
 
@@ -32,12 +32,33 @@ pub fn appearance(background: Rgb) -> Appearance {
     if is_dark { Appearance::Dark } else { Appearance::Light }
 }
 
-fn questions(environment: &Environment, color: ColorDepth, cell: Option<CellSize>, preferences: Preferences) -> Questions {
+fn questions(environment: &Environment, color: ColorDepth, window_cell: Option<CellSize>, preferences: Preferences) -> Questions {
     let is_background_unknown = preferences.needs_background && background_hint(environment).is_none();
+    let known = known_graphics(environment);
+    let may_draw = wants_pictures(environment, preferences.images) && known != Some(false);
     Questions {
-        graphics: cell.is_some() && known_graphics(environment).is_none(),
+        graphics: may_draw && known.is_none(),
+        cell: may_draw && window_cell.is_none(),
         background: is_background_unknown && environment.stdout_is_tty && color != ColorDepth::None,
     }
+}
+
+/// Kitty when the environment or the terminal says so, Sixel when only the DA1 reply lists it.
+fn protocol(environment: &Environment, replies: &Replies) -> Option<Protocol> {
+    match known_graphics(environment) {
+        Some(true) => Some(Protocol::Kitty),
+        Some(false) => None,
+        None if replies.graphics => Some(Protocol::Kitty),
+        None => replies.sixel.then_some(Protocol::Sixel),
+    }
+}
+
+/// How pictures are drawn, when they are wanted, the terminal draws them, and the cell size is known from the window
+/// or the terminal's reply.
+fn graphics(environment: &Environment, images: ImagesMode, window_cell: Option<CellSize>, replies: &Replies) -> Option<Graphics> {
+    let protocol = protocol(environment, replies).filter(|_| wants_pictures(environment, images))?;
+    let cell = window_cell.or(replies.cell)?;
+    Some(Graphics { protocol, cell })
 }
 
 /// What the terminal can do, from the environment, the window size and, only when stdout is a terminal and the
@@ -46,18 +67,17 @@ pub fn detect(preferences: Preferences) -> Capabilities {
     let environment = Environment::read();
     let window = crossterm::terminal::window_size().ok();
     let color = color_depth(&environment, preferences.color);
-    let cell = window.as_ref().and_then(cell_size).filter(|_| wants_pictures(&environment, preferences.images));
+    let window_cell = window.as_ref().and_then(cell_size);
 
-    let questions = questions(&environment, color, cell, preferences);
+    let questions = questions(&environment, color, window_cell, preferences);
     let replies = if questions.is_empty() { Replies::default() } else { query::ask(questions) };
 
-    let has_graphics = known_graphics(&environment).unwrap_or(replies.graphics);
     let background = background_hint(&environment).or(replies.background.map(appearance));
     let columns = window.as_ref().map(|window| window.columns).filter(|&columns| columns > 0).unwrap_or(DEFAULT_COLUMNS);
     Capabilities {
         color,
         hyperlinks: hyperlinks(&environment, color),
-        cell: cell.filter(|_| has_graphics),
+        graphics: graphics(&environment, preferences.images, window_cell, &replies),
         background,
         columns,
         is_terminal: environment.stdout_is_tty,
@@ -112,12 +132,69 @@ mod tests {
         let preferences = Preferences { needs_background: true, ..Preferences::default() };
         let asked = questions(&environment(&[("TERM", "xterm-256color")]), ColorDepth::Ansi256, CELL, preferences);
 
-        assert_eq!(asked, Questions { graphics: true, background: true });
+        assert_eq!(asked, Questions { graphics: true, cell: false, background: true });
+    }
+
+    #[test]
+    fn the_cell_size_is_asked_only_when_the_window_does_not_tell_it() {
+        let kitty = environment(&[("TERM", "xterm-kitty")]);
+
+        assert_eq!(
+            questions(&kitty, ColorDepth::TrueColor, None, Preferences::default()),
+            Questions { cell: true, ..Questions::default() }
+        );
+        assert!(questions(&kitty, ColorDepth::TrueColor, CELL, Preferences::default()).is_empty());
+    }
+
+    #[test]
+    fn graphics_are_not_asked_about_where_pictures_are_off() {
+        let never = Preferences { images: ImagesMode::Never, ..Preferences::default() };
+
+        assert!(questions(&environment(&[]), ColorDepth::TrueColor, None, never).is_empty());
+        assert!(questions(&environment(&[("TERM_PROGRAM", "iTerm.app")]), ColorDepth::TrueColor, None, Preferences::default()).is_empty());
+        assert!(questions(&environment(&[("TMUX", "/tmp/tmux")]), ColorDepth::TrueColor, CELL, Preferences::default()).is_empty());
+    }
+
+    fn drawn_with(variables: &[(&str, &str)], replies: Replies) -> Option<Protocol> {
+        graphics(&environment(variables), ImagesMode::Auto, CELL, &replies).map(|graphics| graphics.protocol)
+    }
+
+    #[test]
+    fn kitty_wins_over_sixel() {
+        assert_eq!(drawn_with(&[], Replies { graphics: true, sixel: true, ..Replies::default() }), Some(Protocol::Kitty));
+        assert_eq!(drawn_with(&[("TERM", "xterm-kitty")], Replies { sixel: true, ..Replies::default() }), Some(Protocol::Kitty));
+    }
+
+    #[test]
+    fn sixel_is_used_when_only_the_da1_reply_lists_it() {
+        assert_eq!(drawn_with(&[], Replies { sixel: true, ..Replies::default() }), Some(Protocol::Sixel));
+        assert_eq!(drawn_with(&[], Replies::default()), None);
+    }
+
+    #[test]
+    fn terminals_known_without_graphics_stay_without_sixel() {
+        for program in ["iTerm.app", "Apple_Terminal", "vscode"] {
+            assert_eq!(drawn_with(&[("TERM_PROGRAM", program)], Replies { sixel: true, ..Replies::default() }), None, "{program}");
+        }
+    }
+
+    #[test]
+    fn the_replied_cell_size_stands_in_for_the_window() {
+        let replied = CellSize { width_px: 8, height_px: 16 };
+        let replies = Replies { sixel: true, cell: Some(replied), ..Replies::default() };
+
+        assert_eq!(
+            graphics(&environment(&[]), ImagesMode::Auto, None, &replies),
+            Some(Graphics { protocol: Protocol::Sixel, cell: replied })
+        );
+        assert_eq!(graphics(&environment(&[]), ImagesMode::Auto, CELL, &replies).map(|graphics| graphics.cell), CELL);
+        assert_eq!(graphics(&environment(&[]), ImagesMode::Auto, None, &Replies { cell: None, ..replies }), None);
+        assert_eq!(graphics(&environment(&[]), ImagesMode::Never, CELL, &replies), None);
     }
 
     #[test]
     fn a_named_theme_skips_the_background_question() {
-        let asked = questions(&environment(&[]), ColorDepth::TrueColor, None, Preferences::default());
+        let asked = questions(&environment(&[("TERM", "xterm-kitty")]), ColorDepth::TrueColor, CELL, Preferences::default());
 
         assert!(asked.is_empty());
     }

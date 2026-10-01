@@ -6,24 +6,28 @@ use super::reply::{self, Replies};
 const TIMEOUT: Duration = Duration::from_millis(100);
 const GRAPHICS_QUERY: &str = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
 const BACKGROUND_QUERY: &str = "\x1b]11;?\x1b\\";
+const CELL_SIZE_QUERY: &str = "\x1b[16t";
 const PRIMARY_ATTRIBUTES_QUERY: &str = "\x1b[c";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Questions {
+    /// Whether kitty graphics work; the DA1 reply that ends every round tells about Sixel for free.
     pub graphics: bool,
+    pub cell: bool,
     pub background: bool,
 }
 
 impl Questions {
     pub fn is_empty(self) -> bool {
-        !self.graphics && !self.background
+        !self.graphics && !self.cell && !self.background
     }
 }
 
 fn request(questions: Questions) -> String {
     let graphics = if questions.graphics { GRAPHICS_QUERY } else { "" };
+    let cell = if questions.cell { CELL_SIZE_QUERY } else { "" };
     let background = if questions.background { BACKGROUND_QUERY } else { "" };
-    format!("{graphics}{background}{PRIMARY_ATTRIBUTES_QUERY}")
+    format!("{graphics}{cell}{background}{PRIMARY_ATTRIBUTES_QUERY}")
 }
 
 #[cfg(unix)]
@@ -115,7 +119,10 @@ mod tests {
     #[test]
     fn every_request_ends_with_the_da1_sentinel() {
         assert_eq!(request(Questions::default()), "\x1b[c");
-        assert_eq!(request(Questions { graphics: true, background: true }), format!("{GRAPHICS_QUERY}{BACKGROUND_QUERY}\x1b[c"));
-        assert_eq!(request(Questions { graphics: false, background: true }), "\x1b]11;?\x1b\\\x1b[c");
+        assert_eq!(
+            request(Questions { graphics: true, cell: true, background: true }),
+            format!("{GRAPHICS_QUERY}\x1b[16t{BACKGROUND_QUERY}\x1b[c")
+        );
+        assert_eq!(request(Questions { background: true, ..Questions::default() }), "\x1b]11;?\x1b\\\x1b[c");
     }
 }

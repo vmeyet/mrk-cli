@@ -1,7 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
-use super::sanitize;
 use crate::document::Picture;
 
 const CHUNK_BYTES: usize = 4096;
@@ -24,23 +23,10 @@ fn chunked(png: &[u8], first_keys: &str) -> String {
     chunks.iter().enumerate().map(|(index, chunk)| command(index, chunk, index == last, first_keys)).collect()
 }
 
-fn transmit(picture: &Picture) -> String {
+/// Draws the picture at the cursor into its cell box with `C=1`, cursor unmoved: where kitty, Ghostty and WezTerm
+/// would otherwise leave it differs.
+pub fn draw(picture: &Picture) -> String {
     chunked(&picture.png, &format!("a=T,f=100,q=2,C=1,c={},r={}", picture.cols, picture.rows.max(1)))
-}
-
-/// Draws the picture with the kitty graphics protocol after `indent`, the drawn text left of each of its rows, then
-/// leaves the cursor at the start of the line below it. The rows are written first, scrolling them into view, and the
-/// picture is drawn with `C=1` (cursor unmoved): where kitty, Ghostty and WezTerm would otherwise leave the cursor
-/// differs, and drawing at the bottom of the screen must not clip the picture.
-pub fn picture(picture: &Picture, indent: &str) -> String {
-    let rows = picture.rows.max(1);
-    let reserve = format!("{indent}\n").repeat(usize::from(rows));
-    format!("{reserve}\x1b[{rows}A\r{indent}{}\x1b[{rows}B\r", transmit(picture))
-}
-
-/// What stands in for a picture, after `indent`, when the terminal cannot draw it.
-pub fn placeholder(picture: &Picture, indent: &str) -> String {
-    format!("{indent}[picture: {}]\n", sanitize::text(&picture.alt))
 }
 
 /// A part of a PNG, in pixels.
@@ -92,30 +78,18 @@ pub fn forget(ids: std::ops::RangeInclusive<u32>) -> String {
 mod tests {
     use super::*;
 
-    const MARGIN: &str = "  ";
-
-    fn picture(picture: &Picture) -> String {
-        super::picture(picture, MARGIN)
-    }
-
-    fn placeholder(picture: &Picture) -> String {
-        super::placeholder(picture, MARGIN)
-    }
-
     fn sample(png: Vec<u8>) -> Picture {
         Picture { png, cols: 40, rows: 3, alt: "flow".to_owned(), indent: crate::document::Line::blank() }
     }
 
     #[test]
     fn a_small_picture_is_one_final_chunk() {
-        let out = picture(&sample(vec![1, 2, 3]));
-
-        assert_eq!(out, "  \n  \n  \n\x1b[3A\r  \x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,m=0;AQID\x1b\\\x1b[3B\r");
+        assert_eq!(draw(&sample(vec![1, 2, 3])), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,m=0;AQID\x1b\\");
     }
 
     #[test]
     fn a_large_picture_is_split_in_4096_byte_chunks() {
-        let out = picture(&sample(vec![0; 3 * 4096]));
+        let out = draw(&sample(vec![0; 3 * 4096]));
         let commands: Vec<&str> = out.split("\x1b_G").skip(1).collect();
 
         assert_eq!(commands.len(), 4);
@@ -124,12 +98,6 @@ mod tests {
         assert!(commands[3].starts_with("q=2,m=0;"));
         let payload = |command: &str| command.split([';', '\x1b']).nth(1).map_or(0, str::len);
         assert_eq!(commands.iter().map(|command| payload(command)).collect::<Vec<_>>(), [4096, 4096, 4096, 4096]);
-    }
-
-    #[test]
-    fn the_placeholder_sanitizes_the_alt_text() {
-        assert_eq!(placeholder(&sample(vec![])).as_str(), "  [picture: flow]\n");
-        assert_eq!(placeholder(&Picture { alt: "a\x1b]0;x\x07".to_owned(), ..sample(vec![]) }), "  [picture: a]0;x]\n");
     }
 
     fn readable(sequence: &str) -> String {

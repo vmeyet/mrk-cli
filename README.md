@@ -1,6 +1,6 @@
 # mrk
 
-Render Markdown beautifully in the terminal: syntax-highlighted code, tables, alerts, footnotes, themes, and Mermaid diagrams drawn as real images in Ghostty, kitty and WezTerm (box-drawing text elsewhere).
+Render Markdown beautifully in the terminal: syntax-highlighted code, tables, alerts, footnotes, themes, and Mermaid diagrams drawn as real images in Ghostty, kitty and WezTerm, and with Sixel in foot, xterm, Konsole and others (box-drawing text elsewhere).
 
 ## Install
 
@@ -32,7 +32,7 @@ mrk -p notes.md   # read in the pager; diagrams stay images
 |---|---|---|---|
 | `--theme NAME` | `MRK_THEME` | `theme` | `mrk-dark` / `mrk-light` from the terminal background |
 | `--width N` | `MRK_WIDTH` | `width` | terminal width, capped at 100 |
-| `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol, not under tmux or screen; `always` tries inside them too; piped output never gets pictures |
+| `--images auto\|always\|never` | | `images` | `auto`: pictures when the terminal speaks the kitty graphics protocol or Sixel, not under tmux or screen; `always` tries inside them too; piped output never gets pictures |
 | `--align center\|left` | `MRK_ALIGN` | `align` | `center`: the text column sits in the middle of a wide window; piped output is never centred |
 | `--color auto\|always\|never` | `NO_COLOR` | | `auto`: colour on a tty; without colour there are no hyperlinks, so links print their target as ` <url>` |
 | `-p`, `--pager` | | `pager` | off; the built-in pager keeps diagrams as images and stays open until `q`; piped output is never paged |

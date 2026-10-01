@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyEventKind};
 
-use self::frame::Look;
+use self::frame::{Look, Pictures};
+use self::page::Page;
 use self::screen::Screen;
 use self::state::Pager;
 use super::Capabilities;
@@ -46,6 +47,7 @@ struct View {
     pager: Pager,
     margin: usize,
     columns: u16,
+    pictures: Pictures,
 }
 
 fn content_height(rows: u16) -> usize {
@@ -77,15 +79,29 @@ fn latest_size(columns: u16, rows: u16) -> io::Result<((u16, u16), Option<Event>
     Ok((size, None))
 }
 
+/// Sends kitty pictures once per render, so frames only place them; Sixel pictures go out with every frame.
+fn store(out: &mut impl Write, view: &View) -> io::Result<()> {
+    if matches!(view.pictures, Pictures::Kitty) {
+        out.write_all(frame::forget_pictures().as_bytes())?;
+        out.write_all(frame::store_pictures(&view.pager.page).as_bytes())?;
+    }
+    Ok(())
+}
+
 struct Reader<'a, R: Fn(u16) -> Rendered> {
     session: &'a Session<'a>,
     render: R,
 }
 
 impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
+    fn pictures(&self, page: &Page) -> Pictures {
+        Pictures::new(page, self.session.capabilities.graphics.map(|graphics| graphics.protocol))
+    }
+
     fn first_view(&self, (columns, rows): (u16, u16)) -> View {
         let Rendered { document, margin } = (self.render)(columns);
-        View { pager: Pager::new(page::flatten(document), content_height(rows)), margin, columns }
+        let pager = Pager::new(page::flatten(document), content_height(rows));
+        View { pictures: self.pictures(&pager.page), pager, margin, columns }
     }
 
     fn draw(&self, out: &mut impl Write, view: &View) -> io::Result<()> {
@@ -98,16 +114,8 @@ impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
             margin: view.margin,
             columns: usize::from(view.columns),
         };
-        out.write_all(frame::frame(&view.pager, &look).as_bytes())?;
+        out.write_all(frame::frame(&view.pager, &look, &view.pictures).as_bytes())?;
         out.flush()
-    }
-
-    fn store(&self, out: &mut impl Write, view: &View) -> io::Result<()> {
-        if self.session.capabilities.cell.is_some() {
-            out.write_all(frame::forget_pictures().as_bytes())?;
-            out.write_all(frame::store_pictures(&view.pager.page).as_bytes())?;
-        }
-        Ok(())
     }
 
     /// Renders again only when the width changed; a new height just shows more or fewer rows.
@@ -117,8 +125,9 @@ impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
         }
 
         let Rendered { document, margin } = (self.render)(columns);
-        let view = View { pager: view.pager.resized(page::flatten(document), content_height(rows)), margin, columns };
-        self.store(out, &view)?;
+        let pager = view.pager.resized(page::flatten(document), content_height(rows));
+        let view = View { pictures: self.pictures(&pager.page), pager, margin, columns };
+        store(out, &view)?;
         Ok(view)
     }
 }
@@ -131,7 +140,7 @@ pub fn run(session: &Session, render: impl Fn(u16) -> Rendered) -> io::Result<()
 
     let _screen = Screen::take()?;
     let mut out = io::stdout().lock();
-    reader.store(&mut out, &view)?;
+    store(&mut out, &view)?;
     reader.draw(&mut out, &view)?;
     let mut pending = None;
     loop {
