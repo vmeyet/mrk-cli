@@ -15,6 +15,8 @@ const FILE: &str = "mrk/config.toml";
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub theme: Option<String>,
+    pub theme_dark: Option<String>,
+    pub theme_light: Option<String>,
     pub width: Option<usize>,
     pub images: Option<ImagesMode>,
     pub align: Option<Align>,
@@ -96,10 +98,14 @@ mod tests {
 
     #[test]
     fn every_key_is_read() {
-        let config =
-            parse("theme = \"mrk-light\"\nwidth = 72\nimages = \"never\"\nalign = \"left\"\npager = true\njumbo_title = true\n").unwrap();
+        let config = parse(
+            "theme = \"mrk-light\"\ntheme_dark = \"nord\"\ntheme_light = \"github-light\"\nwidth = 72\nimages = \"never\"\nalign = \"left\"\npager = true\njumbo_title = true\n",
+        )
+        .unwrap();
         let expected = Config {
             theme: Some("mrk-light".to_owned()),
+            theme_dark: Some("nord".to_owned()),
+            theme_light: Some("github-light".to_owned()),
             width: Some(72),
             images: Some(ImagesMode::Never),
             align: Some(Align::Left),
@@ -127,6 +133,7 @@ mod tests {
         assert!(parse("images = \"sometimes\"").is_err());
         assert!(parse("pager = \"yes\"").is_err());
         assert!(parse("jumbo_title = 1").is_err());
+        assert!(parse("theme_dark = 1").is_err());
 
         assert!(parse("width = \"wide\"").is_err());
         assert!(parse("width = 5").unwrap_err().to_string().contains("too narrow"));

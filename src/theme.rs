@@ -87,12 +87,47 @@ pub fn default_for(appearance: Appearance) -> Theme {
     }
 }
 
-/// The theme asked for by name, or the default matching the terminal background (dark when it is unknown).
-pub fn resolve(requested: Option<&str>, background: Option<Appearance>) -> anyhow::Result<Theme> {
-    match requested {
-        Some(name) => find(name).ok_or_else(|| unknown_theme(name)),
-        None => Ok(default_for(background.unwrap_or(Appearance::Dark))),
+/// The theme to draw with: one asked for by name, or one for each terminal background.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Choice {
+    Named(Theme),
+    ByBackground { dark: Theme, light: Theme },
+}
+
+impl Choice {
+    /// `name` wins over the pair; a side of the pair left out is the built-in default. Every name given must exist.
+    pub fn new(name: Option<&str>, dark: Option<&str>, light: Option<&str>) -> anyhow::Result<Self> {
+        match name {
+            Some(name) => named(name).map(Self::Named),
+            None => Ok(Self::ByBackground {
+                dark: named_or_default(dark, Appearance::Dark)?,
+                light: named_or_default(light, Appearance::Light)?,
+            }),
+        }
     }
+
+    pub fn needs_background(&self) -> bool {
+        matches!(self, Self::ByBackground { .. })
+    }
+
+    /// The theme for the terminal background, dark when it is unknown.
+    pub fn resolve(self, background: Option<Appearance>) -> Theme {
+        match self {
+            Self::Named(theme) => theme,
+            Self::ByBackground { dark, light } => match background.unwrap_or(Appearance::Dark) {
+                Appearance::Dark => dark,
+                Appearance::Light => light,
+            },
+        }
+    }
+}
+
+fn named(name: &str) -> anyhow::Result<Theme> {
+    find(name).ok_or_else(|| unknown_theme(name))
+}
+
+fn named_or_default(name: Option<&str>, appearance: Appearance) -> anyhow::Result<Theme> {
+    name.map_or_else(|| Ok(default_for(appearance)), named)
 }
 
 fn unknown_theme(name: &str) -> anyhow::Error {
@@ -203,21 +238,49 @@ mod tests {
         assert_eq!(find("nope"), None);
     }
 
-    #[test]
-    fn resolve_without_a_name_follows_the_background() {
-        assert_eq!(resolve(None, Some(Appearance::Light)).unwrap().name, "mrk-light");
-        assert_eq!(resolve(None, Some(Appearance::Dark)).unwrap().name, "mrk-dark");
-        assert_eq!(resolve(None, None).unwrap().name, "mrk-dark");
+    fn resolved(name: Option<&str>, dark: Option<&str>, light: Option<&str>, background: Option<Appearance>) -> &'static str {
+        Choice::new(name, dark, light).unwrap().resolve(background).name
     }
 
     #[test]
-    fn resolve_prefers_the_name_over_the_background() {
-        assert_eq!(resolve(Some("NORD"), Some(Appearance::Light)).unwrap().name, "nord");
+    fn without_any_name_the_default_follows_the_background() {
+        assert_eq!(resolved(None, None, None, Some(Appearance::Light)), "mrk-light");
+        assert_eq!(resolved(None, None, None, Some(Appearance::Dark)), "mrk-dark");
+        assert_eq!(resolved(None, None, None, None), "mrk-dark");
+    }
+
+    #[test]
+    fn the_name_wins_over_the_pair_and_the_background() {
+        assert_eq!(resolved(Some("NORD"), Some("dracula"), Some("github-light"), Some(Appearance::Light)), "nord");
+        assert!(!Choice::new(Some("nord"), None, None).unwrap().needs_background());
+    }
+
+    #[test]
+    fn the_pair_follows_the_background_and_is_dark_when_it_is_unknown() {
+        let (dark, light) = (Some("dracula"), Some("github-light"));
+
+        assert_eq!(resolved(None, dark, light, Some(Appearance::Light)), "github-light");
+        assert_eq!(resolved(None, dark, light, Some(Appearance::Dark)), "dracula");
+        assert_eq!(resolved(None, dark, light, None), "dracula");
+        assert!(Choice::new(None, dark, light).unwrap().needs_background());
+    }
+
+    #[test]
+    fn a_side_of_the_pair_left_out_is_the_default() {
+        assert_eq!(resolved(None, Some("dracula"), None, Some(Appearance::Light)), "mrk-light");
+        assert_eq!(resolved(None, None, Some("github-light"), Some(Appearance::Dark)), "mrk-dark");
+    }
+
+    #[test]
+    fn an_unknown_name_in_the_pair_is_refused_whatever_the_background() {
+        let message = Choice::new(None, Some("nord"), Some("nope")).unwrap_err().to_string();
+
+        assert!(message.contains("unknown theme \"nope\"") && message.contains("mrk-dark"), "{message}");
     }
 
     #[test]
     fn unknown_name_suggests_the_closest_and_lists_all() {
-        let message = resolve(Some("dracla"), None).unwrap_err().to_string();
+        let message = named("dracla").unwrap_err().to_string();
 
         assert!(message.contains("did you mean \"dracula\"?"), "{message}");
         assert!(message.contains("github-light"), "{message}");
@@ -232,7 +295,7 @@ mod tests {
 
     #[test]
     fn far_name_lists_themes_without_a_guess() {
-        let message = resolve(Some("solarized"), None).unwrap_err().to_string();
+        let message = named("solarized").unwrap_err().to_string();
 
         assert!(!message.contains("did you mean"), "{message}");
         assert!(message.contains("mrk-dark, mrk-light"), "{message}");

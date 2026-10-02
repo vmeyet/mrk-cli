@@ -26,7 +26,7 @@ fn sections() -> [Section; 4] {
         },
         Section {
             title: "Config file",
-            intro: "The first of these that exists, a TOML file with the keys theme, width, images, align, pager and jumbo_title:",
+            intro: "The first of these that exists, a TOML file with the keys theme, theme_dark, theme_light, width, images, align, pager and jumbo_title:",
             rows: rows(&[
                 ("$XDG_CONFIG_HOME/mrk/config.toml", "when XDG_CONFIG_HOME is set"),
                 ("~/.config/mrk/config.toml", "otherwise"),

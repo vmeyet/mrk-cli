@@ -30,10 +30,12 @@ MRK_PAGER="less -R" mrk -p FILE  pipe into that command instead (split into word
 mrk --completions zsh
 mrk update          install the latest release tag with cargo when it is newer (--force reinstalls); the only command that uses the network
 mrk --man           the man page as roff (hidden from --help)
-mrk --list-themes   names with a swatch on a terminal, bare names one per line when piped
+mrk --list-themes   names with a swatch in a Dark and a Light group, the group of the terminal background marked; bare names one per line when piped or without colour
 ```
 
-Config: the first of `$XDG_CONFIG_HOME/mrk/config.toml` (or `~/.config/mrk/config.toml`) and, on macOS, `~/Library/Application Support/mrk/config.toml`, with `theme`, `width`, `images`, `align`, `pager`, `jumbo_title`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+Config: the first of `$XDG_CONFIG_HOME/mrk/config.toml` (or `~/.config/mrk/config.toml`) and, on macOS, `~/Library/Application Support/mrk/config.toml`, with `theme`, `theme_dark`, `theme_light`, `width`, `images`, `align`, `pager`, `jumbo_title`. Flags win over env (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), env over config.
+Theme: `--theme`, `MRK_THEME` or `theme` wins; else `theme_dark` or `theme_light` after the terminal background (dark when unknown), a side left out being `mrk-dark` or `mrk-light`.
+Every theme name given is checked, the pair's too, whatever the background.
 `--help` ends with that lookup, the environment, the pager keys and the exit status; the man page carries the same sections.
 
 Exit status: 0 on success, 2 for a usage mistake (a bad flag, environment value or config file, an unknown theme from any of them), 1 for any other failure.

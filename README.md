@@ -72,7 +72,8 @@ Settings come from flags first, then environment variables, then the config file
 Put the config in `~/.config/mrk/config.toml` (or `$XDG_CONFIG_HOME/mrk/config.toml`):
 
 ```toml
-theme = "tokyo-night"
+theme_dark = "tokyo-night"
+theme_light = "github-light"
 width = 90
 align = "left"
 pager = true
@@ -80,9 +81,9 @@ jumbo_title = true
 ```
 
 `mrk --list-themes`
- shows every theme with a swatch of its colours:
+ shows every theme with a swatch of its colours, dark and light apart, your terminal's group marked:
 `mrk-dark`, `mrk-light`, `catppuccin-mocha`, `catppuccin-latte`, `tokyo-night`, `nord`, `dracula`, `gruvbox-dark`, `gruvbox-light`, `github-dark`, `github-light`.
-Without a theme, mrk picks `mrk-dark` or `mrk-light` from the terminal background.
+Without `theme`, mrk picks `theme_dark` or `theme_light` from the terminal background, `mrk-dark` or `mrk-light` when they are not set.
 
 ![mrk --list-themes showing each theme with a colour swatch](examples/pictures/mrk-list-theme.png)
 

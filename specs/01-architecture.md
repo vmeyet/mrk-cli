@@ -13,7 +13,7 @@ Package `mrk-cli` (`mrk` is taken on crates.io), library crate `mrk`, binary `mr
 main ─▶ cli::run
           ├─ config::load            ~/.config/mrk/config.toml (optional)
           ├─ terminal::detect        Capabilities { color, graphics, background }
-          ├─ theme::resolve          name or appearance ─▶ Theme
+          ├─ theme::Choice           name, or a dark/light pair by background ─▶ Theme
           ├─ read input              file or stdin, capped at 8 MiB
           ├─ markdown::render        &str + &Settings ─▶ Document        (pure)
           │     ├─ code::render      fenced code ─▶ Vec<Line>            (pure)
@@ -36,10 +36,10 @@ src/
     help.rs        the sections after the options (settings, config lookup, pager keys, exit status), as --help text and man roff
     input.rs       file or stdin, capped at 8 MiB, the name the pager shows
     output.rs      Output (print, pager, MRK_PAGER command), Layout: the render closure the pager calls on resize
-  config.rs        Config { theme, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected)
+  config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight()
   text.rs          display_width, cut, wrap
-  theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, resolve, names
+  theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names
   update.rs        `mrk update`: latest release tag from `git ls-remote --tags`, compared with the running version, installed with `cargo install --tag`
   version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)

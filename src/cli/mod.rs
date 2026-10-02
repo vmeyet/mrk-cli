@@ -18,6 +18,7 @@ use crate::theme::{self, Appearance, Palette, Theme};
 use output::{Layout, Output};
 
 const SWATCH: &str = "██";
+const TERMINAL_MARK: &str = " (your terminal)";
 
 /// Render Markdown beautifully in the terminal.
 #[derive(Parser, Debug)]
@@ -27,7 +28,8 @@ pub struct Cli {
     pub command: Option<Command>,
     /// The Markdown file to render; stdin when omitted or `-`.
     pub file: Option<PathBuf>,
-    /// The theme, one of `--list-themes`; by default dark or light after the terminal background.
+    /// The theme, one of `--list-themes`; it wins over the pair `theme_dark`/`theme_light` from the config, picked after
+    /// the terminal background like the default `mrk-dark`/`mrk-light`.
     #[arg(long, env = "MRK_THEME", value_name = "NAME")]
     pub theme: Option<String>,
     /// List the themes with a swatch of their colours.
@@ -113,12 +115,10 @@ fn print_man() -> io::Result<()> {
     man.render_version_section(out)
 }
 
-fn find_theme(name: &str) -> Result<Theme> {
-    theme::resolve(Some(name), None).map_err(|error| UsageError(error.to_string()).into())
-}
-
-fn default_theme(background: Option<Appearance>) -> Theme {
-    theme::default_for(background.unwrap_or(Appearance::Dark))
+fn theme_choice(cli: &Cli, config: &Config) -> Result<theme::Choice> {
+    let name = cli.theme.as_deref().or(config.theme.as_deref());
+    theme::Choice::new(name, config.theme_dark.as_deref(), config.theme_light.as_deref())
+        .map_err(|error| UsageError(error.to_string()).into())
 }
 
 fn palette_colors(palette: &Palette) -> [Rgb; 16] {
@@ -127,29 +127,45 @@ fn palette_colors(palette: &Palette) -> [Rgb; 16] {
     [text, muted, subtle, surface, accent, h1, h2, h3, link, code, success, note, tip, important, warning, caution]
 }
 
-fn theme_line(theme: &Theme, name_width: usize, has_color: bool) -> Line {
-    if !has_color {
-        return Line::new(vec![Span::plain(theme.name)]);
-    }
+fn theme_line(theme: &Theme, name_width: usize) -> Line {
     let name = Span::new(format!("{:name_width$}  ", theme.name), Style::fg(theme.palette.text).bold());
     let swatches = palette_colors(&theme.palette).into_iter().map(|color| Span::new(SWATCH, Style::fg(color)));
     Line::new(std::iter::once(name).chain(swatches).collect())
 }
 
-fn theme_list(has_color: bool) -> Document {
+fn group_heading(appearance: Appearance, background: Option<Appearance>) -> Line {
+    let title = match appearance {
+        Appearance::Dark => "Dark",
+        Appearance::Light => "Light",
+    };
+    let mark = if background == Some(appearance) { TERMINAL_MARK } else { "" };
+    Line::new(vec![Span::new(title, Style::default().bold()), Span::plain(mark)])
+}
+
+fn theme_group(themes: &[Theme], appearance: Appearance, background: Option<Appearance>, name_width: usize) -> Vec<Line> {
+    let lines = themes.iter().filter(|theme| theme.appearance == appearance).map(|theme| theme_line(theme, name_width));
+    std::iter::once(group_heading(appearance, background)).chain(lines).collect()
+}
+
+/// Coloured, the themes come in a dark and a light group, the one matching `background` marked; else bare names for scripts.
+fn theme_list(has_color: bool, background: Option<Appearance>) -> Document {
     let themes: Vec<Theme> = theme::names().filter_map(theme::find).collect();
+    if !has_color {
+        return Document { blocks: vec![Block::Lines(themes.iter().map(|theme| Line::new(vec![Span::plain(theme.name)])).collect())] };
+    }
     let name_width = themes.iter().map(|theme| theme.name.len()).max().unwrap_or_default();
-    Document { blocks: vec![Block::Lines(themes.iter().map(|theme| theme_line(theme, name_width, has_color)).collect())] }
+    let groups = [Appearance::Dark, Appearance::Light].map(|appearance| theme_group(&themes, appearance, background, name_width));
+    Document { blocks: vec![Block::Lines(groups.join(&Line::blank()))] }
 }
 
 fn list_themes(color: ColorChoice) -> Result<()> {
-    let capabilities = terminal::detect(Preferences { color, images: ImagesMode::Never, needs_background: false });
+    let capabilities = terminal::detect(Preferences { color, images: ImagesMode::Never, needs_background: true });
     let margin = if capabilities.is_terminal { terminal::LEFT_MARGIN } else { 0 };
-    output::print(&theme_list(capabilities.color != ColorDepth::None), &capabilities, margin)
+    output::print(&theme_list(capabilities.color != ColorDepth::None, capabilities.background), &capabilities, margin)
 }
 
 fn render(cli: &Cli, config: &Config) -> Result<()> {
-    let theme = cli.theme.as_deref().or(config.theme.as_deref()).map(find_theme).transpose()?;
+    let theme = theme_choice(cli, config)?;
     let source = input::read_input(cli.file.as_deref())?;
     let wants_pager = cli.pager || config.pager.unwrap_or_default();
     let output = output::choose(wants_pager, io::stdout().is_terminal(), std::env::var("MRK_PAGER").ok().as_deref())?;
@@ -157,13 +173,13 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
     let is_command = matches!(output, Output::Command(_));
     let images = if is_command { ImagesMode::Never } else { wanted_images };
     let wants_jumbo_title = cli.jumbo_title || config.jumbo_title.unwrap_or_default();
-    let capabilities = terminal::detect(Preferences { color: cli.color, images, needs_background: theme.is_none() });
+    let capabilities = terminal::detect(Preferences { color: cli.color, images, needs_background: theme.needs_background() });
 
     let layout = Layout {
         source,
         requested_width: cli.width.or(config.width),
         align: cli.align.or(config.align).unwrap_or_default(),
-        theme: theme.unwrap_or_else(|| default_theme(capabilities.background)),
+        theme: theme.resolve(capabilities.background),
         jumbo_title: wants_jumbo_title && !is_command,
         capabilities,
     };
@@ -243,9 +259,13 @@ mod tests {
         assert!(Cli::try_parse_from(["mrk", "--completions", "zsh", "a.md"]).is_err());
     }
 
+    fn config_with_pair(dark: &str, light: &str) -> Config {
+        Config { theme_dark: Some(dark.to_owned()), theme_light: Some(light.to_owned()), ..Config::default() }
+    }
+
     #[test]
     fn an_unknown_theme_is_a_usage_error_listing_the_known_ones() {
-        let error = find_theme("nope").unwrap_err();
+        let error = theme_choice(&parse(&["--theme", "nope"]), &Config::default()).unwrap_err();
         let message = error.to_string();
 
         assert!(error.is::<UsageError>());
@@ -253,24 +273,58 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_theme_in_the_config_pair_is_a_usage_error() {
+        let error = theme_choice(&parse(&[]), &config_with_pair("nord", "nope")).unwrap_err();
+
+        assert!(error.is::<UsageError>());
+        assert!(error.to_string().contains("\"nope\""), "{error}");
+    }
+
+    #[test]
+    fn the_theme_flag_wins_over_the_config_pair() {
+        let choice = theme_choice(&parse(&["--theme", "dracula"]), &config_with_pair("nord", "github-light")).unwrap();
+
+        assert_eq!(choice.resolve(Some(Appearance::Light)).name, "dracula");
+    }
+
+    #[test]
+    fn the_config_pair_follows_the_background() {
+        let choice = theme_choice(&parse(&[]), &config_with_pair("nord", "github-light")).unwrap();
+
+        assert!(choice.needs_background());
+        assert_eq!(choice.resolve(Some(Appearance::Light)).name, "github-light");
+    }
+
+    #[test]
     fn a_hostile_theme_name_is_escaped_in_the_error() {
-        assert!(!find_theme("\x1b]52;c;AAAA\x07").unwrap_err().to_string().contains('\x1b'));
+        let error = theme_choice(&parse(&[]), &config_with_pair("\x1b]52;c;AAAA\x07", "mrk-light")).unwrap_err();
+
+        assert!(!error.to_string().contains('\x1b'));
     }
 
     #[test]
     fn the_theme_list_shows_every_palette_colour_when_coloured() {
-        let listed = theme_list(true);
+        let listed = theme_list(true, None);
         let Block::Lines(lines) = &listed.blocks[0] else { panic!("a theme list is lines") };
 
-        assert_eq!(lines[0].spans.len(), 17);
-        assert!(lines[0].plain().starts_with("mrk-dark ") && lines[0].plain().ends_with("██"));
-        assert_eq!(lines.len(), theme::names().count());
+        assert_eq!(lines[1].spans.len(), 17);
+        assert!(lines[1].plain().starts_with("mrk-dark ") && lines[1].plain().ends_with("██"));
+    }
+
+    #[test]
+    fn the_theme_list_groups_dark_then_light_and_marks_the_terminal_background() {
+        insta::assert_snapshot!(crate::document::plain(&theme_list(true, Some(Appearance::Light))));
+    }
+
+    #[test]
+    fn the_theme_list_marks_no_group_when_the_background_is_unknown() {
+        assert!(!crate::document::plain(&theme_list(true, None)).contains(TERMINAL_MARK));
     }
 
     #[test]
     fn the_theme_list_is_names_only_without_colour() {
         let expected: String = theme::names().map(|name| format!("{name}\n")).collect();
 
-        assert_eq!(crate::document::plain(&theme_list(false)), expected);
+        assert_eq!(crate::document::plain(&theme_list(false, Some(Appearance::Dark))), expected);
     }
 }
