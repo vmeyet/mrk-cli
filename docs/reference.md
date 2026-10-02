@@ -6,7 +6,7 @@ Everything `mrk --help` and `man mrk` say, in one page.
 
 | Flag                         | Environment | Config key | Default and notes                                                                                   |
 | :--------------------------- | :---------- | :--------- | :-------------------------------------------------------------------------------------------------- |
-| `--theme NAME`               | `MRK_THEME` | `theme`    | `mrk-dark` or `mrk-light`, from the terminal background; `--list-themes` shows the names            |
+| `--theme NAME`               | `MRK_THEME` | `theme`    | `theme_dark` or `theme_light` from the config, else `mrk-dark` or `mrk-light`, from the terminal background (dark when unknown); `--list-themes` shows the names |
 | `--width N`                  | `MRK_WIDTH` | `width`    | the terminal width, capped at 100                                                                    |
 | `--images auto\|always\|never` |             | `images`   | `auto`: pictures on terminals that can draw them, inside tmux with passthrough, never under screen or zellij; `always` tries under them too |
 | `--align center\|left`        | `MRK_ALIGN` | `align`    | `center`: the text column sits in the middle of a wide window                                       |
@@ -15,7 +15,7 @@ Everything `mrk --help` and `man mrk` say, in one page.
 | `--jumbo-title`              |             | `jumbo_title` | off; level-1 headings two rows tall: a picture over the concealed title with kitty graphics outside tmux, double-height text on xterm, Konsole, Windows Terminal, mlterm and iTerm2, a normal heading elsewhere |
 |                              | `MRK_PAGER` |            | a command `-p` pipes into instead of the built-in pager, diagrams as text; it never turns paging on |
 | `--completions SHELL`        |             |            | prints the completion script for `bash`, `elvish`, `fish`, `powershell` or `zsh`                    |
-| `--list-themes`              |             |            | names with a swatch on a terminal, one name per line when piped                                      |
+| `--list-themes`              |             |            | names with a swatch in a Dark and a Light group, the terminal background's group marked; one name per line when piped |
 
 Piped output is never centred, paged, given pictures or jumbo titles; output sent to `MRK_PAGER` gets neither pictures nor jumbo titles.
 Without colour there are no hyperlinks, so links print their target as ` <url>` after the text.
@@ -28,10 +28,12 @@ mrk reads the first of these files that exists:
 1. `$XDG_CONFIG_HOME/mrk/config.toml` when `XDG_CONFIG_HOME` is set, `~/.config/mrk/config.toml` otherwise
 2. `~/Library/Application Support/mrk/config.toml`, on macOS only
 
-It is strict TOML with six optional keys; an unknown key is an error.
+It is strict TOML with eight optional keys; an unknown key is an error.
+`theme` wins over the pair `theme_dark`/`theme_light`, which mrk picks from after the terminal background.
 
 ```toml
-theme = "tokyo-night"
+theme_dark = "tokyo-night"
+theme_light = "github-light"
 width = 90
 images = "auto"
 align = "left"

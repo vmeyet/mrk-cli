@@ -1,0 +1,18 @@
+---
+source: src/cli/mod.rs
+expression: "crate::document::plain(&theme_list(true, Some(Appearance::Light)))"
+---
+Dark
+mrk-dark          ████████████████████████████████
+catppuccin-mocha  ████████████████████████████████
+tokyo-night       ████████████████████████████████
+nord              ████████████████████████████████
+dracula           ████████████████████████████████
+gruvbox-dark      ████████████████████████████████
+github-dark       ████████████████████████████████
+
+Light (your terminal)
+mrk-light         ████████████████████████████████
+catppuccin-latte  ████████████████████████████████
+gruvbox-light     ████████████████████████████████
+github-light      ████████████████████████████████
