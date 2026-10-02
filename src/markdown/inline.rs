@@ -3,6 +3,7 @@ use comrak::nodes::{AstNode, NodeValue};
 use super::context::Context;
 use super::footnote;
 use crate::document::{Span, Style};
+use crate::theme::Palette;
 
 /// Inline nesting deeper than this renders as its bare text: bounded recursion on hostile input.
 const MAX_INLINE_NESTING: usize = 64;
@@ -43,9 +44,7 @@ fn inline<'a>(node: &'a AstNode<'a>, base: Style, context: &Context, depth: usiz
         NodeValue::Text(text) => vec![Span::new(text.to_string(), base)],
         NodeValue::SoftBreak => vec![Span::new(" ", base)],
         NodeValue::LineBreak => vec![Span::new("\n", base)],
-        NodeValue::Code(code) => {
-            vec![Span::new(format!(" {} ", code.literal), Style { fg: Some(palette.code), bg: Some(palette.surface), ..base })]
-        }
+        NodeValue::Code(code) => vec![Span::new(format!(" {} ", code.literal), inline_code(base, palette))],
         NodeValue::HtmlInline(html) => vec![Span::new(html.replace('\n', " "), Style { fg: Some(palette.muted), ..base })],
         NodeValue::Emph => children(node, base.italic(), context, depth),
         NodeValue::Strong => children(node, base.bold(), context, depth),
@@ -63,6 +62,11 @@ fn inline<'a>(node: &'a AstNode<'a>, base: Style, context: &Context, depth: usiz
         }
         _ => children(node, base, context, depth),
     }
+}
+
+/// Muted toward `text` so a sentence full of identifiers still reads as prose.
+fn inline_code(base: Style, palette: &Palette) -> Style {
+    Style { fg: Some(palette.text.mix(palette.code, 0.20)), bg: Some(palette.surface.mix(palette.code, 0.05)), ..base }
 }
 
 fn alt<'a>(image: &'a AstNode<'a>) -> String {
@@ -162,11 +166,13 @@ mod tests {
     }
 
     #[test]
-    fn inline_code_is_padded_on_surface() {
+    fn inline_code_is_padded_and_tinted_toward_the_code_colour() {
         let code = span_with("run `mrk` now", "mrk");
 
         assert_eq!(code.text, " mrk ");
-        assert_eq!((code.style.fg, code.style.bg), (Some(MRK_DARK.palette.code), Some(MRK_DARK.palette.surface)));
+        let palette = MRK_DARK.palette;
+        assert_eq!(code.style.fg, Some(palette.text.mix(palette.code, 0.20)));
+        assert_eq!(code.style.bg, Some(palette.surface.mix(palette.code, 0.05)));
     }
 
     #[test]
