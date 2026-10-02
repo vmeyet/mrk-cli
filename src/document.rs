@@ -10,6 +10,12 @@ impl Rgb {
     pub fn hex(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
     }
+
+    /// The colour `amount` of the way from this one to `other`: 0.0 keeps it, 1.0 gives `other`.
+    pub fn mix(self, other: Rgb, amount: f32) -> Rgb {
+        let channel = |from: u8, to: u8| (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8;
+        Rgb(channel(self.0, other.0), channel(self.1, other.1), channel(self.2, other.2))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -209,6 +215,15 @@ mod tests {
     use super::*;
 
     const RED: Rgb = Rgb(255, 0, 0);
+
+    #[test]
+    fn mix_moves_each_channel_toward_the_other_colour_and_rounds() {
+        let black = Rgb(0, 0, 0);
+
+        assert_eq!(black.mix(RED, 0.0), black);
+        assert_eq!(black.mix(RED, 1.0), RED);
+        assert_eq!(Rgb(10, 200, 0).mix(Rgb(20, 100, 255), 0.25), Rgb(13, 175, 64));
+    }
 
     #[test]
     fn plain_joins_spans_and_trims_trailing_padding() {

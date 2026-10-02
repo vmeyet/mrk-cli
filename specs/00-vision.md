@@ -52,7 +52,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | H4–H6 | bold `text`, H6 muted |
 | Paragraph | `text`, wrapped to width, one blank line between blocks |
 | Emphasis | bold / italic / strikethrough (strike also dimmed) |
-| Inline code | `code` colour on `surface`, one space of padding each side |
+| Inline code | `text` mixed 20% toward `code`, on `surface` mixed 5% toward `code`, one space of padding each side |
 | Link | underlined `link`, OSC 8 hyperlink; autolinks likewise. Without hyperlinks (piped, no colour, dumb terminal) the text is followed by ` <url>` in `muted`, except when the text already is the URL |
 | Image | `▣ alt text` in `muted`, hyperlinked to the source (` <source>` after it without hyperlinks); never fetched |
 | Bullets | `•` `◦` `▪` by depth, in `accent`; numbers right-aligned in `accent` |
