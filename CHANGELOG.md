@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-02
+
 ### Added
 
 - `--jumbo-title`, or `jumbo_title = true` in the config, draws level-1 headings two rows tall: as a picture over the selectable title text on kitty, Ghostty and WezTerm, as double-height text on xterm, Konsole, Windows Terminal, mlterm and iTerm2.
@@ -12,7 +14,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - Library: `Settings` has a `jumbo_title` field, `Picture` a `concealed_text` field, and `Block` a `DoubleHeight` variant.
-
 
 ## [0.4.1] - 2026-10-01
 
@@ -82,6 +83,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.5.0]: https://github.com/vmeyet/mrk-cli/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/vmeyet/mrk-cli/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/vmeyet/mrk-cli/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/vmeyet/mrk-cli/compare/v0.3.0...v0.3.1
