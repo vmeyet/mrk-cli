@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-02
+
+### Added
+
+- `theme_dark` and `theme_light` in the config pick the theme after the terminal background when no `theme` is named.
+
+### Changed
+
+- `--list-themes` groups the themes into Dark and Light and marks the group matching the terminal; piped output stays a flat list.
+- Inline code is quieter: its text leans 20% toward the code colour and its background 5%, in every theme.
+- Library: `theme::Choice` replaces `theme::resolve`, and `Rgb` has a `mix` method.
+
 ## [0.5.0] - 2026-10-02
 
 ### Added
@@ -83,6 +95,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.6.0]: https://github.com/vmeyet/mrk-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/vmeyet/mrk-cli/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/vmeyet/mrk-cli/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/vmeyet/mrk-cli/compare/v0.3.1...v0.4.0
