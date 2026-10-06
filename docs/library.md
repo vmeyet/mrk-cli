@@ -29,6 +29,7 @@ for block in markdown::render_blocks(source, &settings) {
 - `markdown::render` gives the whole `Document`.
 - `markdown::render_blocks` cuts it into top-level blocks, each tagged with the source lines it came from.
 - `document::highlight` restyles character ranges of a block's text, for search or word-level diffs.
+- `diff::blocks` pairs the blocks of two versions of a file as `Same`, `Added`, `Removed` or `Changed`, a changed pair with the char ranges of its changed words on each side, for `highlight`.
 - Set `cell` to the terminal cell size in pixels to get Mermaid diagrams as PNG pictures instead of text.
 - Set `jumbo_title` to draw level-1 headings two rows tall: `Picture` (with `cell` set) gives a picture per line, its text in `concealed_text`; `DoubleHeight` gives `Block::DoubleHeight` lines, for terminals that draw DEC double-height lines.
 
