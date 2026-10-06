@@ -5,7 +5,7 @@ Package `mrk-cli` (`mrk` is taken on crates.io), library crate `mrk`, binary `mr
 ## Features
 
 - `cli` (default): the binary and the `cli`, `config`, `terminal` and `update` modules, with `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `dirs`, `toml`, `serde`, `shell-words`, `rustix`, `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
-- Always on, the library core: `document`, `text`, `theme`, `markdown`, `code`, `mermaid`, `raster`, `version`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
+- Always on, the library core: `document`, `text`, `theme`, `markdown`, `diff`, `code`, `mermaid`, `raster`, `version`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
 
 ## Pipeline
 
@@ -37,6 +37,7 @@ src/
     input.rs       file or stdin, capped at 8 MiB, the name the pager shows
     output.rs      Output (print, pager, MRK_PAGER command), Layout: the render closure the pager calls on resize
   config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected)
+  diff.rs          blocks(): two versions of a file rendered with render_blocks, paired block by block, changed words as char ranges (similar)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight()
   text.rs          display_width, cut, wrap
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names
@@ -72,6 +73,10 @@ src/
 
 - `markdown::render(source: &str, settings: &Settings) -> Document`
 - `markdown::render_blocks(source: &str, settings: &Settings) -> Vec<SourceBlock>`: the same rendering cut into top-level blocks, each with `first_line`/`last_line` (1-based, inclusive, from comrak's `sourcepos`, trailing blank lines dropped), a `BlockKind` and its `blocks`. A list gives one block per top-level item, nested items inside; quotes and alerts stay whole; the footnote definitions are one last block spanning the earliest to the latest definition. No blank line sits before, after or between blocks. `render` is these blocks stacked a blank line apart (none between items of a tight list), so the two cannot drift.
+- `diff::blocks(old: &str, new: &str, settings: &Settings) -> Vec<BlockChange>`: both sides through `render_blocks`, in reading order, each block of a side exactly once.
+  Blocks are equal when their kind, their plain text (`Line::plain` over every `Lines` and `DoubleHeight` line) and their pictures' PNG are; `similar`'s Patience diff gives `Same`, and in each run of differing blocks a removed block pairs with the next added block of the same `BlockKind` variant (a heading's level, a task's state, a fence's language may differ) into `Changed`, the others being `Removed` or `Added`.
+  A `Changed` pair carries char ranges of that plain text, ready for `document::highlight`: a Myers diff over the words and punctuation of each line (never across lines; spaces, bars and borders left out), each run of changed words one range; none for Mermaid.
+  It returns ranges, never colours.
 - `document::highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line>`: ranges are char offsets into the lines' plain text joined with no separator; spans split at range edges and keep their link, text and widths never change. The pager search paints its matches with it.
 - `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells.
   `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `BlockKind::Code`.

@@ -6,7 +6,7 @@ use super::{footnote, list, raw};
 use crate::document::Block;
 
 /// What a source block is in the Markdown, so a consumer can pair and label blocks without parsing again.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BlockKind {
     FrontMatter,
     Heading {

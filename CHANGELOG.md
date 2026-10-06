@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Library: `diff::blocks` pairs the blocks of two versions of a Markdown file and marks the changed words.
+
 ## [0.6.0] - 2026-10-02
 
 ### Added

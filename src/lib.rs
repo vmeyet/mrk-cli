@@ -5,6 +5,7 @@ pub mod cli;
 pub mod code;
 #[cfg(feature = "cli")]
 pub mod config;
+pub mod diff;
 pub mod document;
 pub mod markdown;
 pub mod mermaid;
