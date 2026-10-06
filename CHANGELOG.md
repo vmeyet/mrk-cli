@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-06
+
 ### Added
 
 - Library: `diff::blocks` pairs the blocks of two versions of a Markdown file and marks the changed words.
@@ -99,6 +101,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.7.0]: https://github.com/vmeyet/mrk-cli/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/vmeyet/mrk-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/vmeyet/mrk-cli/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/vmeyet/mrk-cli/compare/v0.4.0...v0.4.1
