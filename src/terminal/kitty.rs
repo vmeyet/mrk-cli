@@ -2,7 +2,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
 use super::crop::Crop;
-use super::tmux;
+use super::{ColorDepth, tmux};
 use crate::document::Picture;
 
 const CHUNK_BYTES: usize = 4096;
@@ -78,13 +78,28 @@ pub fn draw(picture: &Picture, rows: u16, crop: Option<Crop>) -> String {
 }
 
 /// An image id a 256-colour placeholder can carry, the low byte as its colour and the high byte as a third diacritic,
-/// so it survives a tmux that downgrades true colour. Taken from the PNG: the same diagram shares one image, and
-/// pictures left in the scrollback keep theirs.
+/// so it survives a tmux that downgrades true colour; `pager_id`'s never have their low 24 bits under 256. Taken
+/// from the PNG: the same diagram shares one image, and pictures left in the scrollback keep theirs.
 pub fn placeholder_id(png: &[u8]) -> u32 {
     let hash = png.iter().fold(0x811c_9dc5_u32, |hash, &byte| (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193));
     let low = hash % 255 + 1;
     let high = (hash >> 8) & 0xff;
     (high << 24) | low
+}
+
+/// Set in the low 24 bits of every true-colour pager id, which stay below 256 in a printed picture's (`placeholder_id`).
+const PAGER_MARK: u32 = 1 << 23;
+
+/// The id through tmux of the picture at `index` in the pager of process `pid`, `None` past the 256th: the index as the
+/// high byte, and every tmux pane shares the terminal outside, so the low bits follow the process. With true colour
+/// they are the process id under `PAGER_MARK`: process ids stay below 2^22 (Linux's limit; macOS and the BSDs stop
+/// under 100 000), so two live pagers never share an id, and the mark keeps them clear of printed pictures. A tmux
+/// that downgrades true colour only carries a 256-colour index, so without it the low byte is the process id modulo
+/// 255, plus one: two pagers, or a pager and a printed picture, may then share an id.
+pub fn pager_id(pid: u32, index: usize, color: ColorDepth) -> Option<u32> {
+    let number = u32::from(u8::try_from(index).ok()?) << 24;
+    let low = if color == ColorDepth::TrueColor { PAGER_MARK | (pid & (PAGER_MARK - 1)) } else { pid % 255 + 1 };
+    Some(number | low)
 }
 
 /// Sends the picture through tmux under `id` with a virtual placement of its cell box, for placeholder cells to show.
@@ -93,13 +108,22 @@ pub fn store_through_tmux(picture: &Picture, id: u32) -> String {
     commands(&picture.png, &keys).iter().map(|command| tmux::passthrough(command)).collect()
 }
 
+/// The foreground that carries the id's low 24 bits: a 256-colour index when they fit one, a true colour otherwise.
+fn id_color(id: u32) -> String {
+    match id.to_be_bytes() {
+        [_, 0, 0, index] => format!("5;{index}"),
+        [_, red, green, blue] => format!("2;{red};{green};{blue}"),
+    }
+}
+
 /// Row `row` of the picture `id` as `cols` placeholder cells: the first names the row, column 0 and the id's high
 /// byte, the others follow on. `None` past the last row the diacritics can number.
 pub fn placeholder_row(id: u32, row: usize, cols: u16) -> Option<String> {
     let row_mark = DIACRITICS.get(row)?;
-    let high_mark = DIACRITICS[(id >> 24) as usize];
+    let [high, ..] = id.to_be_bytes();
+    let high_mark = DIACRITICS[usize::from(high)];
     let rest = PLACEHOLDER.to_string().repeat(usize::from(cols.saturating_sub(1)));
-    Some(format!("\x1b[38;5;{}m{PLACEHOLDER}{row_mark}{}{high_mark}{rest}\x1b[39m", id & 0xff, DIACRITICS[0]))
+    Some(format!("\x1b[38;{}m{PLACEHOLDER}{row_mark}{}{high_mark}{rest}\x1b[39m", id_color(id), DIACRITICS[0]))
 }
 
 /// Draws the picture inside tmux: sent once through it, then shown by rows of placeholder cells after `indent`, which
@@ -132,12 +156,11 @@ pub fn place(placement: &Placement) -> String {
     format!("\x1b_Ga=p,i={id},p={PLACEMENT_ID},x={x},y={y},w={width},h={height},c={cols},r={rows},z={z},C=1,q=2\x1b\\")
 }
 
-/// Removes every placement of the picture but keeps its data, so it can be placed again without resending it.
+/// Keeps the picture's data, so it can be placed again without resending it.
 pub fn hide(id: u32) -> String {
     format!("\x1b_Ga=d,d=i,i={id},q=2\x1b\\")
 }
 
-/// Frees one picture, placements and data.
 pub fn free(id: u32) -> String {
     format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\")
 }
@@ -197,12 +220,46 @@ mod tests {
     }
 
     #[test]
+    fn an_id_past_a_256_colour_index_is_carried_in_true_colour() {
+        assert_eq!(placeholder_row(0x0381_1497, 0, 1), Some("\x1b[38;2;129;20;151m\u{10eeee}\u{305}\u{305}\u{310}\x1b[39m".to_owned()));
+    }
+
+    #[test]
     fn placeholder_ids_fit_a_256_colour_cell_and_follow_the_png() {
         let ids = [placeholder_id(&[1, 2, 3]), placeholder_id(&[1, 2, 4]), placeholder_id(&[])];
 
         assert!(ids.iter().all(|id| (1..=255).contains(&(id & 0xff)) && id & 0x00ff_ff00 == 0), "{ids:x?}");
         assert_eq!(placeholder_id(&[1, 2, 3]), ids[0]);
         assert_ne!(ids[0], ids[1]);
+    }
+
+    #[test]
+    fn a_pager_id_is_the_picture_number_over_the_marked_process_id() {
+        assert_eq!(pager_id(70_807, 0, ColorDepth::TrueColor), Some(0x0081_1497));
+        assert_eq!(pager_id(70_807, 3, ColorDepth::TrueColor), Some(0x0381_1497));
+        assert_eq!(pager_id((1 << 22) - 1, 255, ColorDepth::TrueColor), Some(0xffbf_ffff));
+        assert_eq!(pager_id(70_807, 256, ColorDepth::TrueColor), None);
+    }
+
+    #[test]
+    fn pager_ids_never_meet_between_processes_pictures_or_printed_pictures() {
+        let pids = [1, 2, 255, 256, 23_668, 70_807, 99_998, (1 << 22) - 1];
+        let ids: Vec<u32> =
+            pids.iter().flat_map(|&pid| (0..=255).filter_map(move |index| pager_id(pid, index, ColorDepth::TrueColor))).collect();
+        let distinct: std::collections::BTreeSet<u32> = ids.iter().copied().collect();
+
+        assert_eq!(distinct.len(), pids.len() * 256);
+        assert!(ids.iter().all(|id| id & 0x00ff_ffff > 0xff), "a printed id keeps its low 24 bits under 256");
+        assert!(placeholder_id(&[1, 2, 3]) & 0x00ff_ffff <= 0xff);
+    }
+
+    #[test]
+    fn without_true_colour_a_pager_id_fits_a_256_colour_cell() {
+        let ids: Vec<u32> = (0..3).filter_map(|index| pager_id(70_807, index, ColorDepth::Ansi256)).collect();
+
+        assert_eq!(ids, [0x0000_00ad, 0x0100_00ad, 0x0200_00ad]);
+        assert_eq!(pager_id(254, 0, ColorDepth::Ansi256), Some(0xff));
+        assert_eq!(pager_id(255, 0, ColorDepth::Ansi256), Some(1));
     }
 
     #[test]

@@ -94,8 +94,11 @@ pub fn help() -> Vec<(String, &'static str)> {
     READING.iter().chain(PROMPTING).map(|binding| (keys_label(binding), binding.meaning)).collect()
 }
 
-/// What a key press does, while reading or while typing a search query.
-pub fn action(key: KeyEvent, is_prompting: bool) -> Option<Action> {
+/// What a key press does, while reading or while typing a search query; nothing with Alt, which no binding uses.
+fn action(key: KeyEvent, is_prompting: bool) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        return None;
+    }
     let is_control = key.modifiers.contains(KeyModifiers::CONTROL);
     match (is_control, is_prompting) {
         (true, _) if key.code == KeyCode::Char('c') => Some(Action::Quit),
@@ -103,6 +106,50 @@ pub fn action(key: KeyEvent, is_prompting: bool) -> Option<Action> {
         (true, false) => control(key.code),
         (false, true) => prompting(key.code),
         (false, false) => reading(key.code),
+    }
+}
+
+/// Whether the key opens a terminal reply that came too late, which crossterm reads as Alt and the introducer's
+/// letter: `ESC ]` (OSC), `ESC P` (DCS), `ESC _` (APC), `ESC ^` (PM), `ESC X` (SOS).
+fn opens_reply(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char(']' | 'P' | '_' | '^' | 'X'))
+}
+
+/// Whether the key ends a reply: BEL, read as Ctrl-g, or ST (`ESC \`), read as Alt-\.
+fn closes_reply(key: KeyEvent) -> bool {
+    let is_bell = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g');
+    let is_terminator = key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('\\');
+    is_bell || is_terminator
+}
+
+fn is_reply_text(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char(_)) && key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
+}
+
+/// Keys as they come, a late terminal reply among them dropped up to its end; a key no reply holds ends it early, so
+/// a cut reply never swallows the reader's keys.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Keys {
+    is_in_reply: bool,
+}
+
+impl Keys {
+    /// What the key does, and the keys after it.
+    pub fn press(self, key: KeyEvent, is_prompting: bool) -> (Self, Option<Action>) {
+        if self.is_in_reply && closes_reply(key) {
+            return (Self::default(), None);
+        }
+        if self.is_in_reply && is_reply_text(key) {
+            return (self, None);
+        }
+        if opens_reply(key) {
+            return (Self { is_in_reply: true }, None);
+        }
+        (Self { is_in_reply: false }, action(key, is_prompting))
+    }
+
+    pub fn is_reading_reply(self) -> bool {
+        self.is_in_reply
     }
 }
 
@@ -161,6 +208,41 @@ mod tests {
         assert_eq!(action(press(KeyCode::Backspace), true), Some(Action::Erase));
         assert_eq!(action(ctrl('f'), true), None);
         assert_eq!(action(ctrl('c'), true), Some(Action::Quit));
+    }
+
+    fn alt(character: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(character), KeyModifiers::ALT)
+    }
+
+    fn pressed(keys: &[KeyEvent]) -> Vec<Action> {
+        let mut state = Keys::default();
+        let mut actions = Vec::new();
+        for key in keys {
+            let (next, action) = state.press(*key, false);
+            state = next;
+            actions.extend(action);
+        }
+        actions
+    }
+
+    #[test]
+    fn alt_keys_do_nothing() {
+        assert_eq!(action(alt('q'), false), None);
+        assert_eq!(action(alt('j'), true), None);
+    }
+
+    #[test]
+    fn a_late_reply_is_dropped_up_to_its_end() {
+        let background = [vec![alt(']')], chars("11;rgb:0000/0000/0000"), vec![alt('\\')], chars("j")].concat();
+        let graphics = [vec![alt('_')], chars("Gi=31;OK"), vec![ctrl('g')], chars("k")].concat();
+
+        assert_eq!(pressed(&background), [Action::LineDown]);
+        assert_eq!(pressed(&graphics), [Action::LineUp]);
+    }
+
+    #[test]
+    fn a_key_no_reply_holds_ends_a_cut_reply_and_still_acts() {
+        assert_eq!(pressed(&[vec![alt(']')], chars("11;rg"), vec![press(KeyCode::Down)], chars("j")].concat()), [Action::LineDown; 2]);
     }
 
     #[test]

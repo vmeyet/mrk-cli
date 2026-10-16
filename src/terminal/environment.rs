@@ -134,6 +134,16 @@ pub fn double_height(environment: &Environment, color: ColorDepth) -> bool {
     is_listed && is_own_program && can_write
 }
 
+/// Whether the terminal restores a DEC private mode saved with XTSAVE (`CSI ? Pm s`, then `CSI ? Pm r`): xterm,
+/// Ghostty and foot. Elsewhere one that ignores XTRESTORE would keep the mode the pager set, and one that drops the `?`
+/// would read the restore as a scroll region. xterm's variable is inherited like the double-height ones.
+pub fn saves_modes(environment: &Environment) -> bool {
+    let is_xterm = environment.has("XTERM_VERSION") && environment.program().is_empty();
+    let is_ghostty = environment.program() == "ghostty" || environment.term() == "xterm-ghostty";
+    let is_foot = environment.term() == "foot" || environment.term().starts_with("foot-");
+    (is_xterm || is_ghostty || is_foot) && !environment.is_multiplexed()
+}
+
 pub fn wants_pictures(environment: &Environment, images: ImagesMode) -> bool {
     match images {
         ImagesMode::Never => false,
@@ -275,6 +285,23 @@ mod tests {
         assert!(!double_height(&piped(&[xterm]), ColorDepth::TrueColor));
         assert!(!double_height(&tty(&[xterm]), ColorDepth::None));
         assert!(!double_height(&tty(&[("KONSOLE_VERSION", "230800"), ("TERM_PROGRAM", "vscode")]), ColorDepth::TrueColor));
+    }
+
+    #[test]
+    fn modes_are_saved_only_on_terminals_known_to_restore_them_outside_a_multiplexer() {
+        for variables in
+            [&[("XTERM_VERSION", "XTerm(390)")][..], &[("TERM_PROGRAM", "ghostty")], &[("TERM", "xterm-ghostty")], &[("TERM", "foot")]]
+        {
+            assert!(saves_modes(&tty(variables)), "{variables:?}");
+        }
+        for variables in [
+            &[("TERM", "xterm-256color")][..],
+            &[("TERM_PROGRAM", "WezTerm")],
+            &[("XTERM_VERSION", "XTerm(390)"), ("TERM_PROGRAM", "vscode")],
+            &[("TERM", "foot"), ("TMUX", "/tmp/tmux")],
+        ] {
+            assert!(!saves_modes(&tty(variables)), "{variables:?}");
+        }
     }
 
     #[test]
