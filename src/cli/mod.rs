@@ -1,7 +1,10 @@
 //! The command line: flags win over the environment (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), the environment over the config file.
+mod environment;
 mod help;
 mod input;
 mod output;
+pub mod panic;
+pub mod signals;
 
 use std::fmt;
 use std::io::{self, IsTerminal, Write};
@@ -15,6 +18,7 @@ use mrk::terminal::{self, Align, ColorChoice, ColorDepth, ImagesMode, Preference
 use mrk::theme::{self, Appearance, Palette, Theme};
 
 use crate::config::{self, Config};
+use environment::Environment;
 use output::{Layout, Output};
 
 const SWATCH: &str = "██";
@@ -30,13 +34,13 @@ pub struct Cli {
     pub file: Option<PathBuf>,
     /// The theme, one of `--list-themes`; it wins over the pair `theme_dark`/`theme_light` from the config, picked after
     /// the terminal background like the default `mrk-dark`/`mrk-light`.
-    #[arg(long, env = "MRK_THEME", value_name = "NAME")]
+    #[arg(long, value_name = "NAME")]
     pub theme: Option<String>,
     /// List the themes with a swatch of their colours.
     #[arg(long, conflicts_with = "file")]
     pub list_themes: bool,
     /// Wrap width in columns, from 20 to 1000; by default the terminal width, capped at 100.
-    #[arg(long, env = "MRK_WIDTH", value_name = "N", value_parser = parse_width)]
+    #[arg(long, value_name = "N", value_parser = parse_width)]
     pub width: Option<usize>,
     /// Draw Mermaid diagrams as images, on a terminal that speaks the kitty graphics protocol or Sixel.
     ///
@@ -46,7 +50,7 @@ pub struct Cli {
     #[arg(long, value_enum, value_name = "WHEN")]
     pub images: Option<ImagesMode>,
     /// Place the text in the window; `center` only applies on a terminal, never to piped output.
-    #[arg(long, value_enum, env = "MRK_ALIGN", value_name = "WHERE")]
+    #[arg(long, value_enum, value_name = "WHERE")]
     pub align: Option<Align>,
     /// Read in the built-in pager, which keeps diagrams as images.
     ///
@@ -98,8 +102,11 @@ fn parse_width(raw: &str) -> Result<usize, String> {
     config::check_width(width)
 }
 
-fn print_completions(shell: Shell) {
-    clap_complete::generate(shell, &mut Cli::command(), "mrk", &mut io::stdout());
+/// Written whole once generated: clap_complete panics on a write error, such as a pipe closed early.
+fn print_completions(shell: Shell) -> io::Result<()> {
+    let mut script = Vec::new();
+    clap_complete::generate(shell, &mut Cli::command(), "mrk", &mut script);
+    io::stdout().lock().write_all(&script)
 }
 
 fn print_man() -> io::Result<()> {
@@ -115,8 +122,8 @@ fn print_man() -> io::Result<()> {
     man.render_version_section(out)
 }
 
-fn theme_choice(cli: &Cli, config: &Config) -> Result<theme::Choice> {
-    let name = cli.theme.as_deref().or(config.theme.as_deref());
+fn theme_choice(cli: &Cli, environment: &Environment, config: &Config) -> Result<theme::Choice> {
+    let name = cli.theme.as_deref().or(environment.theme.as_deref()).or(config.theme.as_deref());
     theme::Choice::new(name, config.theme_dark.as_deref(), config.theme_light.as_deref())
         .map_err(|error| UsageError(format!("{error} (mrk --list-themes)")).into())
 }
@@ -164,8 +171,8 @@ fn list_themes(color: ColorChoice) -> Result<()> {
     output::print(&theme_list(capabilities.color != ColorDepth::None, capabilities.background), &capabilities, margin)
 }
 
-fn render(cli: &Cli, config: &Config) -> Result<()> {
-    let theme = theme_choice(cli, config)?;
+fn render(cli: &Cli, environment: &Environment, config: &Config) -> Result<()> {
+    let theme = theme_choice(cli, environment, config)?;
     let source = input::read_input(cli.file.as_deref())?;
     let wants_pager = cli.pager || config.pager.unwrap_or_default();
     let output = output::choose(wants_pager, io::stdout().is_terminal(), std::env::var("MRK_PAGER").ok().as_deref())?;
@@ -177,8 +184,8 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
 
     let layout = Layout {
         source,
-        requested_width: cli.width.or(config.width),
-        align: cli.align.or(config.align).unwrap_or_default(),
+        requested_width: cli.width.or(environment.width).or(config.width),
+        align: cli.align.or(environment.align).or(config.align).unwrap_or_default(),
         theme: theme.resolve(capabilities.background),
         jumbo_title: wants_jumbo_title && !is_command,
         capabilities,
@@ -186,8 +193,8 @@ fn render(cli: &Cli, config: &Config) -> Result<()> {
     output::show(&output, &layout, &input::name(cli.file.as_deref()))
 }
 
-/// clap echoes arguments and environment values verbatim, so its errors are sanitized; help and version carry nothing
-/// from the user and keep their colours.
+/// clap echoes arguments verbatim, so its errors are sanitized; help and version carry nothing from the user, the
+/// environment being read outside clap, and keep their colours.
 fn exit_on(error: &clap::Error) -> ! {
     if !error.use_stderr() {
         error.exit();
@@ -202,8 +209,7 @@ pub fn run() -> Result<()> {
         return crate::update::run(force);
     }
     if let Some(shell) = cli.completions {
-        print_completions(shell);
-        return Ok(());
+        return output::ignore_broken_pipe(print_completions(shell)).context("writing the completions");
     }
     if cli.man {
         return output::ignore_broken_pipe(print_man()).context("writing the man page");
@@ -213,7 +219,7 @@ pub fn run() -> Result<()> {
     if cli.list_themes {
         return list_themes(cli.color);
     }
-    render(&cli, &config)
+    render(&cli, &Environment::read()?, &config)
 }
 
 #[cfg(test)]
@@ -259,13 +265,17 @@ mod tests {
         assert!(Cli::try_parse_from(["mrk", "--completions", "zsh", "a.md"]).is_err());
     }
 
+    fn choice(cli: &Cli, config: &Config) -> Result<theme::Choice> {
+        theme_choice(cli, &Environment::default(), config)
+    }
+
     fn config_with_pair(dark: &str, light: &str) -> Config {
         Config { theme_dark: Some(dark.to_owned()), theme_light: Some(light.to_owned()), ..Config::default() }
     }
 
     #[test]
     fn an_unknown_theme_is_a_usage_error_listing_the_known_ones() {
-        let error = theme_choice(&parse(&["--theme", "nope"]), &Config::default()).unwrap_err();
+        let error = choice(&parse(&["--theme", "nope"]), &Config::default()).unwrap_err();
         let message = error.to_string();
 
         assert!(error.is::<UsageError>());
@@ -274,7 +284,7 @@ mod tests {
 
     #[test]
     fn an_unknown_theme_in_the_config_pair_is_a_usage_error() {
-        let error = theme_choice(&parse(&[]), &config_with_pair("nord", "nope")).unwrap_err();
+        let error = choice(&parse(&[]), &config_with_pair("nord", "nope")).unwrap_err();
 
         assert!(error.is::<UsageError>());
         assert!(error.to_string().contains("\"nope\""), "{error}");
@@ -282,14 +292,14 @@ mod tests {
 
     #[test]
     fn the_theme_flag_wins_over_the_config_pair() {
-        let choice = theme_choice(&parse(&["--theme", "dracula"]), &config_with_pair("nord", "github-light")).unwrap();
+        let choice = choice(&parse(&["--theme", "dracula"]), &config_with_pair("nord", "github-light")).unwrap();
 
         assert_eq!(choice.resolve(Some(Appearance::Light)).name, "dracula");
     }
 
     #[test]
     fn the_config_pair_follows_the_background() {
-        let choice = theme_choice(&parse(&[]), &config_with_pair("nord", "github-light")).unwrap();
+        let choice = choice(&parse(&[]), &config_with_pair("nord", "github-light")).unwrap();
 
         assert!(choice.needs_background());
         assert_eq!(choice.resolve(Some(Appearance::Light)).name, "github-light");
@@ -297,7 +307,7 @@ mod tests {
 
     #[test]
     fn a_hostile_theme_name_is_escaped_in_the_error() {
-        let error = theme_choice(&parse(&[]), &config_with_pair("\x1b]52;c;AAAA\x07", "mrk-light")).unwrap_err();
+        let error = choice(&parse(&[]), &config_with_pair("\x1b]52;c;AAAA\x07", "mrk-light")).unwrap_err();
 
         assert!(!error.to_string().contains('\x1b'));
     }

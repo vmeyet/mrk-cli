@@ -10,28 +10,29 @@ mod worker;
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-pub use self::budget::Load;
+pub(crate) use self::budget::Allowance;
+use self::budget::Load;
 use self::cache::Recent;
-#[cfg(feature = "cli")]
-pub(crate) use self::catch::is_catching;
+use self::catch::caught;
+pub use self::catch::is_catching;
 use crate::document::{Block, CellSize, Line, Picture, Settings};
 use crate::raster::{RasterError, Svg};
 
-/// How long a diagram may take to lay out, both engines together, before it shows as source; debug builds run the
-/// engines about ten times slower, and tests render through them.
-const DEADLINE: Duration = Duration::from_millis(if cfg!(debug_assertions) { 20_000 } else { 2_000 });
-
 static DRAWINGS: Recent<Result<Arc<Svg>, DiagramError>> = Recent::new();
-static SLOW_AS_TEXT: Recent<()> = Recent::new();
+/// The text a diagram was last drawn as, with the width it was drawn for.
+static TEXTS: Recent<(usize, Text)> = Recent::new();
+
+type Text = Result<Arc<Vec<Line>>, DiagramError>;
 
 /// Why a diagram is not drawn; the source fallback shows it in its note.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DiagramError {
+pub(crate) enum DiagramError {
     Oversized,
     UnsafeSubgraphs,
     OverBudget(Load),
+    OverDocumentBudget,
     TimedOut,
     Invalid(String),
     Crashed,
@@ -48,6 +49,9 @@ impl fmt::Display for DiagramError {
             Self::Oversized => write!(formatter, "diagram over {} KiB", budget::MAX_SOURCE_BYTES / 1024),
             Self::UnsafeSubgraphs => write!(formatter, "subgraph id reused or nested too deep"),
             Self::OverBudget(load) => write!(formatter, "over {} {}, too many to lay out", load.limit(), load.unit()),
+            Self::OverDocumentBudget => {
+                write!(formatter, "over {} statements across the document's diagrams, too many to lay out", budget::MAX_DOCUMENT_STATEMENTS)
+            }
             Self::TimedOut => write!(formatter, "too slow to lay out"),
             Self::Invalid(message) => write!(formatter, "{message}"),
             Self::Crashed => write!(formatter, "the diagram renderer crashed"),
@@ -70,17 +74,19 @@ impl From<RasterError> for DiagramError {
     }
 }
 
-/// A ```mermaid block: a picture when `settings.cell` is set and the diagram renders, text otherwise.
+/// A ```mermaid block on its own: a picture when `settings.cell` is set and the diagram renders, text otherwise.
 pub fn render(source: &str, settings: &Settings) -> Block {
-    render_within(source, settings, DEADLINE)
+    drawn(source, settings).unwrap_or_else(|error| as_source(source, &error, settings))
 }
 
-fn render_within(source: &str, settings: &Settings, deadline: Duration) -> Block {
-    drawn(source, settings, Instant::now() + deadline).unwrap_or_else(|error| as_source(source, &error, settings))
+/// A ```mermaid block of a document, shown as source when the document's budget does not let it through.
+pub(crate) fn render_in(source: &str, settings: &Settings, allowance: &Allowance) -> Block {
+    allowance.admit(source).and_then(|()| drawn(source, settings)).unwrap_or_else(|error| as_source(source, &error, settings))
 }
 
-fn drawn(source: &str, settings: &Settings, deadline: Instant) -> Result<Block, DiagramError> {
+fn drawn(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
     budget::admit(source)?;
+    let deadline = settings.diagram_deadline.map(|deadline| Instant::now() + deadline);
     match settings.cell.and_then(|cell| picture(source, cell, settings, deadline).ok()) {
         Some(picture) => Ok(Block::Picture(picture)),
         None => as_text(source, settings, deadline),
@@ -89,32 +95,35 @@ fn drawn(source: &str, settings: &Settings, deadline: Instant) -> Result<Block, 
 
 /// Parsed, laid out and turned into a tree once per source and palette, a timeout included: only the fit and the
 /// raster depend on the width.
-fn picture(source: &str, cell: CellSize, settings: &Settings, deadline: Instant) -> Result<Picture, DiagramError> {
-    let palette = settings.theme.palette;
-    let drawing = DRAWINGS.get_or(source, &palette, || {
-        let source = source.to_owned();
-        worker::within(deadline, move || Ok(Arc::new(Svg::parse(&svg::render(&budget::parse(&source)?, &palette))?)))
-    })?;
+fn picture(source: &str, cell: CellSize, settings: &Settings, deadline: Option<Instant>) -> Result<Picture, DiagramError> {
+    let drawing = DRAWINGS.get_or(source, &settings.theme.palette, || drawing(source, settings, deadline))?;
     let (width, height) = drawing.size();
     let frame = frame::fit(width, height, svg::FONT_SIZE_PX, cell, settings.width).ok_or(DiagramError::TooLarge)?;
-    let png = drawing.draw(frame.scale, frame.width_px, frame.height_px)?;
+    let png = caught(|| drawing.draw(frame.scale, frame.width_px, frame.height_px))??;
     let alt = kind::describe(source).to_owned();
     Ok(Picture { png, cols: frame.cols, rows: frame.rows, alt, indent: Line::blank(), concealed_text: None })
 }
 
-/// mermaid-text lays out for the width, so it runs again on every resize, unless it once ran out of time.
-fn as_text(source: &str, settings: &Settings, deadline: Instant) -> Result<Block, DiagramError> {
+/// Only the layout runs against the deadline, so the fonts the tree loads on first use are never left to a thread
+/// given up on.
+fn drawing(source: &str, settings: &Settings, deadline: Option<Instant>) -> Result<Arc<Svg>, DiagramError> {
+    let (source, palette) = (source.to_owned(), settings.theme.palette);
+    let svg = worker::run(deadline, move || Ok(svg::render(&budget::parse(&source)?, &palette)))?;
+    Ok(Arc::new(caught(|| Svg::parse(&svg))??))
+}
+
+/// mermaid-text lays out for the width, so it runs again after a resize, unless it once ran out of time.
+fn as_text(source: &str, settings: &Settings, deadline: Option<Instant>) -> Result<Block, DiagramError> {
     budget::admit_text(source)?;
-    let palette = settings.theme.palette;
-    if SLOW_AS_TEXT.find(source, &palette).is_some() {
-        return Err(DiagramError::TimedOut);
-    }
-    let (owned, width) = (source.to_owned(), settings.width);
-    let drawn = worker::within(deadline, move || text::render(&owned, width, &palette));
-    if matches!(drawn, Err(DiagramError::TimedOut)) {
-        SLOW_AS_TEXT.keep(source, &palette, ());
-    }
-    drawn.map(Block::Lines)
+    let (palette, width) = (settings.theme.palette, settings.width);
+    let known = TEXTS.find(source, &palette).filter(|(known_width, text)| *known_width == width || *text == Err(DiagramError::TimedOut));
+    let (_, text) = known.unwrap_or_else(|| {
+        let owned = source.to_owned();
+        let drawn = (width, worker::run(deadline, move || text::render(&owned, width, &palette)).map(Arc::new));
+        TEXTS.keep(source, &palette, drawn.clone());
+        drawn
+    });
+    text.map(|lines| Block::Lines(lines.to_vec()))
 }
 
 fn as_source(source: &str, error: &DiagramError, settings: &Settings) -> Block {
@@ -125,7 +134,7 @@ fn as_source(source: &str, error: &DiagramError, settings: &Settings) -> Block {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::*;
     use crate::document::Line;
@@ -215,33 +224,43 @@ mod tests {
     }
 
     #[test]
-    fn diagrams_too_costly_to_lay_out_are_refused_at_once() {
+    fn diagrams_too_costly_to_lay_out_are_refused_before_either_engine() {
         let costly = [
-            (tangled(100, 500), "mermaid: over 160 statements, too many to lay out"),
-            (tangled(1000, 3500), "mermaid: over 160 statements, too many to lay out"),
+            (tangled(100, 500), "mermaid: over 100 statements, too many to lay out"),
+            (tangled(1000, 3500), "mermaid: over 100 statements, too many to lay out"),
             (format!("classDiagram\n{}", "  A --> B\n".repeat(40)), "mermaid: over 32 relations, too many to lay out"),
         ];
 
         for (source, note) in &costly {
             assert!(source.len() <= budget::MAX_SOURCE_BYTES, "{note}: {} bytes", source.len());
             for settings in [test_settings(), with_cell()] {
-                let started = Instant::now();
-                let lines = lines(render(source, &settings));
-
-                assert!(started.elapsed() < Duration::from_secs(1), "{note}: {:?}", started.elapsed());
-                assert_eq!(lines[0].plain(), *note);
+                assert_eq!(lines(render(source, &settings))[0].plain(), *note);
             }
         }
     }
 
     #[test]
+    fn the_deepest_subgraphs_the_budget_admits_lay_out_on_a_default_thread_stack() {
+        let opening: String = (0..16).map(|level| format!(" subgraph s{level}\n")).collect();
+        let source = format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(16));
+        assert_eq!(budget::admit(&source), Ok(()));
+
+        let drawn = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || [test_settings(), with_cell()].map(|settings| render(&source, &settings)))
+            .unwrap()
+            .join()
+            .unwrap();
+
+        assert!(matches!(&drawn, [Block::Lines(text), Block::Picture(_)] if !text[0].plain().starts_with("mermaid:")), "{drawn:?}");
+    }
+
+    #[test]
     fn a_long_sequence_over_the_picture_budget_still_draws_as_text() {
         let source = format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000));
-        let started = Instant::now();
 
         let lines = lines(render(&source, &with_cell()));
 
-        assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
         assert!(lines.iter().any(|line| line.plain().contains("hi")));
         assert!(!lines[0].plain().starts_with("mermaid:"));
     }
@@ -250,11 +269,30 @@ mod tests {
     fn a_diagram_out_of_time_shows_as_source_and_stays_so_on_a_resize() {
         let source = tangled(20, 40);
 
-        let out_of_time = lines(render_within(&source, &with_cell(), Duration::ZERO));
-        let resized = lines(render_within(&source, &Settings { width: 60, ..with_cell() }, DEADLINE));
+        let out_of_time = lines(render(&source, &Settings { diagram_deadline: Some(Duration::ZERO), ..with_cell() }));
+        let resized = lines(render(&source, &Settings { width: 60, ..with_cell() }));
 
         assert_eq!(out_of_time[0].plain(), "mermaid: too slow to lay out");
         assert_eq!(resized[0].plain(), "mermaid: too slow to lay out");
+    }
+
+    #[test]
+    fn a_diagram_past_the_document_budget_shows_as_source_with_its_note() {
+        let lines = lines(render_in(FLOWCHART, &with_cell(), &Allowance::new([])));
+
+        assert_eq!(lines[0].plain(), "mermaid: over 400 statements across the document's diagrams, too many to lay out");
+        assert_eq!(lines[1].plain(), "graph TD");
+    }
+
+    #[test]
+    fn a_document_lays_out_its_diagrams_until_their_statements_reach_the_budget() {
+        let chain = |diagram: usize| (0..99).map(|node| format!("  d{diagram}n{node} --> d{diagram}n{}\n", node + 1)).collect::<String>();
+        let document: String = (0..5).map(|diagram| format!("```mermaid\ngraph TD\n{}```\n\n", chain(diagram))).collect();
+
+        let plain = crate::document::plain(&crate::markdown::render(&document, &test_settings()));
+
+        assert_eq!(plain.matches("mermaid: over 400 statements across the document's diagrams").count(), 1);
+        assert!(plain.contains("d3n99") && plain.trim_end().ends_with("d4n98 --> d4n99"), "{plain}");
     }
 
     #[test]

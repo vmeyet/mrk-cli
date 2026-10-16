@@ -4,7 +4,7 @@ Package `mrk-cli` (`mrk` is taken on crates.io), library crate `mrk`, binary `mr
 
 ## Features
 
-- `cli` (default): the library's `terminal` module and the binary, whose own `cli`, `config` and `update` modules are no part of the library, with `anyhow`, `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `dirs`, `toml`, `serde`, `shell-words`, `signal-hook` (already in the tree through crossterm), `rustix`, `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
+- `cli` (default): the library's `terminal` module and the binary, whose own `cli`, `config` and `update` modules are no part of the library, with `anyhow`, `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `toml`, `serde`, `shell-words`, `signal-hook` (already in the tree through crossterm), `rustix`, `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
 - Always on, the library core: `document`, `text`, `sanitize`, `theme`, `markdown`, `diff`, `code`, `mermaid`, `raster`, `version`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
   The core returns typed errors (`theme::UnknownTheme`, `raster::RasterError`); the binary adds its own wording.
 
@@ -31,12 +31,15 @@ main ─▶ cli::run
 build.rs           embeds the git commit as GIT_HASH for version.rs, only when the package is the root of its git checkout (a vendored copy reports `unknown`)
 assets/fonts/      MrkSans.ttf, rebuilt by scripts/last-resort-font, and the DejaVu license it ships under
 src/
-  main.rs          the binary: declares `cli`, `config`, `update`, calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
+  main.rs          the binary: declares `cli`, `config`, `update`, installs the panic hook, calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
   lib.rs           the library's module list; `terminal` behind the `cli` feature
   cli/             clap arguments, precedence flags > env > config, orchestration
+    environment.rs MRK_THEME, MRK_WIDTH, MRK_ALIGN, read outside clap so an empty one counts as unset and --help shows no value
     help.rs        the sections after the options (settings, config lookup, pager keys, exit status), as --help text and man roff
     input.rs       file or stdin, capped at 8 MiB, the name the pager shows
-    output.rs      Output (print, pager, MRK_PAGER command), Layout: the render closure the pager calls on resize
+    output.rs      Output (print, pager, MRK_PAGER command, Ctrl-C and Ctrl-\ left to it), Layout: the render closure the pager calls on resize, with the 5 s diagram deadline
+    panic.rs       the panic hook: reports sanitized, quiet for a panic the Mermaid renderers catch
+    signals.rs     signals held off while a child (MRK_PAGER, cargo) runs, so mrk outlives it and cleans up
   config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected); the width bounds MIN_WIDTH 20, MAX_WIDTH 1000 and DEFAULT_WIDTH 100
   diff.rs          sections(): two versions of a file rendered with render_sections, paired section by section, changed words as char ranges (similar)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight(); Line::printable() is the text safe to print
@@ -45,17 +48,18 @@ src/
   text.rs          display_width, cut, wrap (at spaces), hard_wrap (where a line is full, for code and source), expand_tabs
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names, UnknownTheme
   update.rs        `mrk update`: the latest release tag and its commit from `git ls-remote --tags`, compared with the running version;
-                   `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
-                   else `cargo install --rev <commit> --target-dir <temporary folder>`, the folder removed afterwards
+                   `brew update` then `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
+                   else `cargo install --rev <commit> --target-dir <temporary folder>`, the folder removed afterwards, also on Ctrl-C or SIGTERM,
+                   then the installed binary's `--version` and the `mrk` the PATH finds checked
   version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)
     blocks.rs      Section, SectionKind: the top-level sections both render and render_sections are built from
   code/            syntect + two-face: highlight a fenced block into a surface panel
   mermaid/         mermaid-rs-renderer SVG ─▶ raster PNG ─▶ Picture; mermaid-text fallback
     budget.rs      the size and subgraph limits of both engines, then each engine's own count
-    cache.rs       the last 32 drawings (or timeouts) by source and palette
-    catch.rs       renderer panics caught, their reports kept off stderr
-    worker.rs      a renderer on its own thread, given up at the diagram's deadline
+    cache.rs       every diagram a document's budget lets through, drawings (or timeouts) by source and palette, texts by width too
+    catch.rs       renderer panics caught, `is_catching` telling a panic hook to leave their reports out
+    worker.rs      a renderer on the calling thread, or on its own thread given up at the diagram's deadline
   raster/          resvg and its fonts: an SVG ─▶ PNG, a line of text ─▶ Picture (a jumbo title); no other module sees resvg
   terminal/        detect, write (ANSI + OSC 8 + kitty graphics or Sixel) through sanitize, colour downgrade
     sixel.rs       PNG ─▶ at most 256 colours ─▶ Sixel bands; pure, no dependency beyond `png`
@@ -99,8 +103,10 @@ src/
 - `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells, or `document::MIN_WIDTH` when that is narrower.
   `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `SectionKind::Code`.
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
-  Each engine only sees a diagram within its count of `02-security.md` rule 4, and both share the diagram's 2 s deadline; over a count, the note names the limit (`mermaid: over 160 statements, too many to lay out`), past the deadline it says `too slow to lay out`.
-- `raster::line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) -> Result<Picture, RasterError>`: the text in bold `font-weight` on a transparent PNG `rows` cells tall and as many whole cells wide as it needs, shrunk to fit `max_cols`; `raster::Svg` parses and draws mermaid's SVG the same way.
+  Each engine only sees a diagram within its count of `02-security.md` rule 4; over a count, the note names the limit (`mermaid: over 100 statements, too many to lay out`).
+  Within a document `markdown` also applies the document's budget of rule 4 (`mermaid: over 400 statements across the document's diagrams, too many to lay out`).
+  With `settings.diagram_deadline` set (the binary sets 5 s), both engines share it, each on a thread of its own, and past it the note says `too slow to lay out`; without, the diagram lays out on the calling thread.
+- `raster::line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) -> Result<Picture, RasterError>`: the text in bold `font-weight` on a transparent PNG `rows` cells tall and as many whole cells wide as it needs, shrunk to fit `max_cols`; the crate's `raster::Svg` parses and draws mermaid's SVG the same way.
 - `settings.jumbo_title` (from `terminal::jumbo_title(&Capabilities)`, set only when `--jumbo-title` or `jumbo_title = true` asks): `Picture` turns each line of a top-level H1, wrapped at half the width, into a two-row `Block::Picture` with `concealed_text`, or the plain H1 when `cell` is `None` or a line fails to draw; `DoubleHeight` makes them one `Block::DoubleHeight`. Only a top-level H1 grows: inside a container (`context.nesting > 0`) it stays one row beside the bars.
 - `terminal::pager::run(session: &Session, render: impl Fn(u16) -> Rendered)`: `render` lays the source out for a window that many columns wide and returns the Document and its margin.
 - `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: writes a Document with its escape sequences; `margin` columns before every line and picture, from `terminal::margin`, then a picture's indent on each of its rows (centred on a wide terminal, `LEFT_MARGIN` otherwise).
@@ -124,7 +130,7 @@ src/
   What a label needs is read off the text between the SVG's tags, never the diagram source, so a comment in another script loads nothing more.
   Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.
   Renamed, it never shadows a system family the SVG lists.
-- A diagram's parsed SVG, or its timeout, is kept by source and palette (`mermaid/cache.rs`, the last 32): a pager resize renders the document again, and a diagram is only fitted and rasterised again, never parsed or laid out again (the showcase flowchart: 40 ms, then 12 ms); mermaid-text lays out for the width, so it runs again, unless it once ran out of time.
+- A diagram's parsed SVG, or its timeout, is kept by source and palette (`mermaid/cache.rs`, the last 400, as many as a document's budget lets through): a pager resize renders the document again, and a diagram is only fitted and rasterised again, never parsed or laid out again (the showcase flowchart: 40 ms, then 12 ms); mermaid-text lays out for the width, so it runs again when the width changes, its text for the last width kept, unless it once ran out of time.
 - Terminal queries (kitty graphics support, the cell size, background colour) share one round trip ended by a DA1 request, with a 100 ms timeout, and only run when stdout is a tty, mrk is the terminal's foreground job (a background job would be stopped by `SIGTTOU`) and the answer is not already known from the environment.
   The replies are read until the DA1 reply or the timeout, skipping keys typed meanwhile; raw mode ends with `TCSAFLUSH`, which discards the input still unread, so the shell or the pager never reads a reply that arrived during the round as keys.
   Known limit: a reply arriving after the timeout (a slow link such as SSH, or the terminal outside tmux) reaches the shell or the pager as input.

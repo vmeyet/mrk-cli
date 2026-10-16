@@ -39,7 +39,9 @@ fn candidates(xdg: Option<OsString>, home: Option<PathBuf>, platform: Option<Pat
 /// Where the config is looked for, in order: `$XDG_CONFIG_HOME` or `~/.config` first, where terminal tools keep
 /// theirs on macOS too, then the platform's own directory (`~/Library/Application Support` on macOS).
 pub fn paths() -> Vec<PathBuf> {
-    candidates(std::env::var_os("XDG_CONFIG_HOME"), dirs::home_dir(), dirs::config_dir())
+    let home = std::env::home_dir();
+    let platform = home.as_ref().filter(|_| cfg!(target_os = "macos")).map(|home| home.join("Library/Application Support"));
+    candidates(std::env::var_os("XDG_CONFIG_HOME"), home, platform)
 }
 
 /// The width when it lies within `MIN_WIDTH..=MAX_WIDTH`, else why not, for the flag, the environment and the config alike.

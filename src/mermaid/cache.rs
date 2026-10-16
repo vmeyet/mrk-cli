@@ -1,10 +1,12 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 
+use super::budget;
 use crate::theme::Palette;
 
-/// Enough for every diagram of a long document, small enough that a program rendering many never grows without end.
-const CAPACITY: usize = 32;
+/// Every diagram the budget lets into one document, since each costs at least one statement: a pager resize finds
+/// them all, and a program rendering many documents never grows without end.
+const CAPACITY: usize = budget::MAX_DOCUMENT_STATEMENTS;
 
 /// The last `CAPACITY` values worked out for a diagram source in a palette, oldest first: the pager renders the
 /// document again on every resize, and what does not depend on the width is worked out once.
@@ -26,16 +28,22 @@ impl<T: Clone> Recent<T> {
 
     pub fn find(&self, source: &str, palette: &Palette) -> Option<T> {
         let entries = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        entries.iter().find(|(known, known_palette, _)| known == source && known_palette == palette).map(|(_, _, value)| value.clone())
+        entries.iter().find(|entry| is_for(entry, source, palette)).map(|(_, _, value)| value.clone())
     }
 
+    /// Replaces the value kept for `source` in `palette`, if any.
     pub fn keep(&self, source: &str, palette: &Palette, value: T) {
         let mut entries = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        entries.retain(|entry| !is_for(entry, source, palette));
         if entries.len() == CAPACITY {
             entries.pop_front();
         }
         entries.push_back((source.to_owned(), *palette, value));
     }
+}
+
+fn is_for<T>((known, known_palette, _): &(String, Palette, T), source: &str, palette: &Palette) -> bool {
+    known == source && known_palette == palette
 }
 
 #[cfg(test)]
@@ -51,6 +59,31 @@ mod tests {
         let light = recent.get_or("graph TD", &MRK_LIGHT.palette, || 2);
 
         assert_eq!((first, again, light), (1, 1, 2));
+    }
+
+    #[test]
+    fn keeping_a_source_again_replaces_its_value() {
+        let recent = Recent::new();
+        recent.keep("graph TD", &MRK_DARK.palette, 1);
+        recent.keep("graph TD", &MRK_DARK.palette, 2);
+
+        assert_eq!(recent.find("graph TD", &MRK_DARK.palette), Some(2));
+        assert_eq!(recent.0.lock().unwrap_or_else(PoisonError::into_inner).len(), 1);
+    }
+
+    #[test]
+    fn every_diagram_of_a_document_at_its_budget_is_worked_out_once_across_renders() {
+        let recent = Recent::new();
+        let sources: Vec<String> = (0..budget::MAX_DOCUMENT_STATEMENTS).map(|index| format!("n{index}")).collect();
+        let worked_out = std::cell::Cell::new(0);
+
+        for _render in 0..3 {
+            for source in &sources {
+                recent.get_or(source, &MRK_DARK.palette, || worked_out.set(worked_out.get() + 1));
+            }
+        }
+
+        assert_eq!(worked_out.get(), sources.len());
     }
 
     #[test]

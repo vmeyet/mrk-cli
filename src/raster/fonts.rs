@@ -27,6 +27,9 @@ const FALLBACK_STEMS: [&str; 15] = [
     "thonburi",
     "notosansthai",
 ];
+/// Styles file names add after the family (`Arial Bold Italic.ttf`), longest first so `semibold` is not read as `bold`.
+const STYLE_SUFFIXES: [&str; 11] =
+    ["extrabold", "semibold", "bold", "italic", "oblique", "regular", "medium", "light", "thin", "black", "heavy"];
 const MAX_DIRECTORY_DEPTH: usize = 4;
 const FONT_EXTENSIONS: [&str; 4] = ["ttf", "otf", "ttc", "otc"];
 /// Above Latin Extended and IPA, labels need the scripts only the fallback or full system set covers.
@@ -36,10 +39,13 @@ const LAST_RESORT_FAMILY: &str = "mrk Sans";
 /// A Latin subset of DejaVu Sans (`assets/fonts/LICENSE-DejaVu`, rebuilt by `scripts/last-resort-font`), so labels render on a system without fonts.
 static LAST_RESORT_FONT: &[u8] = include_bytes!("../../assets/fonts/MrkSans.ttf");
 
-static LABEL_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(with_last_resort(label_fonts())));
+/// The font directories are walked once, whichever sets load from them.
+static FONT_FILES: LazyLock<Vec<PathBuf>> =
+    LazyLock::new(|| font_directories().iter().flat_map(|directory| font_files(directory)).collect());
+static LABEL_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(fonts_named(&FONT_FILES, &FAMILY_STEMS)));
 static FALLBACK_FONTS: LazyLock<Arc<Database>> =
-    LazyLock::new(|| Arc::new(with_last_resort(fonts_named(&[FAMILY_STEMS.as_slice(), &FALLBACK_STEMS].concat()))));
-static SYSTEM_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(with_last_resort(system_fonts())));
+    LazyLock::new(|| Arc::new(fonts_named(&FONT_FILES, &[FAMILY_STEMS.as_slice(), &FALLBACK_STEMS].concat())));
+static SYSTEM_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(fonts_from(FONT_FILES.iter())));
 
 #[derive(Debug, PartialEq, Eq)]
 enum FontSet {
@@ -48,7 +54,8 @@ enum FontSet {
     System,
 }
 
-/// The fonts a diagram needs: the label families alone, the listed fallbacks when they cover every glyph, or every font.
+/// The fonts a diagram needs: the label families for Latin, which the last resort covers when none is installed, the
+/// listed fallbacks when they cover every other glyph, or every font.
 pub fn for_text(text: &str) -> Arc<Database> {
     let fonts = match font_set(text, || &FALLBACK_FONTS) {
         FontSet::Label => &LABEL_FONTS,
@@ -92,36 +99,18 @@ fn glyphs_among(database: &Database, face: ID, characters: &BTreeSet<char>) -> V
         .unwrap_or_default()
 }
 
-/// Every font file in the font directories, read the same way as the named ones so mrk reads nothing else.
-fn system_fonts() -> Database {
-    fonts_where(|_| true)
-}
-
-fn label_fonts() -> Database {
-    let database = fonts_named(&FAMILY_STEMS);
-    if database.is_empty() { system_fonts() } else { database }
+fn fonts_named(files: &[PathBuf], stems: &[&str]) -> Database {
+    fonts_from(files.iter().filter(|path| stems.contains(&family_stem(path).as_str())))
 }
 
 /// usvg ends every font-family list on the generic `serif`, so pointing it at the embedded face makes that face the last match.
-fn with_last_resort(mut database: Database) -> Database {
+fn fonts_from<'a>(files: impl Iterator<Item = &'a PathBuf>) -> Database {
+    let mut database = Database::new();
+    files.for_each(|path| {
+        let _ = database.load_font_file(path);
+    });
     database.load_font_source(Source::Binary(Arc::new(LAST_RESORT_FONT)));
     database.set_serif_family(LAST_RESORT_FAMILY);
-    database
-}
-
-fn fonts_named(stems: &[&str]) -> Database {
-    fonts_where(|path| stems.contains(&family_stem(path).as_str()))
-}
-
-fn fonts_where(keep: impl Fn(&Path) -> bool) -> Database {
-    let mut database = Database::new();
-    font_directories()
-        .iter()
-        .flat_map(|directory| font_files(directory, MAX_DIRECTORY_DEPTH))
-        .filter(|path| is_font_file(path) && keep(path))
-        .for_each(|path| {
-            let _ = database.load_font_file(path);
-        });
     database
 }
 
@@ -132,14 +121,18 @@ fn font_directories() -> Vec<PathBuf> {
     system.into_iter().chain(user).collect()
 }
 
+fn font_files(directory: &Path) -> Vec<PathBuf> {
+    files_under(directory, MAX_DIRECTORY_DEPTH).into_iter().filter(|path| is_font_file(path)).collect()
+}
+
 /// Links are followed to files only (macOS ships `Arial Unicode.ttf` as one), never to directories, so a link loop
 /// cannot keep the walk going.
-fn font_files(directory: &Path, depth: usize) -> Vec<PathBuf> {
+fn files_under(directory: &Path, depth: usize) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else { return Vec::new() };
     entries
         .flatten()
         .flat_map(|entry| match entry.file_type() {
-            Ok(kind) if kind.is_dir() && depth > 0 => font_files(&entry.path(), depth - 1),
+            Ok(kind) if kind.is_dir() && depth > 0 => files_under(&entry.path(), depth - 1),
             Ok(kind) if kind.is_file() || (kind.is_symlink() && entry.path().is_file()) => vec![entry.path()],
             _ => Vec::new(),
         })
@@ -152,11 +145,16 @@ fn is_font_file(path: &Path) -> bool {
         .is_some_and(|extension| FONT_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
 }
 
-/// `NotoSansArabic[wdth,wght].ttf` and `InterVariable.ttf` name the same families as their static files.
+/// `NotoSansArabic[wdth,wght].ttf`, `InterVariable.ttf` and `Arial Bold Italic.ttf` name the same families as their
+/// regular files.
 fn family_stem(path: &Path) -> String {
     let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
     let family = stem.split(['-', '_', '[']).next().unwrap_or_default().to_ascii_lowercase().replace(' ', "");
-    family.strip_suffix("variable").map(str::to_owned).unwrap_or(family)
+    without_styles(family.strip_suffix("variable").unwrap_or(&family)).to_owned()
+}
+
+fn without_styles(family: &str) -> &str {
+    STYLE_SUFFIXES.iter().find_map(|style| family.strip_suffix(style).filter(|rest| !rest.is_empty())).map_or(family, without_styles)
 }
 
 #[cfg(test)]
@@ -179,8 +177,12 @@ mod tests {
         assert!(is_label_family("/System/Library/Fonts/HelveticaNeue.ttc"));
         assert!(is_label_family("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"));
         assert!(is_label_family("/Users/me/Library/Fonts/InterVariable.ttf"));
+        assert!(is_label_family("/System/Library/Fonts/Supplemental/Arial Bold.ttf"));
+        assert!(is_label_family("/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf"));
+        assert!(is_label_family("/Library/Fonts/Inter SemiBold.otf"));
         assert!(!is_label_family("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"));
         assert!(!is_label_family("/System/Library/Fonts/NotoSansArmenian.ttc"));
+        assert!(!is_label_family("/Library/Fonts/Bold.ttf"));
     }
 
     #[test]
@@ -206,7 +208,7 @@ mod tests {
 
     #[test]
     fn a_system_without_fonts_still_matches_the_label_families() {
-        let database = with_last_resort(Database::new());
+        let database = fonts_from(std::iter::empty());
         let families = [Family::Name("Inter"), Family::SansSerif, Family::Serif];
         let face = database.query(&Query { families: &families, ..Query::default() }).and_then(|id| database.face(id)).unwrap();
 
@@ -224,17 +226,41 @@ mod tests {
         };
 
         assert!(!has_label(Database::new()));
-        assert!(has_label(with_last_resort(Database::new())));
+        assert!(has_label(fonts_from(std::iter::empty())));
+    }
+
+    /// Font files in a folder of their own, each a copy of the embedded face.
+    fn font_folder(names: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
+        let folder = tempfile::tempdir().unwrap();
+        let files = names.iter().map(|name| folder.path().join(name)).collect::<Vec<_>>();
+        for path in &files {
+            std::fs::write(path, LAST_RESORT_FONT).unwrap();
+        }
+        (folder, files)
     }
 
     #[test]
-    fn label_fonts_find_a_face() {
-        assert!(!for_text("Start").is_empty());
+    fn the_label_fonts_load_the_named_families_and_the_last_resort_only() {
+        let (_folder, files) = font_folder(&["Arial Bold.ttf", "Courier.ttf", "Menlo.ttc"]);
+
+        assert_eq!(fonts_named(&files, &FAMILY_STEMS).len(), 2);
+        assert_eq!(fonts_named(&files, &["menlo"]).len(), 2);
+        assert_eq!(fonts_from(files.iter()).len(), 4);
+    }
+
+    #[test]
+    fn without_a_label_family_installed_only_the_last_resort_loads() {
+        let (_folder, files) = font_folder(&["Courier.ttf", "Menlo.ttc"]);
+
+        let database = fonts_named(&files, &FAMILY_STEMS);
+
+        assert_eq!(database.len(), 1);
+        assert!(covers(&database, "Start"));
     }
 
     #[test]
     fn only_text_beyond_latin_asks_for_the_fallbacks_and_their_misses_for_every_font() {
-        let fallback = with_last_resort(Database::new());
+        let fallback = fonts_from(std::iter::empty());
 
         assert_eq!(font_set("Café", || unreachable!("fallbacks loaded for Latin")), FontSet::Label);
         assert_eq!(font_set("Start → End", || &fallback), FontSet::Fallback);
@@ -250,8 +276,9 @@ mod tests {
         std::fs::write(root.path().join("Real.ttf"), b"").unwrap();
         std::os::unix::fs::symlink(root.path().join("Real.ttf"), fonts.join("Linked.ttf")).unwrap();
         std::os::unix::fs::symlink(&fonts, fonts.join("loop")).unwrap();
+        std::fs::write(fonts.join("fonts.dir"), b"").unwrap();
 
-        assert_eq!(font_files(&fonts, MAX_DIRECTORY_DEPTH), [fonts.join("Linked.ttf")]);
+        assert_eq!(font_files(&fonts), [fonts.join("Linked.ttf")]);
     }
 
     #[test]

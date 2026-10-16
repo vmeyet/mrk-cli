@@ -10,6 +10,7 @@ use cli::UsageError;
 const USAGE_EXIT: u8 = 2;
 
 fn main() -> ExitCode {
+    cli::panic::install_hook();
     match cli::run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
