@@ -26,7 +26,7 @@ fn note<'a>(definition: &'a AstNode<'a>, marker: &str, marker_width: usize, cont
     let lead = [Span::new(format!("{marker:<marker_width$}"), Style::fg(context.palette().accent))];
     match context.nested(marker_width) {
         Nested::Indented(inner) => layout::marked(super::children(definition, &inner, Spacing::Loose), &lead, marker_width),
-        Nested::Unindented(inner) => super::unindented(definition, &lead, &inner, Spacing::Loose),
+        Nested::Unindented(inner) => super::unindented(definition, &lead, &inner, Spacing::Loose, std::convert::identity),
         Nested::TooDeep => super::raw::flat(definition, context),
     }
 }

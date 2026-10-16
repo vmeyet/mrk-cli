@@ -17,7 +17,7 @@ use self::blocks::Section;
 pub use self::blocks::{BlockKind, SourceBlock};
 use self::context::Context;
 use self::layout::Spacing;
-use crate::document::{Block, Document, Settings, Span};
+use crate::document::{Block, Document, Settings, Span, Style};
 use crate::text;
 
 /// Renders GitHub-flavoured Markdown into a document at `settings.width`; images and links are never fetched.
@@ -59,15 +59,18 @@ fn children<'a>(node: &'a AstNode<'a>, context: &Context, spacing: Spacing) -> V
 
 /// A container's blocks at its own width, with no room left to indent them: `lead` (a list marker) opens its first
 /// paragraph, or stands on a line of its own above anything else.
-fn unindented<'a>(node: &'a AstNode<'a>, lead: &[Span], context: &Context, spacing: Spacing) -> Vec<Block> {
+/// `restyle` changes the blocks, never the lead.
+fn unindented<'a>(node: &'a AstNode<'a>, lead: &[Span], context: &Context, spacing: Spacing, restyle: fn(Style) -> Style) -> Vec<Block> {
     let opening = node.first_child().filter(|child| matches!(child.data().value, NodeValue::Paragraph));
     let rest = node.children().skip(usize::from(opening.is_some())).map(|child| block(child, context));
+    let rest = layout::restyle(layout::stack(rest, spacing), restyle);
     match opening {
         Some(paragraph) => {
-            let led: Vec<Span> = lead.iter().cloned().chain(inline::spans(paragraph, context.text, context)).collect();
-            layout::stack(std::iter::once(layout::lines(text::wrap(&led, context.width(), &[]))).chain(rest), spacing)
+            let text = inline::spans(paragraph, context.text, context).into_iter().map(|span| Span { style: restyle(span.style), ..span });
+            let led: Vec<Span> = lead.iter().cloned().chain(text).collect();
+            layout::stack([layout::lines(text::wrap(&led, context.width(), &[])), rest], spacing)
         }
-        None => layout::stack([layout::lines(text::wrap(lead, context.width(), &[])), layout::stack(rest, spacing)], Spacing::Tight),
+        None => layout::stack([layout::lines(text::wrap(lead, context.width(), &[])), rest], Spacing::Tight),
     }
 }
 

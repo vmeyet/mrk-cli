@@ -39,21 +39,20 @@ pub(super) fn items<'a>(node: &'a AstNode<'a>, list: &NodeList, context: &Contex
 fn marker<'a>(item: &'a AstNode<'a>, list: &NodeList, number: usize, number_width: usize, context: &Context) -> Marker {
     let palette = context.palette();
     let accent = Style::fg(palette.accent);
-    let done = match &item.data().value {
+    let task = match &item.data().value {
         NodeValue::TaskItem(task) => Some(task.symbol.is_some()),
         _ => None,
     };
-    let task = done.map(|done| if done { Span::new(DONE, Style::fg(palette.success)) } else { Span::new(OPEN, Style::fg(palette.muted)) });
-    let lead = match list.list_type {
-        ListType::Ordered => Some(Span::new(format!("{number:>number_width$}{}", delimiter(list.delimiter)), accent)),
-        ListType::Bullet if task.is_none() => Some(Span::new(BULLETS[context.list_depth % BULLETS.len()], accent)),
-        ListType::Bullet => None,
+    let numbered = || Span::new(format!("{number:>number_width$}{}", delimiter(list.delimiter)), accent);
+    let glyph =
+        |is_done: bool| if is_done { Span::new(DONE, Style::fg(palette.success)) } else { Span::new(OPEN, Style::fg(palette.muted)) };
+    let spans = match (list.list_type, task) {
+        (ListType::Ordered, Some(is_done)) => vec![numbered(), Span::plain(" "), glyph(is_done)],
+        (ListType::Ordered, None) => vec![numbered()],
+        (ListType::Bullet, Some(is_done)) => vec![glyph(is_done)],
+        (ListType::Bullet, None) => vec![Span::new(BULLETS[context.list_depth % BULLETS.len()], accent)],
     };
-    let spans = match (lead, task) {
-        (Some(lead), Some(task)) => vec![lead, Span::plain(" "), task],
-        (lead, task) => lead.into_iter().chain(task).collect(),
-    };
-    Marker { spans, is_done: done == Some(true) }
+    Marker { spans, is_done: task == Some(true) }
 }
 
 fn delimiter(delimiter: ListDelimType) -> char {
@@ -66,19 +65,20 @@ fn delimiter(delimiter: ListDelimType) -> char {
 fn render_item<'a>(item: &'a AstNode<'a>, marker: &Marker, marker_width: usize, spacing: Spacing, context: &Context) -> Vec<Block> {
     let padding = Span::plain(" ".repeat(marker_width - text::spans_width(&marker.spans)));
     let lead: Vec<Span> = marker.spans.iter().cloned().chain([padding]).collect();
-    let dimmed = |body: Vec<Block>| if marker.is_done { layout::restyle(body, Style::dim) } else { body };
+    let restyle: fn(Style) -> Style = if marker.is_done { Style::dim } else { std::convert::identity };
+    let dimmed = |body: Vec<Block>| if marker.is_done { layout::restyle(body, restyle) } else { body };
     match context.nested(marker_width) {
         Nested::Indented(inner) => layout::marked(dimmed(super::children(item, &inner.in_list(), spacing)), &lead, marker_width),
-        Nested::Unindented(inner) => dimmed(super::unindented(item, &lead, &inner.in_list(), spacing)),
+        Nested::Unindented(inner) => super::unindented(item, &lead, &inner.in_list(), spacing, restyle),
         Nested::TooDeep => super::raw::flat(item, context),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::document::{Span, Style};
-    use crate::markdown::{plain_at, plain_with_pictures, styled};
-    use crate::theme::MRK_DARK;
+    use crate::document::{Block, Line, Settings, Span, Style};
+    use crate::markdown::{plain_at, plain_with_pictures, render, styled};
+    use crate::theme::{MRK_DARK, test_settings};
 
     #[test]
     fn bullets_change_glyph_with_depth() {
@@ -115,6 +115,17 @@ mod tests {
         let source = "- a\n  - b\n    - c\n      - d\n        - e\n          - f\n            - g\n\n              ```\n              code\n              ```";
 
         insta::assert_snapshot!(plain_at(source, 20));
+    }
+
+    #[test]
+    fn a_done_task_with_no_room_to_indent_dims_its_text_but_not_its_check() {
+        let settings = Settings { width: 20, ..test_settings() };
+        let document = render("> > > > - [x] done", &settings);
+        let last = document.blocks.iter().flat_map(Block::lines).last().cloned().unwrap_or_default().spans;
+
+        assert_eq!(Line::new(last.clone()).plain(), "│ │ │ │ ✔ done");
+        assert_eq!(last.iter().find(|span| span.text == "✔").map(|span| span.style), Some(Style::fg(MRK_DARK.palette.success)));
+        assert!(last.iter().any(|span| span.text == "done" && span.style.dim));
     }
 
     #[test]

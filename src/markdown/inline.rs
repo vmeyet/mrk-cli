@@ -92,9 +92,10 @@ fn shown_target(spans: &[Span], url: &str, base: Style, context: &Context) -> Op
 }
 
 /// Whether `text` is `url`, or the address an autolink made it from: comrak adds `mailto:` to an email and `http://`
-/// to a `www.` address.
+/// to a bare `www.` address.
 fn reads_as(text: &str, url: &str) -> bool {
-    ["", "mailto:", "http://"].iter().any(|scheme| url.strip_prefix(scheme) == Some(text))
+    let is_www = text.starts_with("www.") && url.strip_prefix("http://") == Some(text);
+    text == url || url.strip_prefix("mailto:") == Some(text) || is_www
 }
 
 #[cfg(test)]
@@ -161,6 +162,12 @@ mod tests {
             without_hyperlinks("visit https://example.org, www.example.com or <me@example.org>", 80),
             "visit https://example.org, www.example.com or me@example.org\n"
         );
+    }
+
+    #[test]
+    fn without_hyperlinks_a_link_written_by_hand_shows_its_target_even_when_it_looks_like_its_text() {
+        assert_eq!(without_hyperlinks("[example.com](http://example.com)", 80), "example.com <http://example.com>\n");
+        assert_eq!(without_hyperlinks("[x](http://x)", 80), "x <http://x>\n");
     }
 
     #[test]
