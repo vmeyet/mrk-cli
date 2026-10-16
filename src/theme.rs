@@ -65,6 +65,7 @@ const CHARS_PER_EDIT: usize = 3;
 
 /// A theme name that is not built in, with the closest built-in name when one is near enough to be a typo.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct UnknownTheme {
     pub name: String,
     pub suggestion: Option<&'static str>,

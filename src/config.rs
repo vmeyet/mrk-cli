@@ -9,8 +9,8 @@ use serde::Deserialize;
 use crate::cli::UsageError;
 
 pub const MIN_WIDTH: usize = 20;
-/// Wider than any window (a 4K screen in a 6-pixel font is about 640 columns); a code line is padded to the width,
-/// so the bound also bounds the memory every line takes.
+/// Wider than any window (a 4K screen in a 6-pixel font is about 640 columns): it only rejects absurd widths, such as
+/// one whose padding would overflow.
 pub const MAX_WIDTH: usize = 1000;
 pub const DEFAULT_WIDTH: usize = 100;
 const FILE: &str = "mrk/config.toml";

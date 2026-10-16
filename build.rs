@@ -20,13 +20,11 @@ fn is_repository_root() -> bool {
     root.is_some() && root == package
 }
 
-/// The files that change when HEAD moves, so the embedded hash never goes stale: `packed-refs` holds the branch once
-/// git packs it.
+/// What changes when HEAD moves, so the embedded hash never goes stale. The whole `refs` folder is watched because a
+/// commit on a packed branch writes a loose ref file that did not exist before.
 fn head_files() -> Vec<String> {
-    let head = git(["rev-parse", "--git-path", "HEAD"]);
-    let packed = git(["rev-parse", "--git-path", "packed-refs"]);
-    let branch = git(["symbolic-ref", "--quiet", "HEAD"]).and_then(|r| git(["rev-parse", "--git-path", &r]));
-    [head, packed, branch].into_iter().flatten().filter(|p| Path::new(p).exists()).collect()
+    let paths = ["HEAD", "packed-refs", "refs"].map(|name| git(["rev-parse", "--git-path", name]));
+    paths.into_iter().flatten().filter(|path| Path::new(path).exists()).collect()
 }
 
 fn git<const N: usize>(args: [&str; N]) -> Option<String> {

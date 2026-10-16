@@ -97,19 +97,21 @@ pub fn decide(installed: Version, latest: Version, force: bool) -> Decision {
 }
 
 /// The trimmed stdout of a command that must succeed.
-fn stdout_of(command: &mut Command) -> Result<String> {
-    let program = command.get_program().to_string_lossy().into_owned();
-    let output = command.output().with_context(|| format!("running {program}"))?;
+fn stdout_of(mut command: Command) -> Result<String> {
+    let words: Vec<_> = std::iter::once(command.get_program()).chain(command.get_args()).map(|word| word.to_string_lossy()).collect();
+    let line = words.join(" ");
+    let output = command.output().with_context(|| format!("running {line}"))?;
     if !output.status.success() {
-        bail!("{program} failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+        bail!("{line}: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
 /// The newest release tagged in the repo.
 fn latest() -> Result<Release> {
-    let listing = stdout_of(Command::new("git").args(["ls-remote", "--tags", REPO]).env("GIT_TERMINAL_PROMPT", "0"))?;
-    newest_release(&listing).with_context(|| format!("{REPO} has no release tag"))
+    let mut git = Command::new("git");
+    git.args(["ls-remote", "--tags", REPO]).env("GIT_TERMINAL_PROMPT", "0");
+    newest_release(&stdout_of(git)?).with_context(|| format!("{REPO} has no release tag"))
 }
 
 /// Homebrew keeps every formula it installs under a `Cellar` folder.
@@ -121,37 +123,37 @@ fn installed_by_brew() -> bool {
     std::env::current_exe().and_then(std::fs::canonicalize).is_ok_and(|exe| is_brew_path(&exe))
 }
 
-/// `brew upgrade` does nothing for the version already installed, so a forced update reinstalls.
-fn brew_command(force: bool) -> &'static str {
-    if force { "reinstall" } else { "upgrade" }
-}
-
 /// Whether `brew list --versions` (`mrk 0.6.0 0.7.0_1`, `_1` being a formula revision) lists the release.
 fn brew_lists(listing: &str, release: Version) -> bool {
     let versions = listing.split_whitespace().skip(1).map(|installed| installed.split_once('_').map_or(installed, |(version, _)| version));
     versions.filter_map(Version::parse).any(|installed| installed == release)
 }
 
-/// The tap's formula follows a release by a few minutes, so brew can succeed and still install an older version.
+/// `brew upgrade` does nothing for the version already installed, so a forced update reinstalls. The tap's formula
+/// follows a release by a few minutes, so brew can succeed and still install an older version.
 fn install_with_brew(release: Version, force: bool) -> Result<()> {
-    let command = brew_command(force);
+    let command = if force { "reinstall" } else { "upgrade" };
     println!("→ brew {command} {FORMULA}…");
     let status = Command::new("brew").args([command, FORMULA]).status().with_context(|| format!("running brew {command}"))?;
     if !status.success() {
         bail!("brew {command} failed");
     }
-    let listing = stdout_of(Command::new("brew").args(["list", "--versions", FORMULA]))?;
+    let mut list = Command::new("brew");
+    list.args(["list", "--versions", FORMULA]);
+    let listing = stdout_of(list)?;
     if !brew_lists(&listing, release) {
         bail!("brew installed {listing}, not {}: the tap has not caught up yet, try again in a few minutes", release.tag());
     }
     Ok(())
 }
 
-/// Builds the release's commit in a temporary folder cargo removes once installed.
+/// Builds the release's commit in a temporary folder removed once done, whatever `CARGO_TARGET_DIR` says.
 fn install_with_cargo(release: &Release) -> Result<()> {
     println!("→ installing mrk {} ({}) from {REPO}…", release.version.tag(), version::short(&release.commit));
+    let build = tempfile::Builder::new().prefix("mrk-update-").tempdir().context("creating a build folder")?;
     let status = Command::new("cargo")
-        .args(["install", "--git", REPO, "--rev", &release.commit, "--force", "--locked"])
+        .args(["install", "--git", REPO, "--rev", &release.commit, "--force", "--locked", "--target-dir"])
+        .arg(build.path())
         .status()
         .context("running cargo install")?;
     if !status.success() {
@@ -203,12 +205,6 @@ mod tests {
     #[test]
     fn a_binary_installed_by_cargo_is_not_a_brew_install() {
         assert!(!is_brew_path(Path::new("/Users/me/.cargo/bin/mrk")));
-    }
-
-    #[test]
-    fn brew_reinstalls_when_forced_and_upgrades_otherwise() {
-        assert_eq!(brew_command(true), "reinstall");
-        assert_eq!(brew_command(false), "upgrade");
     }
 
     #[test]
