@@ -132,13 +132,15 @@ fn font_directories() -> Vec<PathBuf> {
     system.into_iter().chain(user).collect()
 }
 
+/// Links are followed to files only (macOS ships `Arial Unicode.ttf` as one), never to directories, so a link loop
+/// cannot keep the walk going.
 fn font_files(directory: &Path, depth: usize) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else { return Vec::new() };
     entries
         .flatten()
         .flat_map(|entry| match entry.file_type() {
             Ok(kind) if kind.is_dir() && depth > 0 => font_files(&entry.path(), depth - 1),
-            Ok(kind) if kind.is_file() => vec![entry.path()],
+            Ok(kind) if kind.is_file() || (kind.is_symlink() && entry.path().is_file()) => vec![entry.path()],
             _ => Vec::new(),
         })
         .collect()
@@ -237,6 +239,19 @@ mod tests {
         assert_eq!(font_set("Café", || unreachable!("fallbacks loaded for Latin")), FontSet::Label);
         assert_eq!(font_set("Start → End", || &fallback), FontSet::Fallback);
         assert_eq!(font_set("開始", || &fallback), FontSet::System);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_are_followed_to_files_but_not_to_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let fonts = root.path().join("fonts");
+        std::fs::create_dir(&fonts).unwrap();
+        std::fs::write(root.path().join("Real.ttf"), b"").unwrap();
+        std::os::unix::fs::symlink(root.path().join("Real.ttf"), fonts.join("Linked.ttf")).unwrap();
+        std::os::unix::fs::symlink(&fonts, fonts.join("loop")).unwrap();
+
+        assert_eq!(font_files(&fonts, MAX_DIRECTORY_DEPTH), [fonts.join("Linked.ttf")]);
     }
 
     #[test]

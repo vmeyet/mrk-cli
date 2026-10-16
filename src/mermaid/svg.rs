@@ -1,7 +1,5 @@
 use mermaid_rs_renderer::{Graph, LayoutConfig, Theme};
 
-use super::DiagramError;
-use super::catch::caught;
 use crate::document::Rgb;
 use crate::theme::Palette;
 
@@ -9,10 +7,10 @@ pub const FONT_SIZE_PX: f32 = 14.0;
 const TRANSPARENT: &str = "none";
 
 /// A parsed diagram laid out and drawn as an SVG in the palette's colours on a transparent background.
-pub fn render(graph: &Graph, palette: &Palette) -> Result<String, DiagramError> {
+pub fn render(graph: &Graph, palette: &Palette) -> String {
     let (theme, config) = (themed(palette), layout());
-    let svg = caught(|| mermaid_rs_renderer::render_svg(&mermaid_rs_renderer::compute_layout(graph, &theme, &config), &theme, &config))?;
-    Ok(with_accents(&svg, palette))
+    let svg = mermaid_rs_renderer::render_svg(&mermaid_rs_renderer::compute_layout(graph, &theme, &config), &theme, &config);
+    with_accents(&svg, palette)
 }
 
 // Decision shapes are the only polygons drawn straight on the canvas; arrowheads are polygons in a transformed group or marker paths.
@@ -131,7 +129,7 @@ mod tests {
     #[test]
     fn flowchart_uses_the_palette_on_a_transparent_background() {
         let graph = mermaid_rs_renderer::parse_mermaid("graph TD\n  A[Start] --> B{Ready?}").unwrap().graph;
-        let svg = render(&graph, &MRK_DARK.palette).unwrap();
+        let svg = render(&graph, &MRK_DARK.palette);
 
         assert!(svg.contains(&MRK_DARK.palette.text.hex()));
         assert!(svg.contains(&MRK_DARK.palette.muted.hex()));

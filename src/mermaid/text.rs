@@ -1,7 +1,6 @@
 use mermaid_text::RenderOptions;
 
 use super::DiagramError;
-use super::catch::caught;
 use crate::document::{Line, Rgb, Span, Style};
 use crate::text::{TAB, display_width};
 use crate::theme::Palette;
@@ -29,7 +28,7 @@ pub fn render(source: &str, width: usize, palette: &Palette) -> Result<Vec<Line>
 
 fn draw(source: &str, width: usize) -> Result<String, DiagramError> {
     let options = RenderOptions { max_width: Some(width), max_width_strict: true, ..RenderOptions::default() };
-    match caught(|| mermaid_text::render_with_options(source, &options))? {
+    match mermaid_text::render_with_options(source, &options) {
         Ok(drawing) => Ok(drawing.replace('\t', TAB)),
         Err(error) => Err(DiagramError::Invalid(error.to_string())),
     }

@@ -3,26 +3,33 @@ use std::collections::{HashMap, HashSet};
 use mermaid_rs_renderer::{DiagramKind, Edge, Graph};
 
 use super::DiagramError;
-use super::catch::caught;
 
 /// Mermaid blocks above this size are shown as source.
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
 /// mermaid-text recurses once per level, and deeper subgraphs never fit a terminal anyway.
 const MAX_SUBGRAPH_DEPTH: usize = 16;
 /// The limits below keep the slowest diagram measured within them under the times `specs/02-security.md` rule 4 gives.
-const MAX_LINKS: usize = 30;
-const MAX_MESSAGES: usize = 200;
-const MAX_ELEMENTS: usize = 300;
+const MAX_LINKS: usize = 300;
+const MAX_MESSAGES: usize = 400;
+const MAX_ELEMENTS: usize = 600;
+const MAX_STATEMENTS: usize = 160;
+/// mermaid-text lays class diagrams out far slower than any other kind: 40 relations took it 2.8 s.
+const MAX_CLASS_STATEMENTS: usize = 32;
 
-/// What a diagram's layout time grows with, counted before either engine lays it out.
+/// What a diagram's layout time grows with, counted before an engine lays it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Load {
-    /// Edges, edge labels, subgraphs, and every edge doubling another between the same two nodes, once per earlier one.
+    /// Nodes, edges, edge labels, subgraphs, and every edge doubling another between the same two nodes, once per
+    /// earlier one: what the layered layout routes around.
     Links,
-    /// Messages and notes of a sequence diagram.
+    /// Participants, messages and notes of a sequence diagram.
     Messages,
     /// Nodes, edges, subgraphs, commits and C4 shapes and relations, for the diagrams laid out in rows or rings.
     Elements,
+    /// Statements, one more per arrow chained after the first, as the text engine is given them.
+    Statements,
+    /// The same, for a class diagram.
+    ClassStatements,
 }
 
 impl Load {
@@ -31,6 +38,8 @@ impl Load {
             Self::Links => MAX_LINKS,
             Self::Messages => MAX_MESSAGES,
             Self::Elements => MAX_ELEMENTS,
+            Self::Statements => MAX_STATEMENTS,
+            Self::ClassStatements => MAX_CLASS_STATEMENTS,
         }
     }
 
@@ -39,56 +48,67 @@ impl Load {
             Self::Links => "links",
             Self::Messages => "messages",
             Self::Elements => "elements",
+            Self::Statements | Self::ClassStatements => "statements",
         }
     }
 
-    fn of(kind: DiagramKind) -> Self {
-        match kind {
-            DiagramKind::Flowchart
-            | DiagramKind::Class
-            | DiagramKind::State
-            | DiagramKind::Er
-            | DiagramKind::Requirement
-            | DiagramKind::Packet
-            | DiagramKind::Architecture => Self::Links,
-            DiagramKind::Sequence | DiagramKind::ZenUML => Self::Messages,
-            _ => Self::Elements,
-        }
-    }
-
-    fn count(self, graph: &Graph) -> usize {
-        match self {
-            Self::Links => graph.edges.len() + labels(&graph.edges) + graph.subgraphs.len() + doublings(&graph.edges),
-            Self::Messages => graph.edges.len() + graph.sequence_notes.len(),
-            Self::Elements => {
-                graph.nodes.len()
-                    + graph.edges.len()
-                    + graph.subgraphs.len()
-                    + graph.gitgraph.commits.len()
-                    + graph.c4.shapes.len()
-                    + graph.c4.rels.len()
-            }
-        }
+    fn within(self, count: usize) -> Result<(), DiagramError> {
+        if count > self.limit() { Err(DiagramError::OverBudget(self)) } else { Ok(()) }
     }
 }
 
-/// The diagram as mermaid-rs-renderer parses it, refused before any layout when either engine could take too long on
-/// it: layout time grows much faster than the source, which its 64 KiB cap alone does not bound.
-pub fn parse(source: &str) -> Result<Graph, DiagramError> {
+/// Refuses, for both engines, a block too large to read or whose subgraphs would overflow mermaid-text's stack.
+pub fn admit(source: &str) -> Result<(), DiagramError> {
     if source.len() > MAX_SOURCE_BYTES {
         return Err(DiagramError::Oversized);
     }
     if !has_safe_subgraphs(source) {
         return Err(DiagramError::UnsafeSubgraphs);
     }
-    let graph = caught(|| mermaid_rs_renderer::parse_mermaid_strict(source))?
-        .map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?
-        .graph;
-    let load = Load::of(graph.kind);
-    if load.count(&graph) > load.limit() {
-        return Err(DiagramError::OverBudget(load));
-    }
+    Ok(())
+}
+
+/// The diagram as mermaid-rs-renderer parses it, refused before any layout when it is over its load: layout time
+/// grows much faster than the source, which its 64 KiB cap alone does not bound.
+pub fn parse(source: &str) -> Result<Graph, DiagramError> {
+    let graph =
+        mermaid_rs_renderer::parse_mermaid_strict(source).map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?.graph;
+    let (load, count) = picture_load(&graph);
+    load.within(count)?;
     Ok(graph)
+}
+
+/// Refuses a diagram with more statements than mermaid-text lays out quickly, read off the source without parsing it:
+/// mermaid-text accepts syntax mermaid-rs-renderer's parser refuses.
+pub fn admit_text(source: &str) -> Result<(), DiagramError> {
+    let (load, count) = text_load(source);
+    load.within(count)
+}
+
+fn picture_load(graph: &Graph) -> (Load, usize) {
+    let shapes = graph.nodes.len() + graph.edges.len() + graph.subgraphs.len();
+    match graph.kind {
+        DiagramKind::Flowchart
+        | DiagramKind::Class
+        | DiagramKind::State
+        | DiagramKind::Er
+        | DiagramKind::Requirement
+        | DiagramKind::Architecture => (Load::Links, shapes + labels(&graph.edges) + doublings(&graph.edges)),
+        DiagramKind::Sequence | DiagramKind::ZenUML => (Load::Messages, graph.nodes.len() + graph.edges.len() + graph.sequence_notes.len()),
+        _ => (Load::Elements, shapes + graph.gitgraph.commits.len() + graph.c4.shapes.len() + graph.c4.rels.len()),
+    }
+}
+
+fn text_load(source: &str) -> (Load, usize) {
+    let count = statements(source).map(|statement| ARROWS.iter().map(|arrow| statement.matches(arrow).count()).sum::<usize>().max(1)).sum();
+    let is_class = statements(source).next().is_some_and(|header| header.starts_with("classDiagram"));
+    (if is_class { Load::ClassStatements } else { Load::Statements }, count)
+}
+
+const ARROWS: [&str; 3] = ["--", "==", "-."];
+
+fn statements(source: &str) -> impl Iterator<Item = &str> {
+    source.split(['\n', ';']).map(str::trim).filter(|statement| !statement.is_empty() && !statement.starts_with("%%"))
 }
 
 fn first_line(message: &str) -> String {
@@ -118,7 +138,7 @@ fn doublings(edges: &[Edge]) -> usize {
 fn has_safe_subgraphs(source: &str) -> bool {
     let mut ids = HashSet::new();
     let mut depth = 0_usize;
-    for statement in source.split(['\n', ';']) {
+    for statement in statements(source) {
         match statement.split_whitespace().next() {
             Some("subgraph") => {
                 depth += 1;
@@ -153,9 +173,8 @@ mod tests {
         format!("graph TD\n{}", (0..count).map(|index| format!("  {}\n", edge(index))).collect::<String>())
     }
 
-    fn load_of(source: &str) -> usize {
-        let graph = mermaid_rs_renderer::parse_mermaid(source).unwrap().graph;
-        Load::of(graph.kind).count(&graph)
+    fn load_of(source: &str) -> (Load, usize) {
+        picture_load(&mermaid_rs_renderer::parse_mermaid(source).unwrap().graph)
     }
 
     #[test]
@@ -165,40 +184,54 @@ mod tests {
 
     #[test]
     fn oversized_source_is_refused_before_parsing() {
-        assert_eq!(parse(&"%%\n".repeat(MAX_SOURCE_BYTES)).unwrap_err(), DiagramError::Oversized);
+        assert_eq!(admit(&"%%\n".repeat(MAX_SOURCE_BYTES)), Err(DiagramError::Oversized));
     }
 
     #[test]
-    fn edges_labels_subgraphs_and_doubled_edges_are_links() {
-        assert_eq!(load_of("graph TD\n  a --> b\n  b --> c"), 2);
-        assert_eq!(load_of("graph TD\n  a -->|yes| b"), 2);
-        assert_eq!(load_of("graph TD\n  subgraph s\n  a --> b\n  end"), 2);
-        assert_eq!(load_of("graph TD\n  a --> b\n  b --> a\n  a --> b"), 3 + 1 + 2);
+    fn nodes_edges_labels_subgraphs_and_doubled_edges_are_links() {
+        assert_eq!(load_of("graph TD\n  a --> b\n  b --> c"), (Load::Links, 3 + 2));
+        assert_eq!(load_of("graph TD\n  a -->|yes| b"), (Load::Links, 2 + 1 + 1));
+        assert_eq!(load_of("graph TD\n  subgraph s\n  a --> b\n  end"), (Load::Links, 2 + 1 + 1));
+        assert_eq!(load_of("graph TD\n  a --> b\n  b --> a\n  a --> b"), (Load::Links, 2 + 3 + (1 + 2)));
+        assert_eq!(load_of("classDiagram\n  A --> B").0, Load::Links);
     }
 
     #[test]
     fn each_kind_counts_what_its_layout_grows_with() {
-        assert_eq!(Load::of(parse("sequenceDiagram\n  a ->> b: hi\n  note over a: x").unwrap().kind), Load::Messages);
-        assert_eq!(load_of("sequenceDiagram\n  a ->> b: hi\n  b ->> a: ho\n  note over a: x"), 3);
-        assert_eq!(Load::of(parse("classDiagram\n  A --> B").unwrap().kind), Load::Links);
-        assert_eq!(Load::of(parse("pie\n  \"a\" : 1").unwrap().kind), Load::Elements);
-        assert_eq!(load_of("gitGraph\n  commit\n  commit"), 2);
+        assert_eq!(load_of("sequenceDiagram\n  a ->> b: hi\n  b ->> a: ho\n  note over a: x"), (Load::Messages, 2 + 2 + 1));
+        assert_eq!(load_of("pie\n  \"a\" : 1").0, Load::Elements);
+        assert_eq!(load_of("packet-beta\n  0-15: \"Source\"").0, Load::Elements);
+        assert_eq!(load_of("gitGraph\n  commit\n  commit"), (Load::Elements, 2));
     }
 
     #[test]
     fn a_diagram_at_its_limit_passes_and_one_more_is_refused() {
-        let chain = |count| edges(count, |index| format!("n{index} --> n{}", index + 1));
+        let chain = |links: usize| edges(links / 2, |index| format!("n{index} --> n{}", index + 1));
 
-        assert!(parse(&chain(MAX_LINKS)).is_ok());
-        assert_eq!(parse(&chain(MAX_LINKS + 1)).unwrap_err(), DiagramError::OverBudget(Load::Links));
+        assert!(parse(&chain(MAX_LINKS - 1)).is_ok());
+        assert_eq!(parse(&chain(MAX_LINKS + 2)).unwrap_err(), DiagramError::OverBudget(Load::Links));
     }
 
     #[test]
     fn parallel_labelled_edges_exhaust_the_budget_quickly() {
-        let parallel = edges(8, |_| "a -->|again| b".to_owned());
+        let parallel = edges(30, |_| "a -->|again| b".to_owned());
 
-        assert_eq!(load_of(&parallel), 8 + 8 + (0..8).sum::<usize>());
+        assert_eq!(load_of(&parallel), (Load::Links, 2 + 30 + 30 + (0..30).sum::<usize>()));
         assert_eq!(parse(&parallel).unwrap_err(), DiagramError::OverBudget(Load::Links));
+    }
+
+    #[test]
+    fn the_text_engine_counts_statements_and_chained_arrows() {
+        assert_eq!(text_load("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), (Load::Statements, 1 + 2 + 1 + 1));
+        assert_eq!(text_load("sequenceDiagram\n  a ->> b: hi"), (Load::Statements, 2));
+        assert_eq!(text_load("%% why\nclassDiagram\n  A --> B"), (Load::ClassStatements, 2));
+        assert_eq!(admit_text(&edges(MAX_STATEMENTS - 1, |index| format!("n{index} --> n{}", index + 1))), Ok(()));
+        assert_eq!(admit_text(&edges(MAX_STATEMENTS, |index| format!("n{index}"))), Err(DiagramError::OverBudget(Load::Statements)));
+    }
+
+    #[test]
+    fn syntax_only_mermaid_text_reads_passes_the_text_gate() {
+        assert_eq!(admit_text("classDiagram\n  class Shape {\n    <<interface>>\n    +area() double\n  }"), Ok(()));
     }
 
     #[test]
@@ -212,7 +245,7 @@ mod tests {
         ];
 
         for source in sources {
-            assert_eq!(parse(source).unwrap_err(), DiagramError::UnsafeSubgraphs, "{source:?}");
+            assert_eq!(admit(source), Err(DiagramError::UnsafeSubgraphs), "{source:?}");
         }
     }
 
@@ -223,8 +256,8 @@ mod tests {
             format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(depth))
         };
 
-        assert!(has_safe_subgraphs(&nested(MAX_SUBGRAPH_DEPTH)));
-        assert_eq!(parse(&nested(MAX_SUBGRAPH_DEPTH + 1)).unwrap_err(), DiagramError::UnsafeSubgraphs);
+        assert_eq!(admit(&nested(MAX_SUBGRAPH_DEPTH)), Ok(()));
+        assert_eq!(admit(&nested(MAX_SUBGRAPH_DEPTH + 1)), Err(DiagramError::UnsafeSubgraphs));
     }
 
     #[test]

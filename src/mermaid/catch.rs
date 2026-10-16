@@ -14,17 +14,22 @@ static QUIET_HOOK: Once = Once::new();
 /// print unsanitized (`specs/02-security.md` rule 1).
 pub fn caught<T>(render: impl FnOnce() -> T) -> Result<T, DiagramError> {
     QUIET_HOOK.call_once(quiet_hook);
-    CATCHING.set(true);
+    let outer = CATCHING.replace(true);
     let rendered = panic::catch_unwind(AssertUnwindSafe(render));
-    CATCHING.set(false);
+    CATCHING.set(outer);
     rendered.map_err(|_| DiagramError::Crashed)
+}
+
+/// Whether a panic on this thread now would be caught by `caught`, so a hook can leave its report out.
+pub fn is_catching() -> bool {
+    CATCHING.get()
 }
 
 /// Wraps the hook in place, so every panic `caught` does not catch still reaches it.
 fn quiet_hook() {
     let previous = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        if !CATCHING.get() {
+        if !is_catching() {
             previous(info);
         }
     }));
@@ -62,5 +67,16 @@ mod tests {
     #[test]
     fn a_renderer_that_returns_is_passed_through() {
         assert_eq!(caught(|| 42), Ok(42));
+    }
+
+    #[test]
+    fn a_nested_catch_leaves_the_outer_one_catching() {
+        let inner = caught(|| {
+            assert_eq!(caught(|| panic!("inner")), Err::<(), _>(DiagramError::Crashed));
+            is_catching()
+        });
+
+        assert_eq!(inner, Ok(true));
+        assert!(!is_catching());
     }
 }
