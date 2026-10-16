@@ -1,6 +1,6 @@
 use comrak::nodes::AstNode;
 
-use super::context::Context;
+use super::context::{Context, Nested};
 use super::layout::{self, Spacing};
 use super::rule;
 use crate::document::{Block, Line, Span, Style};
@@ -15,9 +15,6 @@ pub(super) fn marker(number: u32) -> String {
 
 /// The notes listed at the end under a short rule, numbered in the order comrak sorted them (first reference first).
 pub(super) fn section<'a>(definitions: &[&'a AstNode<'a>], context: &Context) -> Vec<Block> {
-    if definitions.is_empty() {
-        return Vec::new();
-    }
     let short_rule = layout::lines(vec![rule::short(RULE_WIDTH, context)]);
     let markers: Vec<String> = (1..).take(definitions.len()).map(marker).collect();
     let marker_width = markers.iter().map(|marker| crate::text::display_width(marker)).max().unwrap_or(0) + 1;
@@ -26,12 +23,16 @@ pub(super) fn section<'a>(definitions: &[&'a AstNode<'a>], context: &Context) ->
 }
 
 fn note<'a>(definition: &'a AstNode<'a>, marker: &str, marker_width: usize, context: &Context) -> Vec<Block> {
-    let Some(inner) = context.nested(marker_width) else { return super::raw::flat(definition, context) };
-    let body = super::children(definition, &inner, Spacing::Loose);
-    let padded = format!("{marker:<marker_width$}");
-    let first = vec![Span::new(padded, Style::fg(context.palette().accent))];
-    let body = if body.is_empty() { layout::lines(vec![Line::blank()]) } else { body };
-    layout::prefix(body, &first, &layout::blank(marker_width))
+    let lead = [Span::new(format!("{marker:<marker_width$}"), Style::fg(context.palette().accent))];
+    match context.nested(marker_width) {
+        Nested::Indented(inner) => {
+            let body = super::children(definition, &inner, Spacing::Loose);
+            let body = if body.is_empty() { layout::lines(vec![Line::blank()]) } else { body };
+            layout::prefix(body, &lead, &layout::blank(marker_width))
+        }
+        Nested::Unindented(inner) => super::unindented(definition, &lead, &inner, Spacing::Loose),
+        Nested::TooDeep => super::raw::flat(definition, context),
+    }
 }
 
 #[cfg(test)]
@@ -42,6 +43,13 @@ mod tests {
     fn marker_is_superscript_digits() {
         assert_eq!(marker(1), "¹");
         assert_eq!(marker(42), "⁴²");
+    }
+
+    #[test]
+    fn a_note_with_no_room_to_indent_keeps_its_marker() {
+        let source = "a[^a]\n\n> > > > > [^a]: Deep note.";
+
+        assert!(crate::markdown::plain_at(source, 12).ends_with("¹ Deep note.\n"));
     }
 
     #[test]

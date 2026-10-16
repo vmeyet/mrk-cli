@@ -1,6 +1,6 @@
 use comrak::nodes::{AstNode, ListDelimType, ListType, NodeList, NodeValue};
 
-use super::context::Context;
+use super::context::{Context, Nested};
 use super::layout::{self, Spacing};
 use crate::document::{Block, Line, Span, Style};
 use crate::text;
@@ -9,10 +9,10 @@ const BULLETS: [&str; 3] = ["•", "◦", "▪"];
 const DONE: &str = "✔";
 const OPEN: &str = "○";
 
-/// What stands before an item: its glyph or number, and whether the item is a finished task.
+/// What stands before an item: its glyph, its number, or its number then its task glyph, and whether the item is a
+/// finished task.
 struct Marker {
-    text: String,
-    style: Style,
+    spans: Vec<Span>,
     is_done: bool,
 }
 
@@ -28,26 +28,32 @@ pub(super) fn spacing(list: &NodeList) -> Spacing {
 /// Each item rendered on its own, marker included, in the order of the list.
 pub(super) fn items<'a>(node: &'a AstNode<'a>, list: &NodeList, context: &Context) -> Vec<Vec<Block>> {
     let items: Vec<&AstNode> = node.children().collect();
-    let numbers = (list.start..).take(items.len());
-    let number_width = numbers.clone().last().map_or(1, |last| last.to_string().len());
-    let markers: Vec<Marker> = items.iter().zip(numbers).map(|(item, number)| marker(item, list, number, number_width, context)).collect();
-    let marker_width = markers.iter().map(|marker| text::display_width(&marker.text)).max().unwrap_or(0) + 1;
+    let last_number = list.start + items.len().saturating_sub(1);
+    let number_width = last_number.to_string().len();
+    let markers: Vec<Marker> =
+        items.iter().zip(list.start..).map(|(item, number)| marker(item, list, number, number_width, context)).collect();
+    let marker_width = markers.iter().map(|marker| width(&marker.spans)).max().unwrap_or(0) + 1;
     items.iter().zip(&markers).map(|(item, marker)| render_item(item, marker, marker_width, spacing(list), context)).collect()
 }
 
 fn marker<'a>(item: &'a AstNode<'a>, list: &NodeList, number: usize, number_width: usize, context: &Context) -> Marker {
     let palette = context.palette();
     let accent = Style::fg(palette.accent);
-    match (&item.data().value, list.list_type) {
-        (NodeValue::TaskItem(task), _) if task.symbol.is_some() => {
-            Marker { text: DONE.to_owned(), style: Style::fg(palette.success), is_done: true }
-        }
-        (NodeValue::TaskItem(_), _) => Marker { text: OPEN.to_owned(), style: Style::fg(palette.muted), is_done: false },
-        (_, ListType::Ordered) => {
-            Marker { text: format!("{number:>number_width$}{}", delimiter(list.delimiter)), style: accent, is_done: false }
-        }
-        (_, ListType::Bullet) => Marker { text: BULLETS[context.list_depth % BULLETS.len()].to_owned(), style: accent, is_done: false },
-    }
+    let done = match &item.data().value {
+        NodeValue::TaskItem(task) => Some(task.symbol.is_some()),
+        _ => None,
+    };
+    let task = done.map(|done| if done { Span::new(DONE, Style::fg(palette.success)) } else { Span::new(OPEN, Style::fg(palette.muted)) });
+    let lead = match list.list_type {
+        ListType::Ordered => Some(Span::new(format!("{number:>number_width$}{}", delimiter(list.delimiter)), accent)),
+        ListType::Bullet if task.is_none() => Some(Span::new(BULLETS[context.list_depth % BULLETS.len()], accent)),
+        ListType::Bullet => None,
+    };
+    let spans = match (lead, task) {
+        (Some(lead), Some(task)) => vec![lead, Span::plain(" "), task],
+        (lead, task) => lead.into_iter().chain(task).collect(),
+    };
+    Marker { spans, is_done: done == Some(true) }
 }
 
 fn delimiter(delimiter: ListDelimType) -> char {
@@ -57,13 +63,23 @@ fn delimiter(delimiter: ListDelimType) -> char {
     }
 }
 
+fn width(spans: &[Span]) -> usize {
+    spans.iter().map(|span| text::display_width(&span.text)).sum()
+}
+
 fn render_item<'a>(item: &'a AstNode<'a>, marker: &Marker, marker_width: usize, spacing: Spacing, context: &Context) -> Vec<Block> {
-    let Some(inner) = context.nested(marker_width) else { return super::raw::flat(item, context) };
-    let body = super::children(item, &inner.in_list(), spacing);
-    let body = if marker.is_done { layout::restyle(body, Style::dim) } else { body };
-    let body = if body.is_empty() { layout::lines(vec![Line::blank()]) } else { body };
-    let first = vec![Span::new(format!("{:<marker_width$}", marker.text), marker.style)];
-    layout::prefix(body, &first, &layout::blank(marker_width))
+    let padding = Span::plain(" ".repeat(marker_width - width(&marker.spans)));
+    let lead: Vec<Span> = marker.spans.iter().cloned().chain([padding]).collect();
+    let dimmed = |body: Vec<Block>| if marker.is_done { layout::restyle(body, Style::dim) } else { body };
+    match context.nested(marker_width) {
+        Nested::Indented(inner) => {
+            let body = dimmed(super::children(item, &inner.in_list(), spacing));
+            let body = if body.is_empty() { layout::lines(vec![Line::blank()]) } else { body };
+            layout::prefix(body, &lead, &layout::blank(marker_width))
+        }
+        Nested::Unindented(inner) => dimmed(super::unindented(item, &lead, &inner.in_list(), spacing)),
+        Nested::TooDeep => super::raw::flat(item, context),
+    }
 }
 
 #[cfg(test)]
@@ -94,6 +110,18 @@ mod tests {
     #[test]
     fn tasks_show_their_state() {
         insta::assert_snapshot!(plain_at("- [x] done\n- [ ] open\n- plain", 40));
+    }
+
+    #[test]
+    fn an_ordered_task_shows_its_number_then_its_state() {
+        assert_eq!(plain_at("1. [x] one\n2. [ ] two\n3. three", 40), "1. ✔ one\n2. ○ two\n3.   three\n");
+    }
+
+    #[test]
+    fn items_with_no_room_to_indent_keep_their_markers_at_the_last_indent() {
+        let source = "- a\n  - b\n    - c\n      - d\n        - e\n          - f\n            - g\n\n              ```\n              code\n              ```";
+
+        insta::assert_snapshot!(plain_at(source, 20));
     }
 
     #[test]

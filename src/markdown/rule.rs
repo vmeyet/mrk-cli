@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn thematic_break_spans_the_width_around_a_diamond() {
-        assert_eq!(plain_at("---", 11), "──── ◆ ────\n");
+        assert_eq!(plain_at("---", 13), "───── ◆ ─────\n");
         assert_eq!(plain_at("***", 12), "──── ◆ ─────\n");
     }
 

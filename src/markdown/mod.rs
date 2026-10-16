@@ -17,7 +17,8 @@ use self::blocks::Section;
 pub use self::blocks::{BlockKind, SourceBlock};
 use self::context::Context;
 use self::layout::Spacing;
-use crate::document::{Block, Document, Settings};
+use crate::document::{Block, Document, Settings, Span};
+use crate::text;
 
 const FRONT_MATTER_DELIMITER: &str = "---";
 
@@ -58,9 +59,23 @@ fn children<'a>(node: &'a AstNode<'a>, context: &Context, spacing: Spacing) -> V
     layout::stack(node.children().map(|child| block(child, context)), spacing)
 }
 
+/// A container's blocks at its own width, with no room left to indent them: `lead` (a list marker) opens its first
+/// paragraph, or stands on a line of its own above anything else.
+fn unindented<'a>(node: &'a AstNode<'a>, lead: &[Span], context: &Context, spacing: Spacing) -> Vec<Block> {
+    let opening = node.first_child().filter(|child| matches!(child.data().value, NodeValue::Paragraph));
+    let rest = node.children().skip(usize::from(opening.is_some())).map(|child| block(child, context));
+    match opening {
+        Some(paragraph) => {
+            let led = [lead, &inline::spans(paragraph, context.text, context)].concat();
+            layout::stack(std::iter::once(layout::lines(text::wrap(&led, context.width(), &[]))).chain(rest), spacing)
+        }
+        None => layout::stack([layout::lines(text::wrap(lead, context.width(), &[])), layout::stack(rest, spacing)], Spacing::Tight),
+    }
+}
+
 fn block<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     match &node.data().value {
-        NodeValue::Paragraph => layout::lines(crate::text::wrap(&inline::spans(node, context.text, context), context.width(), &[])),
+        NodeValue::Paragraph => layout::lines(text::wrap(&inline::spans(node, context.text, context), context.width(), &[])),
         NodeValue::Heading(heading) => heading::render(node, heading.level, context),
         NodeValue::List(list) => list::render(node, list, context),
         NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => quote::render(node, context),
@@ -100,7 +115,7 @@ fn span_with(source: &str, needle: &str) -> crate::document::Span {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::Line;
+    use crate::document::{Line, MIN_BLOCK_WIDTH};
     use crate::theme::MRK_DARK;
 
     /// The showcase without its fenced blocks, which belong to `code` and `mermaid`.
@@ -135,7 +150,7 @@ mod tests {
 
     #[test]
     fn no_line_exceeds_the_width() {
-        for width in [20, 40, 80] {
+        for width in [MIN_BLOCK_WIDTH, 20, 40, 80] {
             for source in [EVERYTHING.to_owned(), showcase_without_fences()] {
                 let too_wide: Vec<String> = lines(&source, width).iter().filter(|line| line.width() > width).map(Line::plain).collect();
 
@@ -152,6 +167,11 @@ mod tests {
         assert!(!is_blank(&lines[0]));
         assert!(!is_blank(&lines[lines.len() - 1]));
         assert!(lines.windows(2).all(|pair| !(is_blank(&pair[0]) && is_blank(&pair[1]))));
+    }
+
+    #[test]
+    fn a_width_under_the_minimum_lays_out_at_the_minimum() {
+        assert_eq!(plain_at(EVERYTHING, 3), plain_at(EVERYTHING, MIN_BLOCK_WIDTH));
     }
 
     #[test]

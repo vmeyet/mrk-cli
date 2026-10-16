@@ -1,0 +1,14 @@
+---
+source: src/markdown/list.rs
+expression: "plain_at(source, 20)"
+---
+• a
+  ◦ b
+    ▪ c
+      • d
+        ◦ e
+        ▪ f
+        • g
+
+
+          code

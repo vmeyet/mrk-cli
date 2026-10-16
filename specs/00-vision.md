@@ -56,7 +56,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Link | underlined `link`, OSC 8 hyperlink; autolinks likewise. Without hyperlinks (piped, no colour, dumb terminal) the text is followed by ` <url>` in `muted`, except when the text already is the URL |
 | Image | `▣ alt text` in `muted`, hyperlinked to the source (` <source>` after it without hyperlinks); never fetched |
 | Bullets | `•` `◦` `▪` by depth, in `accent`; numbers right-aligned in `accent` |
-| Task | `✔` in `success` / `○` in `muted`; done items dimmed |
+| Task | `✔` in `success` / `○` in `muted`, after the number in an ordered list; done items dimmed |
 | Blockquote | `│ ` bar in `subtle`, text italic `muted` |
 | Alert (`> [!NOTE]`) | bar and title (`● Note`, `◆ Tip`, `▲ Warning`, …) in the alert colour, body in `text` |
 | Code block | panel on `surface` spanning the content width, one column of padding, language label right-aligned in `muted` on the first row, syntax colours from the theme |

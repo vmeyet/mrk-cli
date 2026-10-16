@@ -14,7 +14,7 @@ pub(super) fn html(literal: &str, context: &Context) -> Vec<Line> {
     literal.trim_end_matches('\n').lines().flat_map(|line| text::wrap(&[Span::new(line, muted)], context.width(), &[])).collect()
 }
 
-/// A container too deep or too narrow to nest: its bare text, wrapped at the current width.
+/// A container nested too deep: its bare text, wrapped at the current width.
 pub(super) fn flat<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     layout::lines(text::wrap(&[Span::new(inline::text(node), context.text)], context.width(), &[]))
 }

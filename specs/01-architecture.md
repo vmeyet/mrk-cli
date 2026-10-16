@@ -97,6 +97,8 @@ src/
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
 - A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` and `text::hard_wrap` help.
   `document::MIN_BLOCK_WIDTH` (12) is the narrowest a block lays out: a narrower width renders at 12, so every line has room for any grapheme beside its indent.
+  A list item, quote or footnote whose indent would leave less stops indenting: its blocks keep the container's width, a marker opening the first paragraph (or on a line of its own), a quote or alert without its bar.
+  Past 32 nested containers, a container renders as its bare text: bounded recursion on hostile input.
 - Every width is `text::display_width`: counted per grapheme (at most two cells), a tab as four, the characters `sanitize` removes as none.
   `text::expand_tabs` is the one tab rule: `wrap` and `hard_wrap` write a tab as four spaces, so no line they build holds one.
   Every cut to a width goes through `text::cut`, which never splits a grapheme.
