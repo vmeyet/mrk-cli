@@ -1,5 +1,6 @@
 mod ansi;
 mod color;
+mod crop;
 mod detect;
 mod environment;
 mod kitty;
@@ -16,7 +17,7 @@ use serde::Deserialize;
 pub use detect::{Preferences, detect};
 
 use self::ansi::Half;
-use self::kitty::Crop;
+use self::crop::Crop;
 use self::sixel::Image;
 use crate::document::{Block, CellSize, Document, JumboTitle, Picture};
 use crate::sanitize;
@@ -329,14 +330,15 @@ mod tests {
     const SIXEL: Option<Graphics> = Some(Graphics { protocol: Protocol::Sixel, cell: CELL });
 
     #[test]
-    fn a_tall_sixel_picture_sends_each_run_of_pixel_rows() {
-        let png = sixel::test_png(1, 24, &[[255, 0, 0, 255]; 24]);
-        let picture = Picture { png, cols: 1, rows: 4, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
+    fn a_tall_sixel_picture_sends_each_run_on_to_a_whole_band_so_no_rows_go_missing() {
+        let png = sixel::test_png(1, 100, &[[255, 0, 0, 255]; 100]);
+        let picture = Picture { png, cols: 1, rows: 5, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
         let short_screen = Capabilities { rows: 3, ..capabilities(ColorDepth::None, SIXEL) };
 
         let drawn = ansi(&Document { blocks: vec![Block::Picture(picture)] }, &short_screen, 0);
+        let heights: Vec<&str> = drawn.split("\"1;1;1;").skip(1).filter_map(|rest| rest.split('#').next()).collect();
 
-        assert_eq!(drawn.matches("\x1b7\x1bP0;1;0q\"1;1;1;12#").count(), 2, "{drawn:?}");
+        assert_eq!(heights, ["42", "42", "18"], "{drawn:?}");
     }
 
     #[test]

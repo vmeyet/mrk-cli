@@ -68,9 +68,13 @@ impl Image {
 }
 
 /// Draws the pixel `rows` of the image, all of them when `None`, with Sixel from the cursor, then puts the cursor back
-/// where it was: where it ends up after an image differs between terminals.
+/// where it was: where it ends up after an image differs between terminals. Rows that stop inside the image run on to a
+/// whole band, the next part of the image, which the part drawn after them covers again, so cutting a picture in parts
+/// leaves no gap between them.
 pub fn draw(image: &Image, rows: Option<Range<u32>>) -> String {
-    format!("\x1b7{}\x1b8", image.encode(rows.unwrap_or(0..image.height)))
+    let rows = rows.unwrap_or(0..image.height);
+    let whole_bands = rows.start..rows.start + (rows.end - rows.start).next_multiple_of(BAND_PX);
+    format!("\x1b7{}\x1b8", image.encode(whole_bands))
 }
 
 fn decode(png: &[u8]) -> Option<(u32, u32, Vec<u8>)> {

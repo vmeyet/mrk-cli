@@ -5,7 +5,7 @@ use std::thread;
 
 use super::frame::Pictures;
 use super::page::Page;
-use crate::terminal::sanitize;
+use crate::sanitize;
 
 /// Alternate screen, cursor hidden, no line wrap so a line never spills onto the next row, and the wheel sent as
 /// arrow keys (alternate scroll) so it scrolls without capturing the mouse, which would break text selection.

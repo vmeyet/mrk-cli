@@ -1,5 +1,6 @@
 use super::page::Placed;
-use crate::terminal::kitty::{self, Crop, Placement};
+use crate::terminal::crop::Crop;
+use crate::terminal::kitty::{self, Placement};
 
 /// The rows of a picture that are on screen: `skip` rows hidden above the top, then `rows` visible from `screen_row`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
