@@ -1,24 +1,12 @@
 use crate::document::{Line, Span, Style};
-use crate::text::{TAB, WIDEST_GRAPHEME, cut, display_width};
+use crate::text::hard_wrap;
 use crate::theme::Palette;
 
-/// A muted `mermaid: <reason>` note, then the source itself, every line cut to `width` cells.
+/// A muted `mermaid: <reason>` note on one line, then the source itself, every line cut to `width` cells.
 pub fn render(source: &str, reason: &str, width: usize, palette: &Palette) -> Vec<Line> {
-    let style = Style::fg(palette.muted);
-    let note = format!("mermaid: {reason}");
-    let note_lines = rows(&note, width).into_iter().take(1);
-    let source_lines = source.lines().flat_map(|line| rows(&line.replace('\t', TAB), width));
-    note_lines.chain(source_lines).map(|text| Line::new(vec![Span::new(text, style)])).collect()
-}
-
-/// `text` in rows of at most `width` cells, without a grapheme wider than that.
-fn rows(text: &str, width: usize) -> Vec<String> {
-    if text.is_empty() {
-        return vec![String::new()];
-    }
-    let room = width.max(WIDEST_GRAPHEME);
-    let pieces = std::iter::successors(Some(cut(text, room)), |&(_, rest)| (!rest.is_empty()).then(|| cut(rest, room)));
-    pieces.map(|(row, _)| row).filter(|row| display_width(row) <= width).map(str::to_owned).collect()
+    let rows = |text: &str| hard_wrap(&[Span::new(text, Style::fg(palette.muted))], width, &[]);
+    let note = rows(&format!("mermaid: {reason}")).into_iter().take(1);
+    note.chain(source.lines().flat_map(rows)).collect()
 }
 
 #[cfg(test)]

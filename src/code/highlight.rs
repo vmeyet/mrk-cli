@@ -8,13 +8,12 @@ use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
 use super::language;
 use crate::document::{Rgb, Span, Style};
-use crate::text::TAB;
 use crate::theme::{SyntaxTheme, Theme};
 
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 static THEMES: LazyLock<EmbeddedLazyThemeSet> = LazyLock::new(two_face::theme::extra);
 
-/// One entry per source line: tabs expanded, no line ending, no background.
+/// One entry per source line: no line ending, no background.
 /// A language without a syntax, or a highlighting failure, gives plain text in the palette's `text`.
 pub fn highlight(code: &str, language: Option<&str>, theme: &Theme) -> Vec<Vec<Span>> {
     language.and_then(|language| highlight_with_syntax(code, language, theme)).unwrap_or_else(|| plain(code, theme.palette.text))
@@ -53,7 +52,7 @@ fn spans(regions: &[(SyntaxStyle, &str)], surface: Rgb) -> Vec<Span> {
 }
 
 fn non_empty_span(text: &str, style: Style) -> Option<Span> {
-    let text = text.trim_end_matches(['\n', '\r']).replace('\t', TAB);
+    let text = text.trim_end_matches(['\n', '\r']);
     (!text.is_empty()).then(|| Span::new(text, style))
 }
 
@@ -108,18 +107,10 @@ mod tests {
     }
 
     #[test]
-    fn tabs_expand_and_line_endings_go() {
-        let lines = highlight("\tx\r\n\n", None, &MRK_DARK);
+    fn line_endings_go() {
+        let lines = highlight("x\r\n\n", None, &MRK_DARK);
 
-        assert_eq!(lines, vec![vec![Span::new("    x", Style::fg(MRK_DARK.palette.text))], vec![]]);
-    }
-
-    #[test]
-    fn highlighted_lines_keep_tabs_expanded() {
-        let lines = highlight("fn a() {\n\treturn;\n}\n", Some("rs"), &MRK_DARK);
-        let second: String = lines[1].iter().map(|span| span.text.as_str()).collect();
-
-        assert_eq!(second, "    return;");
+        assert_eq!(lines, vec![vec![Span::new("x", Style::fg(MRK_DARK.palette.text))], vec![]]);
     }
 
     #[test]

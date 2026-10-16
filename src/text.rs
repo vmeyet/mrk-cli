@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -19,6 +21,11 @@ fn is_bidi_control(character: char) -> bool {
 /// the zero-width space. `sanitize` removes them, so they take no cell.
 pub fn is_forbidden(character: char) -> bool {
     character.is_control() || is_bidi_control(character)
+}
+
+/// `text` with every tab written as `TAB`; borrowed when it has none.
+pub fn expand_tabs(text: &str) -> Cow<'_, str> {
+    if text.contains('\t') { Cow::Owned(text.replace('\t', TAB)) } else { Cow::Borrowed(text) }
 }
 
 /// The cells `text` takes once sanitized, counted one grapheme at a time.
@@ -50,16 +57,100 @@ pub fn cut(text: &str, width: usize) -> (&str, &str) {
 /// A word longer than a whole line starts on the current line only when this much room is left.
 const MIN_SPLIT_CELLS: usize = 4;
 
+/// Breaks styled spans into lines of at most `width` cells, at spaces when it can, mid-word when a word is wider than the line.
+/// Every line after the first starts with `indent` (hanging indent for list items and quotes).
+/// A `\n` forces a break and never reaches a line, a tab is four spaces, a space on a background (inline code padding)
+/// holds its word together. `width` is taken as at least the indent plus `WIDEST_GRAPHEME`, so any grapheme fits a line.
+pub fn wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
+    let tokens = spans.iter().flat_map(span_tokens).fold(Vec::new(), join_words);
+    tokens.into_iter().fold(LineBuilder::new(width, indent), LineBuilder::place).finish()
+}
+
+/// Cuts styled spans into lines of at most `width` cells wherever a line is full, never inside a grapheme: for code and
+/// source text, which re-flowing at spaces would change. Every line after the first starts with `indent`, a tab is four
+/// spaces, and `width` is taken as at least the indent plus `WIDEST_GRAPHEME`.
+pub fn hard_wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
+    let indent_width = spans_width(indent);
+    let width = width.max(indent_width + WIDEST_GRAPHEME);
+    let rows = cut_rows(spans, width, width - indent_width);
+    let lines = rows.into_iter().enumerate().map(|(index, row)| if index == 0 { row } else { [indent, &row].concat() });
+    lines.map(|spans| Line::new(merge(spans))).collect()
+}
+
+/// `spans` cut into rows of whole graphemes, the first at most `first` cells wide and the others `rest`, which must hold
+/// any grapheme.
+fn cut_rows(spans: &[Span], first: usize, rest: usize) -> Vec<Vec<Span>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut free = first;
+    for span in spans {
+        let text = expand_tabs(&span.text);
+        let mut left = text.as_ref();
+        while !left.is_empty() {
+            match cut(left, free) {
+                ("", _) => {
+                    rows.push(std::mem::take(&mut row));
+                    free = rest;
+                }
+                (head, tail) => {
+                    row.push(piece(span, head));
+                    free -= display_width(head);
+                    left = tail;
+                }
+            }
+        }
+    }
+    rows.push(row);
+    rows
+}
+
 /// A run of text that wraps as one unit: a word, a breakable space, or a forced break.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Token {
     Word(Vec<Span>),
     Space(Span),
     Break,
 }
 
-/// The line being filled, and the lines already closed.
-struct Layout {
+fn span_tokens(span: &Span) -> Vec<Token> {
+    let rows: Vec<Vec<Token>> = expand_tabs(&span.text).split('\n').map(|row| row_tokens(span, row)).collect();
+    rows.join(&Token::Break)
+}
+
+/// The words and spaces of one row of `span`; on a background the whole row is one word.
+fn row_tokens(span: &Span, row: &str) -> Vec<Token> {
+    if span.style.bg.is_some() {
+        return (!row.is_empty()).then(|| Token::Word(vec![piece(span, row)])).into_iter().collect();
+    }
+    let words = row.split(' ').enumerate().map(|(index, word)| {
+        let space = (index > 0).then(|| Token::Space(piece(span, " ")));
+        space.into_iter().chain((!word.is_empty()).then(|| Token::Word(vec![piece(span, word)])))
+    });
+    words.flatten().collect()
+}
+
+/// Words that touch wrap as one, whatever their styles.
+fn join_words(mut tokens: Vec<Token>, token: Token) -> Vec<Token> {
+    match (tokens.last_mut(), token) {
+        (Some(Token::Word(word)), Token::Word(pieces)) => word.extend(pieces),
+        (_, token) => tokens.push(token),
+    }
+    tokens
+}
+
+fn piece(span: &Span, text: &str) -> Span {
+    Span { text: text.to_owned(), style: span.style, link: span.link.clone() }
+}
+
+fn spans_width(spans: &[Span]) -> usize {
+    spans.iter().map(|span| display_width(&span.text)).sum()
+}
+
+/// The line being filled, the lines already closed, and the shape every line takes.
+struct LineBuilder<'a> {
+    width: usize,
+    indent: &'a [Span],
+    indent_width: usize,
     lines: Vec<Line>,
     current: Vec<Span>,
     used: usize,
@@ -67,66 +158,18 @@ struct Layout {
     space: Option<Span>,
 }
 
-/// Breaks styled spans into lines of at most `width` cells, at spaces when it can, mid-word when a word is wider than the line.
-/// Every line after the first starts with `indent` (hanging indent for list items and quotes).
-/// A `\n` forces a break and never reaches a line, a tab counts as a space; a space on a background (inline code padding) holds its word together.
-pub fn wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
-    let tokens = tokenize(spans);
-    let room = width.saturating_sub(spans_width(indent)).max(1);
-    let layout = tokens.into_iter().fold(Layout::new(), |layout, token| layout.place(token, width, room, indent));
-    layout.finish()
-}
-
-fn tokenize(spans: &[Span]) -> Vec<Token> {
-    spans.iter().flat_map(split_span).fold(Vec::new(), |mut tokens, token| {
-        match (tokens.last_mut(), token) {
-            (Some(Token::Word(word)), Token::Word(pieces)) => word.extend(pieces),
-            (_, token) => tokens.push(token),
-        }
-        tokens
-    })
-}
-
-fn split_span(span: &Span) -> Vec<Token> {
-    let holds_together = span.style.bg.is_some();
-    let mut tokens = Vec::new();
-    let mut word = String::new();
-    for character in span.text.chars().map(|character| if character == '\t' { ' ' } else { character }) {
-        let is_break = character == '\n';
-        let is_space = character == ' ' && !holds_together;
-        if !is_break && !is_space {
-            word.push(character);
-            continue;
-        }
-        if !word.is_empty() {
-            tokens.push(Token::Word(vec![piece(span, std::mem::take(&mut word))]));
-        }
-        tokens.push(if is_break { Token::Break } else { Token::Space(piece(span, " ".to_owned())) });
-    }
-    if !word.is_empty() {
-        tokens.push(Token::Word(vec![piece(span, word)]));
-    }
-    tokens
-}
-
-fn piece(span: &Span, text: String) -> Span {
-    Span { text, style: span.style, link: span.link.clone() }
-}
-
-fn spans_width(spans: &[Span]) -> usize {
-    spans.iter().map(|span| display_width(&span.text)).sum()
-}
-
-impl Layout {
-    fn new() -> Self {
-        Self { lines: Vec::new(), current: Vec::new(), used: 0, start: 0, space: None }
+impl<'a> LineBuilder<'a> {
+    fn new(width: usize, indent: &'a [Span]) -> Self {
+        let indent_width = spans_width(indent);
+        let width = width.max(indent_width + WIDEST_GRAPHEME);
+        Self { width, indent, indent_width, lines: Vec::new(), current: Vec::new(), used: 0, start: 0, space: None }
     }
 
-    fn place(self, token: Token, width: usize, room: usize, indent: &[Span]) -> Self {
+    fn place(self, token: Token) -> Self {
         match token {
-            Token::Break => self.close(indent),
+            Token::Break => self.close(),
             Token::Space(space) => self.hold_space(space),
-            Token::Word(word) => self.place_word(word, width, room, indent),
+            Token::Word(word) => self.place_word(word),
         }
     }
 
@@ -134,55 +177,44 @@ impl Layout {
         if self.has_content() { Self { space: Some(space), ..self } } else { self }
     }
 
-    fn place_word(self, word: Vec<Span>, width: usize, room: usize, indent: &[Span]) -> Self {
+    fn place_word(self, word: Vec<Span>) -> Self {
         let word_width = spans_width(&word);
-        let fits_here = self.used + self.space_width() + word_width <= width;
-        let fits_fresh_line = word_width <= room;
-        match (fits_here, fits_fresh_line) {
-            (true, _) => self.push_spaced(word, word_width),
-            (false, true) if self.has_content() => self.close(indent).push_spaced(word, word_width),
-            _ => self.split_word(&word, width, indent),
+        match (word_width <= self.free(), word_width <= self.room()) {
+            (true, _) => self.push_spaced(word),
+            (false, true) if self.has_content() => self.close().push_spaced(word),
+            _ => self.split_word(&word),
         }
     }
 
-    fn push_spaced(self, word: Vec<Span>, word_width: usize) -> Self {
-        let space_width = self.space_width();
-        let Self { lines, mut current, used, start, space } = self;
+    fn push_spaced(self, word: Vec<Span>) -> Self {
+        let used = self.used + self.space_width() + spans_width(&word);
+        let Self { mut current, space, .. } = self;
         current.extend(space);
         current.extend(word);
-        Self { lines, current, used: used + space_width + word_width, start, space: None }
+        Self { current, used, space: None, ..self }
     }
 
-    fn split_word(self, word: &[Span], width: usize, indent: &[Span]) -> Self {
-        let has_room = width.saturating_sub(self.used + self.space_width()) >= MIN_SPLIT_CELLS;
-        let start = match (self.has_content(), has_room) {
-            (true, true) => self,
-            (true, false) => self.close(indent),
-            (false, _) => Self { space: None, ..self },
-        };
-        word.iter().fold(start, |layout, span| layout.push_cut(span, width, indent))
+    /// A word wider than a line, cut wherever a line is full; it starts on this line when enough of it is left.
+    fn split_word(self, word: &[Span]) -> Self {
+        let builder = if self.has_content() && self.free() < MIN_SPLIT_CELLS { self.close() } else { self };
+        let mut rows = cut_rows(word, builder.free(), builder.room()).into_iter();
+        let first = rows.next().unwrap_or_default();
+        rows.fold(builder.push_spaced(first), |builder, row| builder.close().push_spaced(row))
     }
 
-    /// `span` placed as much as fits at a time, a new line opening whenever the current one is full.
-    fn push_cut(self, span: &Span, width: usize, indent: &[Span]) -> Self {
-        let mut layout = self;
-        let mut rest = span.text.as_str();
-        while !rest.is_empty() {
-            let free = width.saturating_sub(layout.used + layout.space_width());
-            let room = if layout.has_content() { free } else { free.max(WIDEST_GRAPHEME) };
-            (layout, rest) = match cut(rest, room) {
-                ("", _) => (layout.close(indent), rest),
-                (head, tail) => (layout.push_spaced(vec![piece(span, head.to_owned())], display_width(head)), tail),
-            };
-        }
-        layout
-    }
-
-    fn close(self, indent: &[Span]) -> Self {
+    fn close(self) -> Self {
         let Self { mut lines, current, .. } = self;
         lines.push(Line::new(merge(current)));
-        let start = spans_width(indent);
-        Self { lines, current: indent.to_vec(), used: start, start, space: None }
+        Self { lines, current: self.indent.to_vec(), used: self.indent_width, start: self.indent_width, space: None, ..self }
+    }
+
+    /// The cells a line after the first has for text.
+    fn room(&self) -> usize {
+        self.width - self.indent_width
+    }
+
+    fn free(&self) -> usize {
+        self.width.saturating_sub(self.used + self.space_width())
     }
 
     fn space_width(&self) -> usize {
@@ -287,6 +319,7 @@ mod tests {
     #[test]
     fn empty_input_is_one_empty_line() {
         assert_eq!(wrap(&[], 10, &[]), [Line::blank()]);
+        assert_eq!(hard_wrap(&[], 10, &[Span::plain("> ")]), [Line::blank()]);
     }
 
     #[test]
@@ -317,19 +350,38 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_character_on_a_one_cell_line_still_moves_forward() {
-        let lines = wrap(&[Span::plain("漢字")], 1, &[]);
+    fn a_width_too_narrow_for_the_indent_and_a_wide_grapheme_widens_to_fit_them() {
+        assert_eq!(plain_lines(&wrap(&[Span::plain("漢字")], 1, &[])), ["漢", "字"]);
+        assert_eq!(plain_lines(&hard_wrap(&[Span::plain("漢字")], 1, &[])), ["漢", "字"]);
+        assert_eq!(plain_lines(&wrap(&[Span::plain("ab cd")], 1, &[Span::plain(" ")])), ["ab", " cd"]);
+    }
 
-        assert_eq!(plain_lines(&lines), ["漢", "字"]);
+    #[test]
+    fn a_tab_is_four_spaces_and_breaks_like_one() {
+        let code = Style::default().on(Rgb(0, 0, 0));
+
+        assert_eq!(plain_lines(&wrap(&[Span::plain("one\ttwo")], 6, &[])), ["one", "two"]);
+        assert_eq!(plain_lines(&wrap(&[Span::new("\tx", code)], 20, &[])), ["    x"]);
+        assert_eq!(plain_lines(&hard_wrap(&[Span::plain("\tabc")], 6, &[])), ["    ab", "c"]);
+    }
+
+    #[test]
+    fn hard_wrap_fills_each_line_and_indents_the_rest() {
+        let bold = Style::default().bold();
+        let lines = hard_wrap(&[Span::plain("let a = "), Span::new("12345", bold)], 6, &[Span::plain("> ")]);
+
+        assert_eq!(plain_lines(&lines), ["let a ", "> = 12", "> 345"]);
+        assert_eq!(lines[1].spans, [Span::plain("> = "), Span::new("12", bold)]);
     }
 
     #[test]
     fn no_line_exceeds_the_width() {
-        let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed doeiusmodtemporincididunt ut labore 漢字漢字 et dolore.";
+        let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed doeiusmodtemporincididunt ut labore 漢字漢字 et\tdolore.";
         for width in 3..40 {
-            let lines = wrap(&[Span::plain(text)], width, &[Span::plain(" ")]);
+            let wrapped = wrap(&[Span::plain(text)], width, &[Span::plain(" ")]);
+            let cut = hard_wrap(&[Span::plain(text)], width, &[Span::plain(" ")]);
 
-            assert!(lines.iter().all(|line| line.width() <= width), "width {width}");
+            assert!(wrapped.iter().chain(&cut).all(|line| line.width() <= width), "width {width}");
         }
     }
 }
