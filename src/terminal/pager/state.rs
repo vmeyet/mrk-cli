@@ -118,10 +118,8 @@ impl Pager {
     pub fn resized(self, page: Page, height: usize) -> Self {
         let old_rows = self.page.rows.len().max(1);
         let top = self.top * page.rows.len() / old_rows;
-        let current = self.search.current;
-        let search = Search::new(&page.rows, &self.search.query, top);
-        let current = current.filter(|&index| index < search.matches.len()).or(search.current);
-        Self { page, height, search: Search { current, ..search }, ..self }.at(top)
+        let search = self.search.rewrapped(&self.page.rows, &page.rows, top);
+        Self { page, height, search, ..self }.at(top)
     }
 }
 
