@@ -6,23 +6,24 @@ const WEB_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 /// Each ends on the slash that starts the path, so a `file:` link names no host but this machine.
 const LOCAL_FILE_PREFIXES: [&str; 2] = ["file:///", "file://localhost/"];
 
-/// The text with every character a terminal could interpret removed: C0 and C1 controls, DEL, bidi overrides and isolates.
-/// A tab becomes spaces.
+/// The text with every character a terminal could interpret removed: C0 and C1 controls, DEL, bidi marks, overrides
+/// and isolates, and the zero-width space. A tab becomes spaces.
 pub fn text(raw: &str) -> String {
-    clean(raw, |_| false)
+    clean(raw, false)
 }
 
 /// `text` for a message of several lines: the newlines are kept.
 pub fn lines(raw: &str) -> String {
-    clean(raw, |character| character == '\n')
+    clean(raw, true)
 }
 
-fn clean(raw: &str, keeps: impl Fn(char) -> bool) -> String {
+fn clean(raw: &str, keeps_newlines: bool) -> String {
     let mut cleaned = String::with_capacity(raw.len());
     for character in raw.chars() {
         match character {
             '\t' => cleaned.push_str(TAB),
-            _ if is_forbidden(character) && !keeps(character) => {}
+            '\n' if keeps_newlines => cleaned.push(character),
+            _ if is_forbidden(character) => {}
             _ => cleaned.push(character),
         }
     }
@@ -31,6 +32,23 @@ fn clean(raw: &str, keeps: impl Fn(char) -> bool) -> String {
 
 fn percent_encode(raw: &str) -> String {
     raw.bytes().map(|byte| if byte.is_ascii_graphic() { char::from(byte).to_string() } else { format!("%{byte:02X}") }).collect()
+}
+
+fn percent_decode(raw: &str) -> Vec<u8> {
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let escaped = bytes.get(index + 1..index + 3).filter(|_| byte == b'%').and_then(hex_byte);
+        decoded.push(escaped.unwrap_or(byte));
+        index += if escaped.is_some() { 3 } else { 1 };
+    }
+    decoded
+}
+
+fn hex_byte(digits: &[u8]) -> Option<u8> {
+    let digits = std::str::from_utf8(digits).ok().filter(|digits| digits.bytes().all(|digit| digit.is_ascii_hexdigit()))?;
+    u8::from_str_radix(digits, 16).ok()
 }
 
 fn scheme(target: &str) -> Option<&str> {
@@ -47,12 +65,15 @@ fn is_local_file(target: &str) -> bool {
         let head = target.get(..prefix.len())?;
         head.eq_ignore_ascii_case(prefix).then(|| &target[prefix.len()..])
     });
-    path.is_some_and(|path| !names_a_share(&path.to_ascii_lowercase()))
+    path.is_some_and(|path| is_plain_path(&percent_decode(path)))
 }
 
-/// Openers decode `%2F` and `%5C` before they read the path, so the encoded slash and backslash count too.
-fn names_a_share(path: &str) -> bool {
-    path.starts_with('/') || path.starts_with("%2f") || path.contains('\\') || path.contains("%5c")
+/// Openers decode the path and resolve `.` and `..` before reading it, so `/a/..//host/share` reaches a share:
+/// decoded once, the path must hold no backslash and only named segments, a trailing slash aside.
+fn is_plain_path(path: &[u8]) -> bool {
+    let mut segments = path.strip_suffix(b"/").unwrap_or(path).split(|&byte| byte == b'/');
+    let has_only_names = path.is_empty() || segments.all(|segment| !matches!(segment, b"" | b"." | b".."));
+    has_only_names && !path.contains(&b'\\')
 }
 
 fn is_allowed(target: &str) -> bool {
@@ -120,8 +141,13 @@ mod tests {
     }
 
     #[test]
-    fn other_format_characters_are_kept() {
-        assert_eq!(text("a\u{200d}b\u{00ad}c"), "a\u{200d}b\u{00ad}c");
+    fn bidi_marks_and_the_zero_width_space_are_removed() {
+        assert_eq!(text("a\u{200b}b\u{200e}c\u{200f}d\u{061c}e"), "abcde");
+    }
+
+    #[test]
+    fn joiners_and_other_format_characters_are_kept() {
+        assert_eq!(text("a\u{200c}b\u{200d}c\u{00ad}d"), "a\u{200c}b\u{200d}c\u{00ad}d");
     }
 
     #[test]
@@ -156,6 +182,28 @@ mod tests {
         for target in ["file:///%5C%5Cevil.host%5Cshare", "file:///%2f%2Fevil.host/x", "file:///tmp/a%5cb"] {
             assert_eq!(link(target), None, "{target}");
         }
+    }
+
+    #[test]
+    fn a_dot_or_empty_segment_cannot_climb_to_another_host() {
+        for target in
+            ["file:///.//host/share/x", "file:///%2e%2e//host/share/x", "file:///a/..//host/share/x", "file:///a//b", "file:///a/./b"]
+        {
+            assert_eq!(link(target), None, "{target}");
+        }
+    }
+
+    #[test]
+    fn a_plain_path_with_dots_in_names_or_a_trailing_slash_passes() {
+        for target in ["file:///", "file:///tmp/", "file:///tmp/.config/a.b.md", "file:///tmp/a%20b"] {
+            assert_eq!(link(target).as_deref(), Some(target), "{target}");
+        }
+    }
+
+    #[test]
+    fn a_bad_escape_is_kept_as_written() {
+        assert_eq!(percent_decode("a%zz%4"), b"a%zz%4");
+        assert_eq!(percent_decode("%2e%2E%+1"), b"..%+1");
     }
 
     #[test]
