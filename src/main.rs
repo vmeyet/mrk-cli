@@ -1,12 +1,16 @@
+mod cli;
+mod config;
+mod update;
+
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use mrk::cli::UsageError;
+use cli::UsageError;
 
 const USAGE_EXIT: u8 = 2;
 
 fn main() -> ExitCode {
-    match mrk::cli::run() {
+    match cli::run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprint!("{}", mrk::terminal::error_report(&error, std::io::stderr().is_terminal()));

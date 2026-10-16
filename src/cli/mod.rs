@@ -10,11 +10,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
+use mrk::document::{Block, Document, Line, Rgb, Span, Style};
+use mrk::terminal::{self, Align, ColorChoice, ColorDepth, ImagesMode, Preferences};
+use mrk::theme::{self, Appearance, Palette, Theme};
 
-use crate::config::{self, Config, MIN_WIDTH};
-use crate::document::{Block, Document, Line, Rgb, Span, Style};
-use crate::terminal::{self, Align, ColorChoice, ColorDepth, ImagesMode, Preferences};
-use crate::theme::{self, Appearance, Palette, Theme};
+use crate::config::{self, Config};
 use output::{Layout, Output};
 
 const SWATCH: &str = "██";
@@ -22,7 +22,7 @@ const TERMINAL_MARK: &str = " (your terminal)";
 
 /// Render Markdown beautifully in the terminal.
 #[derive(Parser, Debug)]
-#[command(name = "mrk", version = crate::version::label(), about, after_long_help = help::text(), args_conflicts_with_subcommands = true)]
+#[command(name = "mrk", version = mrk::version::label(), about, after_long_help = help::text(), args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -35,7 +35,7 @@ pub struct Cli {
     /// List the themes with a swatch of their colours.
     #[arg(long, conflicts_with = "file")]
     pub list_themes: bool,
-    /// Wrap width in columns; by default the terminal width, capped at 100.
+    /// Wrap width in columns, from 20 to 1000; by default the terminal width, capped at 100.
     #[arg(long, env = "MRK_WIDTH", value_name = "N", value_parser = parse_width)]
     pub width: Option<usize>,
     /// Draw Mermaid diagrams as images, on a terminal that speaks the kitty graphics protocol or Sixel.
@@ -95,7 +95,7 @@ impl std::error::Error for UsageError {}
 
 fn parse_width(raw: &str) -> Result<usize, String> {
     let width: usize = raw.parse().map_err(|_| format!("`{raw}` is not a number of columns"))?;
-    if width < MIN_WIDTH { Err(format!("{width} is too narrow: {MIN_WIDTH} is the least")) } else { Ok(width) }
+    config::check_width(width)
 }
 
 fn print_completions(shell: Shell) {
@@ -118,7 +118,7 @@ fn print_man() -> io::Result<()> {
 fn theme_choice(cli: &Cli, config: &Config) -> Result<theme::Choice> {
     let name = cli.theme.as_deref().or(config.theme.as_deref());
     theme::Choice::new(name, config.theme_dark.as_deref(), config.theme_light.as_deref())
-        .map_err(|error| UsageError(error.to_string()).into())
+        .map_err(|error| UsageError(format!("{error} (mrk --list-themes)")).into())
 }
 
 fn palette_colors(palette: &Palette) -> [Rgb; 16] {
@@ -192,7 +192,7 @@ fn exit_on(error: &clap::Error) -> ! {
     if !error.use_stderr() {
         error.exit();
     }
-    eprint!("{}", terminal::sanitize::lines(&error.render().to_string()));
+    eprint!("{}", mrk::sanitize::lines(&error.render().to_string()));
     std::process::exit(error.exit_code())
 }
 
@@ -269,7 +269,7 @@ mod tests {
         let message = error.to_string();
 
         assert!(error.is::<UsageError>());
-        assert!(message.contains("\"nope\"") && message.contains("mrk-dark"), "{message}");
+        assert!(message.contains("\"nope\"") && message.contains("mrk-dark") && message.ends_with("(mrk --list-themes)"), "{message}");
     }
 
     #[test]
@@ -313,18 +313,18 @@ mod tests {
 
     #[test]
     fn the_theme_list_groups_dark_then_light_and_marks_the_terminal_background() {
-        insta::assert_snapshot!(crate::document::plain(&theme_list(true, Some(Appearance::Light))));
+        insta::assert_snapshot!(mrk::document::plain(&theme_list(true, Some(Appearance::Light))));
     }
 
     #[test]
     fn the_theme_list_marks_no_group_when_the_background_is_unknown() {
-        assert!(!crate::document::plain(&theme_list(true, None)).contains(TERMINAL_MARK));
+        assert!(!mrk::document::plain(&theme_list(true, None)).contains(TERMINAL_MARK));
     }
 
     #[test]
     fn the_theme_list_is_names_only_without_colour() {
         let expected: String = theme::names().map(|name| format!("{name}\n")).collect();
 
-        assert_eq!(crate::document::plain(&theme_list(false, Some(Appearance::Dark))), expected);
+        assert_eq!(mrk::document::plain(&theme_list(false, Some(Appearance::Dark))), expected);
     }
 }

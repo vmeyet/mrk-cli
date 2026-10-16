@@ -1,7 +1,7 @@
 //! The sections after the options, shared by `--help` and the man page so the two cannot drift.
 use roff::{Roff, bold, roman};
 
-use crate::terminal::pager;
+use mrk::terminal::pager;
 
 struct Section {
     title: &'static str,
@@ -40,7 +40,7 @@ fn sections() -> [Section; 4] {
             rows: rows(&[
                 ("0", "success"),
                 ("1", "a failure while running, such as a file that cannot be read"),
-                ("2", "a usage mistake: a bad flag, environment variable or config file"),
+                ("2", "a usage mistake: a bad flag, environment value or config file, or an unknown theme"),
             ]),
         },
     ]

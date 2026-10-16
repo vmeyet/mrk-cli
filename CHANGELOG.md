@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Library: `sanitize` is part of the core, without the `cli` feature, and `Line::printable` gives a line's text safe to print; `theme::Choice::new` fails with a typed `theme::UnknownTheme`.
+- Library: the binary's `cli`, `config` and `update` modules, `theme::test_settings` and `theme::DEFAULT_WIDTH` are no longer public.
+- `--width`, `MRK_WIDTH` and `width` take 20 to 1000 columns; an absurd width exits with 2 instead of panicking.
+- A config file that exists but cannot be read exits with 2, like one that does not parse.
+- `mrk update` through brew reinstalls with `--force`, and fails when the tap has not caught up with the release instead of reporting an update; through cargo it builds in a temporary folder removed afterwards, even when `CARGO_TARGET_DIR` is set.
+- `mrk --version` shows `unknown` rather than another repository's commit when mrk is built from inside it.
+
+### Security
+
+- `mrk update` installs the commit the release tag pointed at when listed, so a tag moved meanwhile cannot change what builds.
+- A `file:` link to another host (`file://host/share`) is no longer clickable, since opening it can send the user's credentials to that host.
+
 ## [0.7.0] - 2026-10-06
 
 ### Added

@@ -98,10 +98,27 @@ fn a_bad_flag_exits_with_2() {
 }
 
 #[test]
-fn a_malformed_config_exits_with_2_naming_it() {
-    let home = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("malformed-config");
+fn a_width_beyond_the_bound_exits_with_2() {
+    mrk().args(["--width", "18446744073709551615", "-"]).write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("too wide"));
+    mrk().env("MRK_WIDTH", "50000000").write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("1000 is the most"));
+}
+
+#[test]
+fn the_widest_width_renders() {
+    mrk().args(["--width", "1000", "-"]).write_stdin("# hi").assert().success();
+}
+
+/// The config folder `XDG_CONFIG_HOME` points at, holding `config.toml` with these contents.
+fn config_home(name: &str, contents: &str) -> std::path::PathBuf {
+    let home = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     std::fs::create_dir_all(home.join("mrk")).unwrap();
-    std::fs::write(home.join("mrk/config.toml"), "colour = \"always\"\n").unwrap();
+    std::fs::write(home.join("mrk/config.toml"), contents).unwrap();
+    home
+}
+
+#[test]
+fn a_malformed_config_exits_with_2_naming_it() {
+    let home = config_home("malformed-config", "colour = \"always\"\n");
 
     mrk().env("XDG_CONFIG_HOME", &home).write_stdin("# hi").assert().code(2).stderr(
         predicate::str::contains("invalid config").and(predicate::str::contains("config.toml")).and(predicate::str::contains("line 1")),
@@ -109,7 +126,21 @@ fn a_malformed_config_exits_with_2_naming_it() {
 }
 
 #[test]
+fn a_config_width_beyond_the_bound_exits_with_2() {
+    let home = config_home("wide-config", "width = 50000000\n");
 
+    mrk().env("XDG_CONFIG_HOME", &home).write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("too wide"));
+}
+
+#[test]
+fn an_unreadable_config_exits_with_2() {
+    let home = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("unreadable-config");
+    std::fs::create_dir_all(home.join("mrk/config.toml")).unwrap();
+
+    mrk().env("XDG_CONFIG_HOME", &home).write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("invalid config"));
+}
+
+#[test]
 fn a_file_renders_as_plain_text_when_piped() {
     mrk()
         .arg("tests/fixtures/showcase.md")
@@ -120,14 +151,12 @@ fn a_file_renders_as_plain_text_when_piped() {
 }
 
 #[test]
-
 fn stdin_renders_with_a_dash_or_nothing() {
     mrk().arg("-").write_stdin("hello").assert().success().stdout(predicate::str::contains("  hello"));
     mrk().write_stdin("hello").assert().success().stdout(predicate::str::contains("  hello"));
 }
 
 #[test]
-
 fn forced_colour_carries_hyperlinks() {
     mrk()
         .args(["--color", "always", "--theme", "mrk-dark"])
@@ -143,7 +172,6 @@ fn piped_links_print_their_target() {
 }
 
 #[test]
-
 fn hostile_input_never_reaches_the_terminal() {
     let hostile = "# \x1b]0;title\x07 \x1b]52;c;AAAA\x07\n\n\x1b[2J text \u{9b}31m [x](javascript:alert(1))\n\n```\n\x1b[31m\n```\n";
 
@@ -158,7 +186,6 @@ fn hostile_input_never_reaches_the_terminal() {
 }
 
 #[test]
-
 fn a_closed_pipe_exits_quietly() {
     let big = "line\n\n".repeat(200_000);
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_mrk"))

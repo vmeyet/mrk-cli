@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use std::fmt;
 
 use crate::document::Rgb;
 
@@ -59,14 +59,40 @@ pub struct Theme {
     pub syntax: SyntaxTheme,
 }
 
-pub const DEFAULT_WIDTH: usize = 100;
-
 const MAX_SUGGESTION_DISTANCE: usize = 3;
 /// A suggestion allows one edit per this many typed characters, so a short name is only matched by a near twin.
 const CHARS_PER_EDIT: usize = 3;
 
+/// A theme name that is not built in, with the closest built-in name when one is near enough to be a typo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UnknownTheme {
+    pub name: String,
+    pub suggestion: Option<&'static str>,
+}
+
+impl UnknownTheme {
+    fn new(name: &str) -> Self {
+        Self { name: name.to_owned(), suggestion: closest_name(name) }
+    }
+}
+
+impl fmt::Display for UnknownTheme {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { name, suggestion } = self;
+        let themes = names().collect::<Vec<_>>().join(", ");
+        match suggestion {
+            Some(suggestion) => write!(formatter, "unknown theme {name:?}, did you mean \"{suggestion}\"? Themes: {themes}"),
+            None => write!(formatter, "unknown theme {name:?}. Themes: {themes}"),
+        }
+    }
+}
+
+impl std::error::Error for UnknownTheme {}
+
 /// The settings unit tests render with: dark theme, 80 columns, no pictures.
-pub fn test_settings() -> crate::document::Settings {
+#[cfg(test)]
+pub(crate) fn test_settings() -> crate::document::Settings {
     crate::document::Settings { width: 80, theme: MRK_DARK, cell: None, hyperlinks: true, jumbo_title: None }
 }
 
@@ -96,7 +122,7 @@ pub enum Choice {
 
 impl Choice {
     /// `name` wins over the pair; a side of the pair left out is the built-in default. Every name given must exist.
-    pub fn new(name: Option<&str>, dark: Option<&str>, light: Option<&str>) -> anyhow::Result<Self> {
+    pub fn new(name: Option<&str>, dark: Option<&str>, light: Option<&str>) -> Result<Self, UnknownTheme> {
         match name {
             Some(name) => named(name).map(Self::Named),
             None => Ok(Self::ByBackground {
@@ -122,20 +148,12 @@ impl Choice {
     }
 }
 
-fn named(name: &str) -> anyhow::Result<Theme> {
-    find(name).ok_or_else(|| unknown_theme(name))
+fn named(name: &str) -> Result<Theme, UnknownTheme> {
+    find(name).ok_or_else(|| UnknownTheme::new(name))
 }
 
-fn named_or_default(name: Option<&str>, appearance: Appearance) -> anyhow::Result<Theme> {
+fn named_or_default(name: Option<&str>, appearance: Appearance) -> Result<Theme, UnknownTheme> {
     name.map_or_else(|| Ok(default_for(appearance)), named)
-}
-
-fn unknown_theme(name: &str) -> anyhow::Error {
-    let valid = names().collect::<Vec<_>>().join(", ");
-    match closest_name(name) {
-        Some(suggestion) => anyhow!("unknown theme {name:?}, did you mean \"{suggestion}\"? Themes: {valid} (mrk --list-themes)"),
-        None => anyhow!("unknown theme {name:?}. Themes: {valid}"),
-    }
 }
 
 fn closest_name(name: &str) -> Option<&'static str> {
@@ -280,8 +298,10 @@ mod tests {
 
     #[test]
     fn unknown_name_suggests_the_closest_and_lists_all() {
-        let message = named("dracla").unwrap_err().to_string();
+        let error = named("dracla").unwrap_err();
+        let message = error.to_string();
 
+        assert_eq!(error, UnknownTheme { name: "dracla".to_owned(), suggestion: Some("dracula") });
         assert!(message.contains("did you mean \"dracula\"?"), "{message}");
         assert!(message.contains("github-light"), "{message}");
     }

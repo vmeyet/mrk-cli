@@ -7,7 +7,7 @@ Everything `mrk --help` and `man mrk` say, in one page.
 | Flag                         | Environment | Config key | Default and notes                                                                                   |
 | :--------------------------- | :---------- | :--------- | :-------------------------------------------------------------------------------------------------- |
 | `--theme NAME`               | `MRK_THEME` | `theme`    | `theme_dark` or `theme_light` from the config, else `mrk-dark` or `mrk-light`, from the terminal background (dark when unknown); `--list-themes` shows the names |
-| `--width N`                  | `MRK_WIDTH` | `width`    | the terminal width, capped at 100                                                                    |
+| `--width N`                  | `MRK_WIDTH` | `width`    | the terminal width, capped at 100; any width from 20 to 1000 columns                                 |
 | `--images auto\|always\|never` |             | `images`   | `auto`: pictures on terminals that can draw them, inside tmux with passthrough, never under screen or zellij; `always` tries under them too |
 | `--align center\|left`        | `MRK_ALIGN` | `align`    | `center`: the text column sits in the middle of a wide window                                       |
 | `--color auto\|always\|never`  | `NO_COLOR`  |            | `auto`: colour on a terminal, unless `NO_COLOR` is set                                               |
@@ -58,11 +58,11 @@ The mouse wheel scrolls on terminals that send it as arrow keys in the alternate
 
 ## Exit status
 
-| Code | Meaning                                                              |
-| ---: | :------------------------------------------------------------------- |
-|    0 | success                                                              |
-|    1 | a failure while running, such as a file that cannot be read          |
-|    2 | a usage mistake: a bad flag, environment value, config file or theme |
+| Code | Meaning                                                                            |
+| ---: | :--------------------------------------------------------------------------------- |
+|    0 | success                                                                            |
+|    1 | a failure while running, such as a file that cannot be read                        |
+|    2 | a usage mistake: a bad flag, environment value or config file, or an unknown theme |
 
 ## Shell completions and man page
 

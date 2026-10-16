@@ -9,12 +9,14 @@ pub const TAB: &str = "    ";
 /// Terminals draw a grapheme in one or two cells, so a row this wide always has room for the next one.
 pub const WIDEST_GRAPHEME: usize = 2;
 
+/// Overrides, isolates and the marks (LRM, RLM, ALM) reorder what a line shows; the zero-width space hides a break
+/// inside a name. The joiners stay: emoji sequences and Persian or Indic words need them.
 fn is_bidi_control(character: char) -> bool {
-    matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
 }
 
-/// The characters a terminal could interpret: C0 and C1 controls, DEL, bidi overrides and isolates.
-/// `terminal::sanitize` removes them, so they take no cell.
+/// The characters a terminal could interpret or that disguise text: C0 and C1 controls, DEL, bidi controls and marks,
+/// the zero-width space. `sanitize` removes them, so they take no cell.
 pub fn is_forbidden(character: char) -> bool {
     character.is_control() || is_bidi_control(character)
 }

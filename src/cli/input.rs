@@ -2,9 +2,9 @@ use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+use mrk::sanitize;
 
 use super::UsageError;
-use crate::terminal::sanitize;
 
 const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const USAGE_HINT: &str = "no input: name a Markdown file (mrk README.md) or pipe one in (cat notes.md | mrk)";
