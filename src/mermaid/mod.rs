@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 pub use self::budget::Load;
 use self::cache::Recent;
+#[cfg(feature = "cli")]
 pub(crate) use self::catch::is_catching;
 use crate::document::{Block, CellSize, Line, Picture, Settings};
 use crate::raster::{RasterError, Svg};
@@ -218,9 +219,7 @@ mod tests {
         let costly = [
             (tangled(100, 500), "mermaid: over 160 statements, too many to lay out"),
             (tangled(1000, 3500), "mermaid: over 160 statements, too many to lay out"),
-            (format!("classDiagram\n{}", "  A --> B\n".repeat(40)), "mermaid: over 32 statements, too many to lay out"),
-            (format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000)), "mermaid: over 160 statements, too many to lay out"),
-            (format!("gitGraph\n{}", "  commit\n".repeat(3000)), "mermaid: over 160 statements, too many to lay out"),
+            (format!("classDiagram\n{}", "  A --> B\n".repeat(40)), "mermaid: over 32 relations, too many to lay out"),
         ];
 
         for (source, note) in &costly {
@@ -233,6 +232,18 @@ mod tests {
                 assert_eq!(lines[0].plain(), *note);
             }
         }
+    }
+
+    #[test]
+    fn a_long_sequence_over_the_picture_budget_still_draws_as_text() {
+        let source = format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000));
+        let started = Instant::now();
+
+        let lines = lines(render(&source, &with_cell()));
+
+        assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+        assert!(lines.iter().any(|line| line.plain().contains("hi")));
+        assert!(!lines[0].plain().starts_with("mermaid:"));
     }
 
     #[test]

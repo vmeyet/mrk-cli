@@ -2,7 +2,7 @@ use mermaid_text::RenderOptions;
 
 use super::DiagramError;
 use crate::document::{Line, Rgb, Span, Style};
-use crate::text::{TAB, display_width};
+use crate::text::{display_width, expand_tabs};
 use crate::theme::Palette;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -29,7 +29,7 @@ pub fn render(source: &str, width: usize, palette: &Palette) -> Result<Vec<Line>
 fn draw(source: &str, width: usize) -> Result<String, DiagramError> {
     let options = RenderOptions { max_width: Some(width), max_width_strict: true, ..RenderOptions::default() };
     match mermaid_text::render_with_options(source, &options) {
-        Ok(drawing) => Ok(drawing.replace('\t', TAB)),
+        Ok(drawing) => Ok(expand_tabs(&drawing, 0).into_owned()),
         Err(error) => Err(DiagramError::Invalid(error.to_string())),
     }
 }

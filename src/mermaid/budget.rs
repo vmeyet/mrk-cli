@@ -14,7 +14,7 @@ const MAX_MESSAGES: usize = 400;
 const MAX_ELEMENTS: usize = 600;
 const MAX_STATEMENTS: usize = 160;
 /// mermaid-text lays class diagrams out far slower than any other kind: 40 relations took it 2.8 s.
-const MAX_CLASS_STATEMENTS: usize = 32;
+const MAX_RELATIONS: usize = 32;
 
 /// What a diagram's layout time grows with, counted before an engine lays it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,8 +28,8 @@ pub enum Load {
     Elements,
     /// Statements, one more per arrow chained after the first, as the text engine is given them.
     Statements,
-    /// The same, for a class diagram.
-    ClassStatements,
+    /// Relations of a class diagram, whose members cost mermaid-text little.
+    Relations,
 }
 
 impl Load {
@@ -39,7 +39,7 @@ impl Load {
             Self::Messages => MAX_MESSAGES,
             Self::Elements => MAX_ELEMENTS,
             Self::Statements => MAX_STATEMENTS,
-            Self::ClassStatements => MAX_CLASS_STATEMENTS,
+            Self::Relations => MAX_RELATIONS,
         }
     }
 
@@ -48,7 +48,8 @@ impl Load {
             Self::Links => "links",
             Self::Messages => "messages",
             Self::Elements => "elements",
-            Self::Statements | Self::ClassStatements => "statements",
+            Self::Statements => "statements",
+            Self::Relations => "relations",
         }
     }
 
@@ -81,8 +82,7 @@ pub fn parse(source: &str) -> Result<Graph, DiagramError> {
 /// Refuses a diagram with more statements than mermaid-text lays out quickly, read off the source without parsing it:
 /// mermaid-text accepts syntax mermaid-rs-renderer's parser refuses.
 pub fn admit_text(source: &str) -> Result<(), DiagramError> {
-    let (load, count) = text_load(source);
-    load.within(count)
+    text_load(source).map_or(Ok(()), |(load, count)| load.within(count))
 }
 
 fn picture_load(graph: &Graph) -> (Load, usize) {
@@ -99,13 +99,25 @@ fn picture_load(graph: &Graph) -> (Load, usize) {
     }
 }
 
-fn text_load(source: &str) -> (Load, usize) {
-    let count = statements(source).map(|statement| ARROWS.iter().map(|arrow| statement.matches(arrow).count()).sum::<usize>().max(1)).sum();
-    let is_class = statements(source).next().is_some_and(|header| header.starts_with("classDiagram"));
-    (if is_class { Load::ClassStatements } else { Load::Statements }, count)
+/// None for the kinds mermaid-text draws in one pass, row after row: 64 KiB of any of them took it under 30 ms.
+fn text_load(source: &str) -> Option<(Load, usize)> {
+    let header = statements(source).next()?;
+    if LINEAR_KINDS.iter().any(|kind| header.starts_with(kind)) {
+        None
+    } else if header.starts_with("classDiagram") {
+        Some((Load::Relations, statements(source).map(|statement| arrows(statement, &CLASS_ARROWS)).sum()))
+    } else {
+        Some((Load::Statements, statements(source).map(|statement| arrows(statement, &ARROWS).max(1)).sum()))
+    }
 }
 
+const LINEAR_KINDS: [&str; 8] = ["sequenceDiagram", "pie", "gantt", "timeline", "journey", "gitGraph", "mindmap", "kanban"];
 const ARROWS: [&str; 3] = ["--", "==", "-."];
+const CLASS_ARROWS: [&str; 2] = ["--", ".."];
+
+fn arrows(statement: &str, kinds: &[&str]) -> usize {
+    kinds.iter().map(|arrow| statement.matches(arrow).count()).sum()
+}
 
 fn statements(source: &str) -> impl Iterator<Item = &str> {
     source.split(['\n', ';']).map(str::trim).filter(|statement| !statement.is_empty() && !statement.starts_with("%%"))
@@ -222,9 +234,9 @@ mod tests {
 
     #[test]
     fn the_text_engine_counts_statements_and_chained_arrows() {
-        assert_eq!(text_load("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), (Load::Statements, 1 + 2 + 1 + 1));
-        assert_eq!(text_load("sequenceDiagram\n  a ->> b: hi"), (Load::Statements, 2));
-        assert_eq!(text_load("%% why\nclassDiagram\n  A --> B"), (Load::ClassStatements, 2));
+        assert_eq!(text_load("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), Some((Load::Statements, 1 + 2 + 1 + 1)));
+        assert_eq!(text_load(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000))), None);
+        assert_eq!(text_load("%% why\nclassDiagram\n  class A {\n    +f() int\n  }\n  A --> B\n  B ..> C"), Some((Load::Relations, 2)));
         assert_eq!(admit_text(&edges(MAX_STATEMENTS - 1, |index| format!("n{index} --> n{}", index + 1))), Ok(()));
         assert_eq!(admit_text(&edges(MAX_STATEMENTS, |index| format!("n{index}"))), Err(DiagramError::OverBudget(Load::Statements)));
     }
