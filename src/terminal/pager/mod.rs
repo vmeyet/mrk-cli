@@ -136,7 +136,7 @@ fn next_event(pending: Option<Event>, ending: &Ending) -> io::Result<Option<Even
     if pending.is_some() {
         return Ok(pending);
     }
-    while !ending.is_caught() {
+    while ending.caught().is_none() {
         if event::poll(SIGNAL_CHECK)? {
             return event::read().map(Some);
         }
@@ -148,23 +148,27 @@ fn next_event(pending: Option<Event>, ending: &Ending) -> io::Result<Option<Even
 /// window changes width. Stays open even when the document fits, like a program another program hands the terminal to.
 /// An ending signal gives the terminal back, then ends mrk as that signal would have.
 pub fn run(session: &Session, render: impl Fn(u16) -> Rendered) -> io::Result<()> {
-    let ending = Ending::watch()?;
-    show(&Reader { session, render }, &ending)?;
-    ending.finish()
+    match show(&Reader { session, render })? {
+        Some(signal) => signals::end_as(signal),
+        None => Ok(()),
+    }
 }
 
-fn show(reader: &Reader<'_, impl Fn(u16) -> Rendered>, ending: &Ending) -> io::Result<()> {
+/// The pager until the reader quits, or the ending signal that stopped it. Signals are caught only once the screen is
+/// taken, so one during the first render ends mrk at once, with nothing to give back.
+fn show(reader: &Reader<'_, impl Fn(u16) -> Rendered>) -> io::Result<Option<i32>> {
     let mut view = reader.first_view(crossterm::terminal::size()?);
 
     let mut screen = Screen::take()?;
+    let ending = Ending::watch()?;
     let mut out = io::stdout().lock();
     screen.store(&mut out, &view.pictures, &view.pager.page)?;
     view = reader.draw(&mut out, view)?;
     let mut pending = None;
     loop {
-        let Some(event) = next_event(pending.take(), ending)? else { return Ok(()) };
+        let Some(event) = next_event(pending.take(), &ending)? else { return Ok(ending.caught()) };
         match step(&event, view.pager.prompt.is_some()) {
-            Step::Quit => return Ok(()),
+            Step::Quit => return Ok(None),
             Step::Nothing => continue,
             Step::Act(action) => view = View { pager: view.pager.apply(action), ..view },
             Step::Resize(columns, rows) => {
