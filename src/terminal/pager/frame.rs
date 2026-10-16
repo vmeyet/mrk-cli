@@ -111,7 +111,7 @@ impl Pictures {
 
 /// "mrk" in ASCII, so the pager's image ids stay clear of the small ids other programs pick.
 fn image_id(index: usize) -> u32 {
-    FIRST_IMAGE_ID + (index as u32 & 0xffff)
+    FIRST_IMAGE_ID + u32::try_from(index & 0xffff).unwrap_or_default()
 }
 
 /// Through tmux every pane shares the terminal outside, so the id also follows the process: two pagers never share one.

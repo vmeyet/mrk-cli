@@ -19,7 +19,7 @@ pub(super) fn section<'a>(definitions: &[&'a AstNode<'a>], context: &Context) ->
         return Vec::new();
     }
     let short_rule = layout::lines(vec![rule::short(RULE_WIDTH, context)]);
-    let markers: Vec<String> = (1..=definitions.len()).map(|number| marker(number as u32)).collect();
+    let markers: Vec<String> = (1..).take(definitions.len()).map(marker).collect();
     let marker_width = markers.iter().map(|marker| crate::text::display_width(marker)).max().unwrap_or(0) + 1;
     let notes = definitions.iter().zip(markers).map(|(definition, marker)| note(definition, &marker, marker_width, context));
     layout::stack(std::iter::once(short_rule).chain(notes), Spacing::Tight)

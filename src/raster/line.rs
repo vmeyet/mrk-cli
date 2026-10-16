@@ -8,6 +8,7 @@ const FONT_SIZE_PER_HEIGHT: f32 = 0.75;
 const BASELINE_BELOW_MIDDLE: f32 = 0.35;
 
 /// `text` on one line `rows` cells tall in `color`, bold where the font has a bold face, shrunk to fit `max_cols`.
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "`cols` is clamped to 1..=max_cols, at most 4096")]
 pub fn line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) -> Result<Picture, RasterError> {
     let height_px = u32::from(rows) * u32::from(cell.height_px);
     let max_cols = max_cols.min((MAX_SIDE_PX / u32::from(cell.width_px.max(1))) as usize);

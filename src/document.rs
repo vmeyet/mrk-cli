@@ -13,6 +13,7 @@ impl Rgb {
     }
 
     /// The colour `amount` of the way from this one to `other`: 0.0 keeps it, 1.0 gives `other`.
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a float `as u8` saturates into 0..=255")]
     pub fn mix(self, other: Rgb, amount: f32) -> Rgb {
         let channel = |from: u8, to: u8| (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8;
         Rgb(channel(self.0, other.0), channel(self.1, other.1), channel(self.2, other.2))

@@ -107,8 +107,8 @@ fn is_graphics_ok(body: &[u8]) -> bool {
 fn channel(hex: &str) -> Option<u8> {
     let is_valid = (1..=4).contains(&hex.len()) && hex.chars().all(|character| character.is_ascii_hexdigit());
     let value = u32::from_str_radix(hex, 16).ok().filter(|_| is_valid)?;
-    let max = 16u32.pow(hex.len() as u32) - 1;
-    Some((value * 255 / max) as u8)
+    let max = 16u32.pow(u32::try_from(hex.len()).ok()?) - 1;
+    u8::try_from(value * 255 / max).ok()
 }
 
 fn background(body: &[u8]) -> Option<Rgb> {

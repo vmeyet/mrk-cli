@@ -103,7 +103,7 @@ struct Tally {
 
 impl Tally {
     fn mean(self) -> Rgb {
-        let channel = |sum: u64| (sum / u64::from(self.count.max(1))) as u8;
+        let channel = |sum: u64| u8::try_from(sum / u64::from(self.count.max(1))).unwrap_or(u8::MAX);
         Rgb(channel(self.sums[0]), channel(self.sums[1]), channel(self.sums[2]))
     }
 }
@@ -119,7 +119,8 @@ fn tallies(rgba: &[u8]) -> Vec<Tally> {
 }
 
 fn nearest(color: Rgb, palette: &[Rgb]) -> u8 {
-    (0..palette.len()).min_by_key(|&index| distance(color, palette[index])).unwrap_or_default() as u8
+    let index = (0..palette.len()).min_by_key(|&index| distance(color, palette[index])).unwrap_or_default();
+    u8::try_from(index).unwrap_or(u8::MAX)
 }
 
 /// The most common colour buckets become the palette, each at the mean of its pixels; every other bucket takes the
@@ -133,7 +134,7 @@ fn quantize(width: u32, height: u32, rgba: &[u8]) -> Image {
 
     let mut lookup = vec![0; BUCKETS];
     for (index, &bucket) in common.iter().enumerate() {
-        lookup[bucket] = index as u8;
+        lookup[bucket] = u8::try_from(index).unwrap_or(u8::MAX);
     }
     for &bucket in rare {
         lookup[bucket] = nearest(tallies[bucket].mean(), &palette);

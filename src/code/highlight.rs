@@ -69,8 +69,7 @@ fn style_from(syntax: SyntaxStyle, surface: Rgb) -> Style {
 
 /// Some themes fade a colour with alpha; the terminal has no alpha, so it is mixed into the panel background.
 fn blend(color: Color, background: Rgb) -> Rgb {
-    let mix = |front: u8, back: u8| ((u16::from(front) * u16::from(color.a) + u16::from(back) * (255 - u16::from(color.a))) / 255) as u8;
-    Rgb(mix(color.r, background.0), mix(color.g, background.1), mix(color.b, background.2))
+    background.mix(Rgb(color.r, color.g, color.b), f32::from(color.a) / f32::from(u8::MAX))
 }
 
 #[cfg(test)]
