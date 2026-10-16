@@ -98,7 +98,9 @@ src/
 - The mermaid engine loads lazily on the first diagram, the font database on the first diagram or title picture; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; the whole system set loads only when those fallbacks miss a glyph.
   Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.
   Renamed, it never shadows a system family the SVG lists.
-- Terminal queries (kitty graphics support, the cell size, background colour) share one round trip ended by a DA1 request, with a 100 ms timeout, and only run when stdout is a tty and the answer is not already known from the environment.
+- Terminal queries (kitty graphics support, the cell size, background colour) share one round trip ended by a DA1 request, with a 100 ms timeout, and only run when stdout is a tty, mrk is the terminal's foreground job (a background job would be stopped by `SIGTTOU`) and the answer is not already known from the environment.
+  The replies are read until the DA1 reply or the timeout, skipping keys typed meanwhile; raw mode ends with `TCSAFLUSH`, which discards the input still unread, so the shell or the pager never reads a reply that arrived during the round as keys.
+  Known limit: a reply arriving after the timeout (a slow link such as SSH, or the terminal outside tmux) reaches the shell or the pager as input.
   The DA1 reply lists Sixel as attribute `4`; Sixel draws only when kitty graphics does not.
   Inside tmux (`TMUX` set) the environment cannot vouch for kitty graphics, since it was inherited from whatever terminal started the server; only `LC_TERMINAL=iTerm2` still rules them out.
   The kitty query goes through tmux (`ESC Ptmux; … ESC \`, inner ESCs doubled) and the round waits for its answer after tmux's own DA1, up to the timeout: no answer means passthrough is off or the terminal outside has no kitty graphics, and diagrams stay text.

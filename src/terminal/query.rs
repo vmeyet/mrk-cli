@@ -44,6 +44,8 @@ mod tty {
     use std::time::{Duration, Instant};
 
     use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
+    use rustix::process::getpgrp;
+    use rustix::termios::{OptionalActions, Termios, tcgetattr, tcgetpgrp, tcsetattr};
 
     use super::reply::{self, Replies};
 
@@ -51,18 +53,26 @@ mod tty {
     const READ_BYTES: usize = 256;
     const IDLE_WAIT: Duration = Duration::from_millis(2);
 
-    struct RawMode;
+    struct RawMode<'a> {
+        tty: &'a File,
+        saved: Termios,
+    }
 
-    impl RawMode {
-        fn enable() -> io::Result<Self> {
-            crossterm::terminal::enable_raw_mode()?;
-            Ok(Self)
+    impl<'a> RawMode<'a> {
+        fn enable(tty: &'a File) -> io::Result<Self> {
+            let saved = tcgetattr(tty)?;
+            let mut raw = saved.clone();
+            raw.make_raw();
+            tcsetattr(tty, OptionalActions::Now, &raw)?;
+            Ok(Self { tty, saved })
         }
     }
 
-    impl Drop for RawMode {
+    /// Restoring with `TCSAFLUSH` discards the input left unread in the same step, so the shell or the pager never reads
+    /// a reply that arrived during the round as keys; a reply arriving after it still reaches them.
+    impl Drop for RawMode<'_> {
         fn drop(&mut self) {
-            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = tcsetattr(self.tty, OptionalActions::Flush, &self.saved);
         }
     }
 
@@ -73,19 +83,24 @@ mod tty {
         Ok(tty)
     }
 
-    fn read_available(mut tty: &File) -> io::Result<Vec<u8>> {
+    /// A background job that changes the terminal's modes is stopped by `SIGTTOU`.
+    fn is_foreground(tty: &File) -> bool {
+        tcgetpgrp(tty).is_ok_and(|group| group == getpgrp())
+    }
+
+    fn read_available(mut source: impl Read) -> io::Result<Vec<u8>> {
         let mut buffer = [0; READ_BYTES];
-        match tty.read(&mut buffer) {
+        match source.read(&mut buffer) {
             Ok(count) => Ok(buffer[..count].to_vec()),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Vec::new()),
+            Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => Ok(Vec::new()),
             Err(error) => Err(error),
         }
     }
 
-    fn read_replies(tty: &File, deadline: Instant, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
+    fn read_replies(mut source: impl Read, deadline: Instant, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
         let mut received = Vec::new();
         while !is_complete(&reply::parse(&received)) && received.len() < MAX_REPLY_BYTES && Instant::now() < deadline {
-            let chunk = read_available(tty)?;
+            let chunk = read_available(&mut source)?;
             if chunk.is_empty() {
                 std::thread::sleep(IDLE_WAIT);
             }
@@ -94,13 +109,87 @@ mod tty {
         Ok(received)
     }
 
+    fn send(mut tty: &File, request: &str) -> io::Result<()> {
+        tty.write_all(request.as_bytes())?;
+        tty.flush()
+    }
+
     pub fn exchange(request: &str, timeout: Duration, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
         let deadline = Instant::now() + timeout;
-        let mut tty = open_nonblocking()?;
-        let _raw = RawMode::enable()?;
-        tty.write_all(request.as_bytes())?;
-        tty.flush()?;
+        let tty = open_nonblocking()?;
+        if !is_foreground(&tty) {
+            return Ok(Vec::new());
+        }
+        let _raw = RawMode::enable(&tty)?;
+        send(&tty, request)?;
         read_replies(&tty, deadline, is_complete)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #![allow(clippy::unwrap_used)]
+
+        use super::*;
+
+        const DA1: &[u8] = b"\x1b[?62;22c";
+        const BACKGROUND: &[u8] = b"\x1b]11;rgb:0/0/0\x07";
+        const PATIENCE: Duration = Duration::from_secs(5);
+
+        /// Hands out one chunk per read; an empty chunk, or the end of the chunks, is a read that would block.
+        struct Chunks<'a>(std::slice::Iter<'a, &'a [u8]>);
+
+        impl Read for Chunks<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                let chunk = self.0.next().filter(|chunk| !chunk.is_empty()).ok_or(io::ErrorKind::WouldBlock)?;
+                buffer[..chunk.len()].copy_from_slice(chunk);
+                Ok(chunk.len())
+            }
+        }
+
+        fn chunks<'a>(list: &'a [&'a [u8]]) -> Chunks<'a> {
+            Chunks(list.iter())
+        }
+
+        fn read_until_answered(source: impl Read, timeout: Duration) -> Vec<u8> {
+            read_replies(source, Instant::now() + timeout, |replies| replies.answered).unwrap()
+        }
+
+        #[test]
+        fn reading_stops_at_the_da1_sentinel() {
+            let received = read_until_answered(chunks(&[BACKGROUND, DA1, b"\x1b[6;20;10t"]), PATIENCE);
+
+            assert_eq!(received, [BACKGROUND, DA1].concat());
+        }
+
+        #[test]
+        fn a_silent_terminal_ends_the_round_at_the_deadline() {
+            let timeout = Duration::from_millis(20);
+            let started = Instant::now();
+
+            assert_eq!(read_until_answered(chunks(&[]), timeout), b"");
+            assert!(started.elapsed() >= timeout);
+        }
+
+        #[test]
+        fn a_reply_split_across_reads_and_idle_reads_is_waited_for() {
+            let received = read_until_answered(chunks(&[b"", b"\x1b[?6", b"", b"", b"2;22c"]), PATIENCE);
+
+            assert!(reply::parse(&received).answered);
+        }
+
+        #[test]
+        fn keys_typed_before_the_replies_do_not_end_the_round() {
+            let received = read_until_answered(chunks(&[b"ls -la", b"\x1b[A", DA1]), PATIENCE);
+
+            assert!(reply::parse(&received).answered);
+        }
+
+        #[test]
+        fn a_flood_stops_at_the_byte_cap() {
+            let received = read_until_answered(io::repeat(b'x'), PATIENCE);
+
+            assert_eq!(received.len(), MAX_REPLY_BYTES);
+        }
     }
 }
 

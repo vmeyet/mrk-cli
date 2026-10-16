@@ -28,12 +28,13 @@ fn is_printable(bytes: &[u8]) -> bool {
     bytes.iter().all(|byte| (0x20..=0x7e).contains(byte))
 }
 
+/// The first ESC ends the string: either it opens the terminator, or the string is broken.
 fn string_end(bytes: &[u8], accepts_bel: bool) -> Option<(usize, usize)> {
-    bytes.iter().enumerate().find_map(|(index, &byte)| match byte {
-        BEL if accepts_bel => Some((index, index + 1)),
-        ESC if bytes.get(index + 1) == Some(&b'\\') => Some((index, index + 2)),
-        _ => None,
-    })
+    let index = bytes.iter().position(|&byte| byte == ESC || (accepts_bel && byte == BEL))?;
+    match bytes[index] {
+        BEL => Some((index, index + 1)),
+        _ => (bytes.get(index + 1) == Some(&b'\\')).then_some((index, index + 2)),
+    }
 }
 
 fn string_sequence(bytes: &[u8], accepts_bel: bool) -> Option<(&[u8], usize)> {
@@ -50,11 +51,8 @@ fn csi_sequence(bytes: &[u8]) -> Option<(&[u8], usize)> {
     is_final.then_some((&body[..=final_index], final_index + 3))
 }
 
+/// Reads the sequence opened by the ESC at the start of `bytes`.
 fn next_sequence(bytes: &[u8]) -> Option<(Sequence<'_>, usize)> {
-    if bytes.first() != Some(&ESC) {
-        return None;
-    }
-
     match bytes.get(1)? {
         b'[' => csi_sequence(bytes).map(|(body, consumed)| (Sequence::Csi(body), consumed)),
         b']' => string_sequence(bytes, true).map(|(body, consumed)| (Sequence::Osc(body), consumed)),
@@ -63,12 +61,20 @@ fn next_sequence(bytes: &[u8]) -> Option<(Sequence<'_>, usize)> {
     }
 }
 
+/// Keys typed while the replies come in sit between them, so anything that is not a well-formed sequence is skipped up
+/// to the next ESC.
 fn sequences(bytes: &[u8]) -> Vec<Sequence<'_>> {
     let mut found = Vec::new();
     let mut rest = bytes;
-    while let Some((sequence, consumed)) = next_sequence(rest) {
-        found.push(sequence);
-        rest = &rest[consumed..];
+    while let Some(start) = rest.iter().position(|&byte| byte == ESC) {
+        rest = &rest[start..];
+        match next_sequence(rest) {
+            Some((sequence, consumed)) => {
+                found.push(sequence);
+                rest = &rest[consumed..];
+            }
+            None => rest = &rest[1..],
+        }
     }
     found
 }
@@ -122,7 +128,7 @@ fn record(replies: Replies, sequence: &Sequence<'_>) -> Replies {
     }
 }
 
-/// Reads the replies from the start of `bytes`, stopping at the first byte that is not a well-formed reply.
+/// Reads every well-formed reply in `bytes`, skipping whatever else sits around them.
 pub fn parse(bytes: &[u8]) -> Replies {
     sequences(bytes).iter().fold(Replies::default(), record)
 }
@@ -206,10 +212,17 @@ mod tests {
     }
 
     #[test]
-    fn parsing_stops_at_unexpected_bytes() {
-        let replies = parse(&[b"\x1b_Gi=31;OK\x1b\\".as_slice(), b"garbage", DA1].concat());
+    fn keys_typed_around_the_replies_are_skipped() {
+        let replies = parse(&[b"ls".as_slice(), b"\x1b_Gi=31;OK\x1b\\", b"\x1b[A\x1bx q", DA1, b"\x1b"].concat());
 
-        assert_eq!(replies, Replies { graphics: true, ..Replies::default() });
+        assert_eq!(replies, Replies { graphics: true, answered: true, ..Replies::default() });
+    }
+
+    #[test]
+    fn a_string_reply_ends_at_its_first_esc_so_broken_ones_are_not_scanned_to_the_end() {
+        assert_eq!(string_end(b"11;rgb:0/0/0\x1b\\", false), Some((12, 14)));
+        assert_eq!(string_end(b"11;rgb:0/0/0\x07", true), Some((12, 13)));
+        assert_eq!(string_end(b"11;rgb:0\x1b]11;rgb:0/0/0\x07", true), None);
     }
 
     #[test]
