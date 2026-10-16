@@ -8,30 +8,24 @@ const CENTRE: &str = " ◆ ";
 /// The only front matter fence comrak is told about: YAML's.
 pub(super) const FRONT_MATTER_DELIMITER: &str = "---";
 
-/// `───── ◆ ─────` across the width.
+/// `───── ◆ ─────` across the width, which `MIN_WIDTH` keeps wider than the centre.
 pub(super) fn thematic(context: &Context) -> Line {
-    let width = context.width();
     let border = Style::fg(context.palette().subtle);
-    let sides = width.saturating_sub(text::display_width(CENTRE));
-    if sides == 0 {
-        return full(context);
-    }
+    let sides = context.width() - text::display_width(CENTRE);
     let left = sides / 2;
     Line::new(vec![
-        Span::new(RULE.repeat(left), border),
-        Span::new(CENTRE, Style::fg(context.palette().muted)),
-        Span::new(RULE.repeat(sides - left), border),
+        Span::new(RULE.repeat(left), border).framed(),
+        Span::new(CENTRE, Style::fg(context.palette().muted)).framed(),
+        Span::new(RULE.repeat(sides - left), border).framed(),
     ])
 }
 
-/// A plain rule across the whole width.
 pub(super) fn full(context: &Context) -> Line {
     short(context.width(), context)
 }
 
-/// A plain rule of `width` cells, never wider than the context.
 pub(super) fn short(width: usize, context: &Context) -> Line {
-    Line::new(vec![Span::new(RULE.repeat(width.min(context.width())), Style::fg(context.palette().subtle))])
+    Line::new(vec![Span::new(RULE.repeat(width.min(context.width())), Style::fg(context.palette().subtle)).framed()])
 }
 
 /// The lines between the fences in `muted`, blank ones left out, then a rule.
@@ -42,11 +36,12 @@ pub(super) fn front_matter(source: &str, context: &Context) -> Vec<Line> {
     lines.chain(std::iter::once(full(context))).collect()
 }
 
-/// A front matter line behind its own indent (YAML nests by it), up to half the width; it wraps two cells further in.
+/// A front matter line behind its own indent (YAML nests by it), up to half the width, its spacing kept; it goes on
+/// two cells further in.
 fn entry(line: &str, muted: Style, width: usize) -> Vec<Line> {
     let value = line.trim_start();
     let indent_width = text::display_width(&line[..line.len() - value.len()]).min(width / 2);
-    let lines = text::wrap(&[Span::new(value, muted)], width.saturating_sub(indent_width), &[Span::plain("  ")]);
+    let lines = text::wrap_literal(&[Span::new(value, muted)], width - indent_width, &[Span::plain("  ").framed()]);
     let indent = layout::blank(indent_width);
     layout::prefix_lines(lines, &indent, &indent)
 }
@@ -73,8 +68,13 @@ mod tests {
     #[test]
     fn thematic_break_is_subtle_around_a_muted_diamond() {
         let palette = MRK_DARK.palette;
-        let border = |cells: usize| Span::new("─".repeat(cells), Style::fg(palette.subtle));
+        let border = |cells: usize| Span::new("─".repeat(cells), Style::fg(palette.subtle)).framed();
 
-        assert_eq!(styled("---"), [[border(38), Span::new(" ◆ ", Style::fg(palette.muted)), border(39)]]);
+        assert_eq!(styled("---"), [[border(38), Span::new(" ◆ ", Style::fg(palette.muted)).framed(), border(39)]]);
+    }
+
+    #[test]
+    fn front_matter_keeps_the_spacing_of_its_values() {
+        assert_eq!(plain_at("---\nname:    mrk\n---\n", 20).lines().next(), Some("name:    mrk"));
     }
 }

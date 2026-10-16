@@ -14,7 +14,7 @@ pub fn render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Li
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::test_settings;
+    use crate::document::test_settings;
 
     const RUST: &str = "fn main() {\n    let greeting = \"hello\";\n    println!(\"{greeting}\");\n}\n";
 
@@ -97,17 +97,6 @@ mod tests {
     fn rust_panel_in_colour() {
         let lines = render("fn main() {\n    let a = \"b\";\n}\n", Some("rust"), &at_width(24));
 
-        insta::assert_snapshot!(crate::document::ansi(&crate::document::Document { blocks: vec![crate::document::Block::Lines(lines)] }));
-    }
-
-    /// Run with `cargo test --release code::tests::cold -- --ignored --nocapture`, alone, so nothing warmed the sets first.
-    #[test]
-    #[ignore = "timing, meaningful only in release and in a fresh process"]
-    fn cold_first_block_timing() {
-        let start = std::time::Instant::now();
-        let _ = render(RUST, Some("rust"), &test_settings());
-        let rust = start.elapsed();
-        let _ = render("const a: number = 1;\n", Some("ts"), &test_settings());
-        println!("cold rust block: {rust:?}, then first ts block: {:?}", start.elapsed().saturating_sub(rust));
+        insta::assert_snapshot!(crate::snapshot::ansi(&crate::document::Document { blocks: vec![crate::document::Block::Lines(lines)] }));
     }
 }

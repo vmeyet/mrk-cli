@@ -39,7 +39,7 @@ Every theme name given is checked, the pair's too, whatever the background.
 `--help` ends with that lookup, the environment, the pager keys and the exit status; the man page carries the same sections.
 
 Exit status: 0 on success, 2 for a usage mistake (a bad flag, environment value or config file, including one that cannot be read, an unknown theme from any of them), 1 for any other failure.
-An unknown theme gets a "did you mean" only when the closest name is at most one edit per three typed characters away.
+An unknown theme gets a "did you mean" only when the closest name is at most one edit per three typed characters away (rounded down, at least one, at most three; swapping two neighbours is one edit).
 
 ## Visual language
 
@@ -53,7 +53,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Paragraph | `text`, wrapped to width, one blank line between blocks |
 | Emphasis | bold / italic / strikethrough (strike also dimmed) |
 | Inline code | `text` mixed 20% toward `code`, on `surface` mixed 5% toward `code`, one space of padding each side |
-| Link | underlined `link`, OSC 8 hyperlink; autolinks likewise. Without hyperlinks (piped, no colour, dumb terminal) the text is followed by ` <url>` in `muted`, except when the text already is the URL |
+| Link | underlined `link`, OSC 8 hyperlink; autolinks likewise. Without hyperlinks (piped, no colour, dumb terminal), or for a target no terminal can open (a relative path, a scheme `sanitize::link` refuses), the text is followed by ` <url>` in `muted`, except when the text, inline code padding aside, already is the URL, or the target is a `#fragment` |
 | Image | `▣ alt text` in `muted`, hyperlinked to the source (` <source>` after it without hyperlinks); never fetched |
 | Bullets | `•` `◦` `▪` by depth, in `accent`; numbers right-aligned in `accent` |
 | Task | `✔` in `success` / `○` in `muted`, after the number in an ordered list; done items dimmed |
@@ -63,7 +63,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Table | rounded box (`╭┬╮ ├┼┤ ╰┴╯`) in `subtle`, bold header in `accent`, column alignment honoured, cells wrap when the table is too wide. When even three cells per column cannot fit, each row is a record instead: one `header: value` line per cell, records a blank line apart; a table with only a header lists its names one per line |
 | Rule | `─` in `subtle` across the width, with a centred `◆` |
 | Footnote | `¹`-style marker in `accent`; notes listed at the end under a short rule |
-| Front matter | its lines in `muted`, each behind its indent (at most half the width), then a rule |
+| Front matter | its lines in `muted`, wrapped at spaces with their runs of spaces kept, each behind its indent (at most half the width), then a rule |
 | Pager status bar | last row on `surface`: file name in bold `text`, the search prompt or `3/12` in `accent`, `Top`/`Bot`/`42%` in `accent` and a `muted` key hint |
 | Search match | current match `surface` on `accent`, bold; other matches `text` on `subtle` |
 | Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off. In a list or quote the image keeps the indent and bar beside every row, and an item that opens on a diagram has its marker on a line of its own |
@@ -71,7 +71,9 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 ## Vocabulary
 
 - **Document**: the rendered output, a list of blocks. **Block**: text lines or a picture.
-- **Line**: spans that fit the width. **Span**: text with one style and an optional link.
+- **Section**: a top-level piece of the source (a heading, a paragraph, one list item, the footnotes) with its kind, the source lines it came from and its blocks; what `diff` pairs.
+- **Marker**: what stands before a list item or a footnote: its bullet, number, task glyph or note number.
+- **Line**: spans that fit the width. **Span**: text with one style and an optional link, marked as frame when mrk drew it (a bar, a border, a marker, padding) rather than the input wrote it.
 - **Theme**: a palette plus a syntax theme, one of the `SyntaxTheme` variants that `code` maps onto a two-face theme. **Palette**: the named colours above.
 - **Settings**: width, theme, the image cell size, whether links are clickable and how a jumbo title is drawn, everything a renderer reads.
 - **Picture**: a PNG with the cell box it occupies and the indent drawn left of each of its rows; a title's picture also carries the text concealed under it.

@@ -414,7 +414,7 @@ mod tests {
     }
 
     fn jumbo_sample(jumbo_title: Option<JumboTitle>) -> Document {
-        let settings = crate::document::Settings { width: 30, jumbo_title, ..crate::theme::test_settings() };
+        let settings = crate::document::Settings { width: 30, jumbo_title, ..crate::document::test_settings() };
         crate::markdown::render("# Big title\n\nText", &settings)
     }
 

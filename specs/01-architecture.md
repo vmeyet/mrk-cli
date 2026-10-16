@@ -38,9 +38,10 @@ src/
     input.rs       file or stdin, capped at 8 MiB, the name the pager shows
     output.rs      Output (print, pager, MRK_PAGER command), Layout: the render closure the pager calls on resize
   config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected); the width bounds MIN_WIDTH 20, MAX_WIDTH 1000 and DEFAULT_WIDTH 100
-  diff.rs          blocks(): two versions of a file rendered with render_blocks, paired block by block, changed words as char ranges (similar)
+  diff.rs          sections(): two versions of a file rendered with render_sections, paired section by section, changed words as char ranges (similar)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight(); Line::printable() is the text safe to print
   sanitize.rs      text, lines, link: what may reach a terminal, for the binary and library users alike
+  snapshot.rs      tests only: a Document as terminal::ansi writes it, what colour snapshots compare
   text.rs          display_width, cut, wrap (at spaces), hard_wrap (where a line is full, for code and source), expand_tabs
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names, UnknownTheme
   update.rs        `mrk update`: the latest release tag and its commit from `git ls-remote --tags`, compared with the running version;
@@ -48,7 +49,7 @@ src/
                    else `cargo install --rev <commit> --target-dir <temporary folder>`, the folder removed afterwards
   version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)
-    blocks.rs      SourceBlock, BlockKind: the top-level sections both render and render_blocks are built from
+    blocks.rs      Section, SectionKind: the top-level sections both render and render_sections are built from
   code/            syntect + two-face: highlight a fenced block into a surface panel
   mermaid/         mermaid-rs-renderer SVG ─▶ raster PNG ─▶ Picture; mermaid-text fallback
     budget.rs      the size and subgraph limits of both engines, then each engine's own count
@@ -83,14 +84,15 @@ src/
 ## Contracts
 
 - `markdown::render(source: &str, settings: &Settings) -> Document`
-- `markdown::render_blocks(source: &str, settings: &Settings) -> Vec<SourceBlock>`: the same rendering cut into top-level blocks, each with `first_line`/`last_line` (1-based, inclusive, from comrak's `sourcepos`, trailing blank lines dropped), a `BlockKind` and its `blocks`. A list gives one block per top-level item, nested items inside; quotes and alerts stay whole; the footnote definitions are one last block spanning the earliest to the latest definition. No blank line sits before, after or between blocks. `render` is these blocks stacked a blank line apart (none between items of a tight list), so the two cannot drift.
-- `diff::blocks(old: &str, new: &str, settings: &Settings) -> Vec<BlockChange>`: both sides through `render_blocks`, in reading order, each block of a side exactly once.
-  Blocks are equal when their kind, their lines of plain text (`Line::plain` of every `Lines` and `DoubleHeight` line, line by line) and their pictures' PNG are; `similar`'s Patience diff gives `Same`, and in each run of differing blocks a removed block pairs with the next added block of the same `BlockKind` variant (a heading's level, a task's state, a fence's language may differ) into `Changed`, the others being `Removed` or `Added`.
-  A `Changed` pair carries char ranges of that plain text, ready for `document::highlight`: a Myers diff over the words and punctuation of each line (never across lines; spaces, bars and borders left out), each run of changed words one range; none for Mermaid.
+- `markdown::render_sections(source: &str, settings: &Settings) -> Vec<Section>`: the same rendering cut into top-level sections, each with `first_line`/`last_line` (1-based, inclusive, from comrak's `sourcepos`, lines ending at `\n`, `\r\n` or a lone `\r` as comrak counts them, trailing blank lines dropped), a `SectionKind` and its `blocks`. A list gives one section per top-level item, nested items inside; quotes and alerts stay whole; the footnote definitions are one last section spanning the earliest to the latest definition. No blank line sits before, after or between sections. A top-level node the enabled extensions never produce renders as its children and is no section. `render` is these sections stacked a blank line apart (none between items of a tight list), so the two cannot drift.
+- `diff::sections(old: &str, new: &str, settings: &Settings) -> Vec<SectionChange>`: both sides through `render_sections`, in reading order, each section of a side exactly once.
+  Sections are equal when their kind, their lines (every `Lines` and `DoubleHeight` line, line by line) and their pictures' PNG are. A line is compared by the input's text: its frame spans (`Span::is_frame`: bars, borders, rules, markers, padding, the continuation sign, all that mrk draws) count as one space each, and runs of spaces as one, trimmed, except in code, Mermaid, front matter and HTML, whose spacing is the input's; so a renumbered list stays `Same`, and `a+b` against `a + b` or a box character the input wrote is a change. `similar`'s Patience diff gives `Same`, and in each run of differing sections a removed section pairs with the next added section of the same `SectionKind` variant (a heading's level, a task's state, a fence's language may differ) into `Changed`, the others being `Removed` or `Added`.
+  A `Changed` pair carries char ranges of its plain text (`Line::plain` of each line, joined), ready for `document::highlight`: a Myers diff over the words and punctuation outside the frame, each run of changed words one range that never crosses a line end or a frame span; none for Mermaid.
+  The work is bounded by counts, never by the clock, so the same files always give the same answer (`02-security.md` rule 4): past 10,000 sections, both sides counted, only the equal sections at the start and the end pair as `Same`; a pair over 20,000 words, both sides counted, and every pair after 50,000 words diffed in one call, is marked whole, every word of each line.
   It returns ranges, never colours.
 - `document::highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line>`: ranges are char offsets into the lines' plain text joined with no separator, in any order; spans split at range edges and keep their link, text and widths never change. The pager search paints its matches with it.
 - `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells, or `document::MIN_WIDTH` when that is narrower.
-  `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `BlockKind::Code`.
+  `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `SectionKind::Code`.
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
   Each engine only sees a diagram within its count of `02-security.md` rule 4, and both share the diagram's 2 s deadline; over a count, the note names the limit (`mermaid: over 160 statements, too many to lay out`), past the deadline it says `too slow to lay out`.
 - `raster::line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) -> Result<Picture, RasterError>`: the text in bold `font-weight` on a transparent PNG `rows` cells tall and as many whole cells wide as it needs, shrunk to fit `max_cols`; `raster::Svg` parses and draws mermaid's SVG the same way.
@@ -99,20 +101,20 @@ src/
 - `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: writes a Document with its escape sequences; `margin` columns before every line and picture, from `terminal::margin`, then a picture's indent on each of its rows (centred on a wide terminal, `LEFT_MARGIN` otherwise).
   A picture is drawn after its rows scrolled into view, the cursor sent back up to the first; one taller than the window is drawn in runs one row shorter than the window, each a crop of its PNG (kitty receives the PNG once per run), since the cursor cannot climb above the top row. A Sixel run goes on to a whole six-pixel band, into the next run, which covers it again, so no pixel row goes missing between runs.
 - Escape sequences are produced only inside `terminal/`: `ansi.rs` for styled lines, `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs`, `sixel.rs` and `tmux.rs` for pictures, `query.rs` for the capability queries, `error_report` for dimmed error causes.
-- `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
+- `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, or `sanitize::link` refuses the target (a relative path), `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
 - A `Line` never exceeds `settings.width` cells, for any width from `document::MIN_WIDTH` up; the renderer that builds it guarantees it, `text::wrap` and `text::hard_wrap` help.
   `document::MIN_WIDTH` (8) is the narrowest the renderers lay out, enough for a code panel's padding, its continuation marker and a wide grapheme: a narrower width lays out at 8.
   A list item, quote or footnote whose indent would leave less than 12 cells stops indenting: its blocks keep the container's width, a marker opening the first paragraph (or on a line of its own), a quote or alert without its bar.
   Past 32 nested containers, a container renders as its bare text: bounded recursion on hostile input.
 - Every width is `text::display_width`: counted per grapheme (at most two cells), a tab up to the next tab stop, the characters `sanitize` removes as none.
   `text::expand_tabs` is the one tab rule: a tab is the spaces up to the next column that is a multiple of four, counted from the start of the line, so `ab\tc` puts `c` in column 4.
-  `hard_wrap` (code, source) and `sanitize` expand tabs this way; `wrap` breaks at a tab as at a space.
+  `hard_wrap` (code, source), `wrap_literal` (HTML, front matter: it breaks at spaces but keeps runs of spaces) and `sanitize` expand tabs this way, `sanitize` once the characters it removes are gone; `wrap` breaks at a tab as at a space, except on a background (inline code), where the tab stops on the line it lands on.
   Every cut to a width goes through `text::cut`, which never splits a grapheme.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 
 ## Performance
 
-- syntect's syntax and theme sets load lazily, once, on the first code block (`std::sync::LazyLock`).
+- syntect's syntax and theme sets load lazily, once, on the first code block that names a language other than plain text (`text`, `txt`, `plain`, `plaintext`, `none`) (`std::sync::LazyLock`).
 - The mermaid engine loads lazily on the first diagram, the font database on the first diagram or title picture; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; every font file in the font directories (`02-security.md` rule 3) loads only when those fallbacks miss a glyph.
   What a label needs is read off the text between the SVG's tags, never the diagram source, so a comment in another script loads nothing more.
   Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.

@@ -129,7 +129,7 @@ mod tests {
 
     use super::*;
     use crate::document::Line;
-    use crate::theme::test_settings;
+    use crate::document::test_settings;
 
     const FLOWCHART: &str = "graph TD\n  A[Start] --> B{Ready?}\n  B -->|yes| C[Render]\n  B -->|no| D[Wait]\n  D --> B\n";
     const SEQUENCE: &str = "sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi\n";

@@ -43,7 +43,7 @@ cargo insta review              # after a deliberate rendering change
 cargo run -- tests/fixtures/showcase.md
 ```
 
-- Every module ships its tests in the same file; rendering tests snapshot `document::plain` (layout) and, where colour matters, `document::ansi` or `terminal::ansi` output.
+- Every module ships its tests in the same file; rendering tests snapshot `document::plain` (layout) and, where colour matters, `snapshot::ansi` or `terminal::ansi` output.
 - Colour assertions compare whole styled lines or ANSI snapshots, never "the first span containing X".
 - A test written for a branch proves it reaches that branch (the input really exceeds the limit); a regression test fails on the old code.
 - Tests that depend on the machine (installed fonts, timing) are made hermetic or marked `#[ignore = "<reason>"]`; deadlines are injected, never measured.

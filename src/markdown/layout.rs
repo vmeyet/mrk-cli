@@ -26,48 +26,44 @@ pub(super) fn is_empty(group: &[Block]) -> bool {
     group.iter().all(|block| matches!(block, Block::Lines(lines) if lines.is_empty()))
 }
 
-/// Puts `first` before the first line and `rest` before every other. A picture is indented by `rest` on every row;
+/// Puts `first` before the first line and `rest` before every other, as frame. A picture is indented by `rest` on every row;
 /// when it comes first and `first` differs, as a list marker does, `first` gets a line of its own above it.
-/// Double-height lines become plain lines: a prefix cannot be drawn twice as wide.
+/// The blocks sit inside a container, where no line is double height.
 pub(super) fn prefix(blocks: Vec<Block>, first: &[Span], rest: &[Span]) -> Vec<Block> {
-    let mut is_first_line = true;
-    blocks
-        .into_iter()
-        .flat_map(|block| match block {
-            Block::Lines(lines) if lines.is_empty() => vec![Block::Lines(lines)],
-            Block::Lines(lines) | Block::DoubleHeight(lines) => {
-                let opening = if std::mem::take(&mut is_first_line) { first } else { rest };
-                vec![Block::Lines(prefix_lines(lines, opening, rest))]
-            }
+    let opening = blocks.iter().position(|block| !matches!(block, Block::Lines(lines) if lines.is_empty()));
+    let prefixed = blocks.into_iter().enumerate().flat_map(|(index, block)| {
+        let is_opening = Some(index) == opening;
+        match block {
+            Block::Lines(lines) => vec![Block::Lines(prefix_lines(lines, if is_opening { first } else { rest }, rest))],
             Block::Picture(picture) => {
-                let marker =
-                    (std::mem::take(&mut is_first_line) && first != rest).then(|| Block::Lines(vec![prefix_line(Line::blank(), first)]));
+                let marker = (is_opening && first != rest).then(|| Block::Lines(vec![prefix_line(Line::blank(), first)]));
                 marker.into_iter().chain([Block::Picture(indent(picture, rest))]).collect()
             }
-        })
-        .collect()
+            other => vec![other],
+        }
+    });
+    prefixed.collect()
 }
 
 fn indent(picture: Picture, prefix: &[Span]) -> Picture {
-    let indent = Line::new(prefix.iter().cloned().chain(picture.indent.spans).collect());
+    let indent = Line::new(prefix.iter().cloned().map(Span::framed).chain(picture.indent.spans).collect());
     Picture { indent, ..picture }
 }
 
-/// A list item's or a note's blocks behind `lead` (its marker, `width` cells), the lines after it indented as far;
+/// A list item's or a note's blocks behind its `marker`, `width` cells, the lines after it indented as far;
 /// an empty body still shows the marker.
-pub(super) fn marked(body: Vec<Block>, lead: &[Span], width: usize) -> Vec<Block> {
+pub(super) fn marked(body: Vec<Block>, marker: &[Span], width: usize) -> Vec<Block> {
     let body = if body.is_empty() { lines(vec![Line::blank()]) } else { body };
-    prefix(body, lead, &blank(width))
+    prefix(body, marker, &blank(width))
 }
 
-/// `prefix` for bare lines.
 pub(super) fn prefix_lines(lines: Vec<Line>, first: &[Span], rest: &[Span]) -> Vec<Line> {
     lines.into_iter().enumerate().map(|(index, line)| prefix_line(line, if index == 0 { first } else { rest })).collect()
 }
 
 fn prefix_line(line: Line, prefix: &[Span]) -> Line {
     let prefix = if line.spans.is_empty() { trim_end(prefix) } else { prefix.to_vec() };
-    Line::new(prefix.into_iter().chain(line.spans).filter(|span| !span.text.is_empty()).collect())
+    Line::new(prefix.into_iter().map(Span::framed).chain(line.spans).filter(|span| !span.text.is_empty()).collect())
 }
 
 fn trim_end(spans: &[Span]) -> Vec<Span> {
@@ -81,15 +77,16 @@ fn trim_end(spans: &[Span]) -> Vec<Span> {
     trimmed
 }
 
-/// Restyles every span of every line and picture indent, the pictures themselves untouched.
+/// Restyles every span of every line and picture indent, the pictures themselves untouched; like `prefix`, for the
+/// blocks inside a container.
 pub(super) fn restyle(blocks: Vec<Block>, change: impl Fn(Style) -> Style) -> Vec<Block> {
     let restyle_line = |line: Line| Line::new(line.spans.into_iter().map(|span| Span { style: change(span.style), ..span }).collect());
     blocks
         .into_iter()
         .map(|block| match block {
             Block::Lines(lines) => Block::Lines(lines.into_iter().map(restyle_line).collect()),
-            Block::DoubleHeight(lines) => Block::DoubleHeight(lines.into_iter().map(restyle_line).collect()),
             Block::Picture(picture) => Block::Picture(Picture { indent: restyle_line(picture.indent), ..picture }),
+            other => other,
         })
         .collect()
 }
@@ -100,7 +97,7 @@ pub(super) fn lines(lines: Vec<Line>) -> Vec<Block> {
 
 /// Spaces as wide as `width`, the continuation indent under a marker.
 pub(super) fn blank(width: usize) -> Vec<Span> {
-    vec![Span::plain(" ".repeat(width))]
+    vec![Span::plain(" ".repeat(width)).framed()]
 }
 
 #[cfg(test)]

@@ -128,7 +128,7 @@ The full rules are in [`specs/02-security.md`](specs/02-security.md).
 ## More
 
 - [Reference](docs/reference.md): options, environment, config file, exit codes, shell completions and the man page.
-- [Library](docs/library.md): render Markdown from Rust, without the terminal parts, and diff two versions block by block with `diff::blocks`.
+- [Library](docs/library.md): render Markdown from Rust, without the terminal parts, and diff two versions section by section with `diff::sections`.
 - [Specs](specs/) and [`AGENTS.md`](AGENTS.md): the design and the rules for contributing; `scripts/check` runs every check CI runs, and skips the MSRV check and the musl release build when their toolchain is not installed.
 
 ## License

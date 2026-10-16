@@ -1,13 +1,14 @@
 //! Text and links made safe to write to a terminal, which interprets the escape sequences an untrusted input can carry.
-use crate::text::{expand_tabs, is_forbidden};
+use crate::text::{expand_tabs, printed};
 
 const MAX_LINK_BYTES: usize = 2048;
 const WEB_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 /// Each ends on the slash that starts the path, so a `file:` link names no host but this machine.
 const LOCAL_FILE_PREFIXES: [&str; 2] = ["file:///", "file://localhost/"];
 
-/// The text with every character a terminal could interpret removed: C0 and C1 controls, DEL, bidi marks, overrides
-/// and isolates, and the zero-width space. A tab becomes spaces.
+/// The text with every character a terminal could interpret or that disguises text removed: C0 and C1 controls, DEL,
+/// bidi marks, overrides and isolates, the zero-width space, the word joiner, the byte order mark and tag characters.
+/// A tab becomes spaces, the line and paragraph separators a space.
 pub fn text(raw: &str) -> String {
     clean(raw, false)
 }
@@ -17,12 +18,12 @@ pub fn lines(raw: &str) -> String {
     clean(raw, true)
 }
 
+/// Tabs expand once the rest is removed, so a tab after a dropped newline stops where the joined line puts it.
 fn clean(raw: &str, keeps_newlines: bool) -> String {
-    let is_kept = |character: char| (keeps_newlines && character == '\n') || !is_forbidden(character);
-    let expanded = expand_tabs(raw, 0);
-    let mut cleaned = String::with_capacity(expanded.len());
-    cleaned.extend(expanded.chars().filter(|&character| is_kept(character)));
-    cleaned
+    let is_kept_as_written = |character: char| character == '\t' || (keeps_newlines && character == '\n');
+    let mut kept = String::with_capacity(raw.len());
+    kept.extend(raw.chars().filter_map(|character| if is_kept_as_written(character) { Some(character) } else { printed(character) }));
+    if kept.contains('\t') { expand_tabs(&kept, 0).into_owned() } else { kept }
 }
 
 fn percent_encode(raw: &str) -> String {
@@ -141,6 +142,16 @@ mod tests {
     }
 
     #[test]
+    fn invisible_joiners_marks_and_tags_are_removed() {
+        assert_eq!(text("a\u{2060}b\u{feff}c\u{e0001}d\u{e0041}\u{e007f}e"), "abcde");
+    }
+
+    #[test]
+    fn line_and_paragraph_separators_become_spaces() {
+        assert_eq!(text("a\u{2028}b\u{2029}c"), "a b c");
+    }
+
+    #[test]
     fn joiners_and_other_format_characters_are_kept() {
         assert_eq!(text("a\u{200c}b\u{200d}c\u{00ad}d"), "a\u{200c}b\u{200d}c\u{00ad}d");
     }
@@ -205,6 +216,11 @@ mod tests {
     fn every_tab_becomes_spaces_wherever_it_sits() {
         assert_eq!(text("\ta\x1b\tb\t"), "    a   b   ");
         assert_eq!(lines("ab\tc\nabcd\te"), "ab  c\nabcd    e");
+    }
+
+    #[test]
+    fn a_tab_after_a_removed_newline_stops_on_the_joined_line() {
+        assert_eq!(text("a\nb\tc"), "ab  c");
     }
 
     #[test]
