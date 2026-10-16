@@ -1,25 +1,16 @@
-use std::ops::{Range, RangeInclusive};
-
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
+use super::crop::Crop;
 use super::tmux;
 use crate::document::Picture;
 
-const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
-const IHDR_WIDTH: Range<usize> = 16..20;
-const IHDR_HEIGHT: Range<usize> = 20..24;
 const CHUNK_BYTES: usize = 4096;
 const PLACEMENT_ID: u32 = 1;
 /// Under the text and above cell backgrounds, so a title's concealed text stays selectable over its picture.
 const UNDER_TEXT: i32 = -1;
 /// The cell kitty draws a piece of a virtual placement in; its diacritics say which row, and its colour which image.
 const PLACEHOLDER: char = '\u{10eeee}';
-/// The high byte `placeholder_id` never gives a printed picture, kept for the pager's own ids.
-const PAGER_HIGH_BYTE: u32 = 0xff;
-/// The ids the pager gives its pictures through tmux: a low byte from 1 for the colour, nothing in the middle bytes,
-/// and a high byte no printed picture has, so freeing them never frees a picture left in the scrollback.
-pub const PAGER_PLACEHOLDER_IDS: RangeInclusive<u32> = (PAGER_HIGH_BYTE << 24 | 1)..=(PAGER_HIGH_BYTE << 24 | 0xff);
 /// The combining marks that number placeholder rows and columns, in kitty's order (`rowcolumn-diacritics.txt`).
 #[rustfmt::skip]
 const DIACRITICS: [char; 297] = [
@@ -92,7 +83,7 @@ pub fn draw(picture: &Picture, rows: u16, crop: Option<Crop>) -> String {
 pub fn placeholder_id(png: &[u8]) -> u32 {
     let hash = png.iter().fold(0x811c_9dc5_u32, |hash, &byte| (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193));
     let low = hash % 255 + 1;
-    let high = (hash >> 8) % PAGER_HIGH_BYTE;
+    let high = (hash >> 8) & 0xff;
     (high << 24) | low
 }
 
@@ -117,45 +108,6 @@ pub fn draw_through_tmux(picture: &Picture, indent: &str) -> Option<String> {
     let id = placeholder_id(&picture.png);
     let rows = (0..usize::from(picture.rows.max(1))).map(|row| Some(format!("{indent}{}\n", placeholder_row(id, row, picture.cols)?)));
     Some(store_through_tmux(picture, id) + &rows.collect::<Option<String>>()?)
-}
-
-fn big_endian(bytes: &[u8]) -> Option<u32> {
-    Some(u32::from_be_bytes(bytes.try_into().ok()?))
-}
-
-/// Width and height in pixels, read from the PNG header.
-pub fn png_size(png: &[u8]) -> Option<(u32, u32)> {
-    let is_png = png.starts_with(PNG_SIGNATURE);
-    let size = (big_endian(png.get(IHDR_WIDTH)?)?, big_endian(png.get(IHDR_HEIGHT)?)?);
-    is_png.then_some(size)
-}
-
-fn pixel_row(row: u16, rows: u16, height_px: u32) -> u32 {
-    (u64::from(row) * u64::from(height_px) / u64::from(rows.max(1))) as u32
-}
-
-/// A part of a PNG, in pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Crop {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Crop {
-    /// The band of pixels behind `shown`, rows of a picture `rows` tall, when the PNG's height spreads evenly over
-    /// them; `None` when the PNG has no readable header.
-    pub fn behind(shown: Range<u16>, rows: u16, png: &[u8]) -> Option<Self> {
-        let (width_px, height_px) = png_size(png)?;
-        let top = pixel_row(shown.start, rows, height_px);
-        let bottom = pixel_row(shown.end, rows, height_px);
-        Some(Self { x: 0, y: top, width: width_px, height: bottom - top })
-    }
-
-    pub fn pixel_rows(self) -> Range<u32> {
-        self.y..self.y + self.height
-    }
 }
 
 /// A stored picture drawn at the cursor: the `crop` of its PNG scaled into `cols`×`rows` cells, on layer `z`.
@@ -190,42 +142,9 @@ pub fn free(id: u32) -> String {
     format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\")
 }
 
-/// Frees every picture with an id in `ids`, placements and data.
-pub fn forget(ids: &RangeInclusive<u32>) -> String {
-    format!("\x1b_Ga=d,d=R,x={},y={},q=2\x1b\\", ids.start(), ids.end())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn png(width: u32, height: u32) -> Vec<u8> {
-        [PNG_SIGNATURE, b"\0\0\0\rIHDR", &width.to_be_bytes(), &height.to_be_bytes(), b"rest"].concat()
-    }
-
-    #[test]
-    fn the_png_size_comes_from_its_header() {
-        assert_eq!(png_size(&png(400, 120)), Some((400, 120)));
-        assert_eq!(png_size(b"GIF89a but long enough to have a header"), None);
-        assert_eq!(png_size(PNG_SIGNATURE), None);
-    }
-
-    #[test]
-    fn the_crop_is_the_pixel_band_behind_the_visible_rows() {
-        let png = png(400, 120);
-
-        assert_eq!(Crop::behind(0..6, 6, &png), Some(Crop { x: 0, y: 0, width: 400, height: 120 }));
-        assert_eq!(Crop::behind(2..6, 6, &png), Some(Crop { x: 0, y: 40, width: 400, height: 80 }));
-        assert_eq!(Crop::behind(0..1, 6, &png), Some(Crop { x: 0, y: 0, width: 400, height: 20 }));
-    }
-
-    #[test]
-    fn uneven_rows_tile_the_png_without_gaps() {
-        let png = png(10, 100);
-        let bands: Vec<Crop> = (0..3).filter_map(|skip| Crop::behind(skip..skip + 1, 3, &png)).collect();
-
-        assert_eq!(bands.iter().map(|band| (band.y, band.height)).collect::<Vec<_>>(), [(0, 33), (33, 33), (66, 34)]);
-    }
 
     fn sample(png: Vec<u8>) -> Picture {
         Picture { png, cols: 40, rows: 3, alt: "flow".to_owned(), indent: crate::document::Line::blank(), concealed_text: None }
@@ -264,7 +183,7 @@ mod tests {
     fn the_pager_commands_follow_the_kitty_protocol() {
         let placement = Placement { id: 7, crop: Crop { x: 0, y: 40, width: 400, height: 60 }, cols: 40, rows: 3, z: -1 };
 
-        let commands = [store(&[1, 2, 3], 7), place(&placement), hide(7), forget(&(7..=9))].map(|command| readable(&command));
+        let commands = [store(&[1, 2, 3], 7), place(&placement), hide(7), free(7)].map(|command| readable(&command));
 
         insta::assert_snapshot!(commands.join("\n"));
     }
@@ -282,7 +201,6 @@ mod tests {
         let ids = [placeholder_id(&[1, 2, 3]), placeholder_id(&[1, 2, 4]), placeholder_id(&[])];
 
         assert!(ids.iter().all(|id| (1..=255).contains(&(id & 0xff)) && id & 0x00ff_ff00 == 0), "{ids:x?}");
-        assert!(ids.iter().all(|id| !PAGER_PLACEHOLDER_IDS.contains(id)), "{ids:x?}");
         assert_eq!(placeholder_id(&[1, 2, 3]), ids[0]);
         assert_ne!(ids[0], ids[1]);
     }
