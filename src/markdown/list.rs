@@ -2,7 +2,7 @@ use comrak::nodes::{AstNode, ListDelimType, ListType, NodeList, NodeValue};
 
 use super::context::{Context, Nested};
 use super::layout::{self, Spacing};
-use crate::document::{Block, Line, Span, Style};
+use crate::document::{Block, Span, Style};
 use crate::text;
 
 const BULLETS: [&str; 3] = ["•", "◦", "▪"];
@@ -32,7 +32,7 @@ pub(super) fn items<'a>(node: &'a AstNode<'a>, list: &NodeList, context: &Contex
     let number_width = last_number.to_string().len();
     let markers: Vec<Marker> =
         items.iter().zip(list.start..).map(|(item, number)| marker(item, list, number, number_width, context)).collect();
-    let marker_width = markers.iter().map(|marker| width(&marker.spans)).max().unwrap_or(0) + 1;
+    let marker_width = markers.iter().map(|marker| text::spans_width(&marker.spans)).max().unwrap_or(0) + 1;
     items.iter().zip(&markers).map(|(item, marker)| render_item(item, marker, marker_width, spacing(list), context)).collect()
 }
 
@@ -63,20 +63,12 @@ fn delimiter(delimiter: ListDelimType) -> char {
     }
 }
 
-fn width(spans: &[Span]) -> usize {
-    spans.iter().map(|span| text::display_width(&span.text)).sum()
-}
-
 fn render_item<'a>(item: &'a AstNode<'a>, marker: &Marker, marker_width: usize, spacing: Spacing, context: &Context) -> Vec<Block> {
-    let padding = Span::plain(" ".repeat(marker_width - width(&marker.spans)));
+    let padding = Span::plain(" ".repeat(marker_width - text::spans_width(&marker.spans)));
     let lead: Vec<Span> = marker.spans.iter().cloned().chain([padding]).collect();
     let dimmed = |body: Vec<Block>| if marker.is_done { layout::restyle(body, Style::dim) } else { body };
     match context.nested(marker_width) {
-        Nested::Indented(inner) => {
-            let body = dimmed(super::children(item, &inner.in_list(), spacing));
-            let body = if body.is_empty() { layout::lines(vec![Line::blank()]) } else { body };
-            layout::prefix(body, &lead, &layout::blank(marker_width))
-        }
+        Nested::Indented(inner) => layout::marked(dimmed(super::children(item, &inner.in_list(), spacing)), &lead, marker_width),
         Nested::Unindented(inner) => dimmed(super::unindented(item, &lead, &inner.in_list(), spacing)),
         Nested::TooDeep => super::raw::flat(item, context),
     }

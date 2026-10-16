@@ -3,7 +3,7 @@ use comrak::nodes::AstNode;
 use super::context::{Context, Nested};
 use super::layout::{self, Spacing};
 use super::rule;
-use crate::document::{Block, Line, Span, Style};
+use crate::document::{Block, Span, Style};
 
 const SUPERSCRIPT_DIGITS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
 const RULE_WIDTH: usize = 16;
@@ -25,11 +25,7 @@ pub(super) fn section<'a>(definitions: &[&'a AstNode<'a>], context: &Context) ->
 fn note<'a>(definition: &'a AstNode<'a>, marker: &str, marker_width: usize, context: &Context) -> Vec<Block> {
     let lead = [Span::new(format!("{marker:<marker_width$}"), Style::fg(context.palette().accent))];
     match context.nested(marker_width) {
-        Nested::Indented(inner) => {
-            let body = super::children(definition, &inner, Spacing::Loose);
-            let body = if body.is_empty() { layout::lines(vec![Line::blank()]) } else { body };
-            layout::prefix(body, &lead, &layout::blank(marker_width))
-        }
+        Nested::Indented(inner) => layout::marked(super::children(definition, &inner, Spacing::Loose), &lead, marker_width),
         Nested::Unindented(inner) => super::unindented(definition, &lead, &inner, Spacing::Loose),
         Nested::TooDeep => super::raw::flat(definition, context),
     }

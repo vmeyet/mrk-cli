@@ -53,6 +53,13 @@ fn indent(picture: Picture, prefix: &[Span]) -> Picture {
     Picture { indent, ..picture }
 }
 
+/// A list item's or a note's blocks behind `lead` (its marker, `width` cells), the lines after it indented as far;
+/// an empty body still shows the marker.
+pub(super) fn marked(body: Vec<Block>, lead: &[Span], width: usize) -> Vec<Block> {
+    let body = if body.is_empty() { lines(vec![Line::blank()]) } else { body };
+    prefix(body, lead, &blank(width))
+}
+
 /// `prefix` for bare lines.
 pub(super) fn prefix_lines(lines: Vec<Line>, first: &[Span], rest: &[Span]) -> Vec<Line> {
     lines.into_iter().enumerate().map(|(index, line)| prefix_line(line, if index == 0 { first } else { rest })).collect()

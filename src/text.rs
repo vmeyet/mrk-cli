@@ -73,7 +73,7 @@ pub fn hard_wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
     let indent_width = spans_width(indent);
     let width = width.max(indent_width + WIDEST_GRAPHEME);
     let rows = cut_rows(spans, width, width - indent_width);
-    let lines = rows.into_iter().enumerate().map(|(index, row)| if index == 0 { row } else { [indent, &row].concat() });
+    let lines = rows.into_iter().enumerate().map(|(index, row)| if index == 0 { row } else { indent.iter().cloned().chain(row).collect() });
     lines.map(|spans| Line::new(merge(spans))).collect()
 }
 
@@ -105,7 +105,7 @@ fn cut_rows(spans: &[Span], first: usize, rest: usize) -> Vec<Vec<Span>> {
 }
 
 /// A run of text that wraps as one unit: a word, a breakable space, or a forced break.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Token {
     Word(Vec<Span>),
     Space(Span),
@@ -113,8 +113,9 @@ enum Token {
 }
 
 fn span_tokens(span: &Span) -> Vec<Token> {
-    let rows: Vec<Vec<Token>> = expand_tabs(&span.text).split('\n').map(|row| row_tokens(span, row)).collect();
-    rows.join(&Token::Break)
+    let text = expand_tabs(&span.text);
+    let rows = text.split('\n').map(|row| row_tokens(span, row));
+    rows.enumerate().flat_map(|(index, row)| (index > 0).then_some(Token::Break).into_iter().chain(row)).collect()
 }
 
 /// The words and spaces of one row of `span`; on a background the whole row is one word.
@@ -142,7 +143,7 @@ fn piece(span: &Span, text: &str) -> Span {
     Span { text: text.to_owned(), style: span.style, link: span.link.clone() }
 }
 
-fn spans_width(spans: &[Span]) -> usize {
+pub fn spans_width(spans: &[Span]) -> usize {
     spans.iter().map(|span| display_width(&span.text)).sum()
 }
 

@@ -64,7 +64,7 @@ fn unindented<'a>(node: &'a AstNode<'a>, lead: &[Span], context: &Context, spaci
     let rest = node.children().skip(usize::from(opening.is_some())).map(|child| block(child, context));
     match opening {
         Some(paragraph) => {
-            let led = [lead, &inline::spans(paragraph, context.text, context)].concat();
+            let led: Vec<Span> = lead.iter().cloned().chain(inline::spans(paragraph, context.text, context)).collect();
             layout::stack(std::iter::once(layout::lines(text::wrap(&led, context.width(), &[]))).chain(rest), spacing)
         }
         None => layout::stack([layout::lines(text::wrap(lead, context.width(), &[])), layout::stack(rest, spacing)], Spacing::Tight),
