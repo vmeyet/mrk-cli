@@ -128,11 +128,7 @@ fn changed(old: SourceBlock, new: SourceBlock) -> BlockChange {
 }
 
 fn plain_lines(block: &SourceBlock) -> Vec<String> {
-    let lines = block.blocks.iter().flat_map(|part| match part {
-        Block::Lines(lines) | Block::DoubleHeight(lines) => lines.as_slice(),
-        Block::Picture(_) => &[],
-    });
-    lines.map(Line::plain).collect()
+    block.blocks.iter().flat_map(Block::lines).map(Line::plain).collect()
 }
 
 /// A word or a punctuation mark of one line, and the chars it covers in the lines joined.

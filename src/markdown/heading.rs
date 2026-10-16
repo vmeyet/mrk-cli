@@ -63,7 +63,7 @@ fn h2<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Line> {
 mod tests {
     use super::*;
     use crate::document::{CellSize, Settings, plain};
-    use crate::markdown::{plain_at, render, span_with};
+    use crate::markdown::{plain_at, render, styled};
     use crate::theme::{MRK_DARK, test_settings};
 
     #[test]
@@ -79,21 +79,26 @@ mod tests {
     #[test]
     fn each_level_takes_its_palette_colour() {
         let palette = MRK_DARK.palette;
-        let cases =
-            [("# T", palette.h1), ("## T", palette.h2), ("### T", palette.h3), ("#### T", palette.text), ("###### T", palette.muted)];
-        for (source, color) in cases {
-            let title = span_with(source, "T");
+        let title = |color| Span::new("T", Style::fg(color).bold());
 
-            assert_eq!((title.style.fg, title.style.bold), (Some(color), true), "{source}");
-        }
+        assert_eq!(styled("## T"), [[Span::new(H2_BAR, Style::fg(palette.h2)), title(palette.h2)]]);
+        assert_eq!(styled("### T"), [[title(palette.h3)]]);
+        assert_eq!(styled("#### T"), [[title(palette.text)]]);
+        assert_eq!(styled("##### T"), [[title(palette.text)]]);
+        assert_eq!(styled("###### T"), [[title(palette.muted)]]);
     }
 
     #[test]
-    fn h1_rule_is_subtle_and_spans_the_width() {
-        let rule = span_with("# T", "━");
+    fn h1_is_followed_by_a_subtle_rule_across_the_width() {
+        let palette = MRK_DARK.palette;
 
-        assert_eq!(rule.style.fg, Some(MRK_DARK.palette.subtle));
-        assert_eq!(rule.text.chars().count(), 80);
+        assert_eq!(styled("# T"), [[Span::new("T", Style::fg(palette.h1).bold())], [Span::new("━".repeat(80), Style::fg(palette.subtle))]]);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn levels_in_colour() {
+        insta::assert_snapshot!(crate::markdown::ansi_at("# One\n\n## Two\n\n### Three\n\n#### Four\n\n###### Six", 20));
     }
 
     #[test]

@@ -60,7 +60,8 @@ fn front_matter_body(source: &str) -> impl Iterator<Item = &str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::{plain_at, span_with};
+    use crate::document::{Span, Style};
+    use crate::markdown::{plain_at, styled};
     use crate::theme::MRK_DARK;
 
     #[test]
@@ -70,7 +71,10 @@ mod tests {
     }
 
     #[test]
-    fn thematic_break_is_subtle() {
-        assert_eq!(span_with("---", "─").style.fg, Some(MRK_DARK.palette.subtle));
+    fn thematic_break_is_subtle_around_a_muted_diamond() {
+        let palette = MRK_DARK.palette;
+        let border = |cells: usize| Span::new("─".repeat(cells), Style::fg(palette.subtle));
+
+        assert_eq!(styled("---"), [[border(38), Span::new(" ◆ ", Style::fg(palette.muted)), border(39)]]);
     }
 }

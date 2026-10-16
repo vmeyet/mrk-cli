@@ -137,6 +137,16 @@ pub enum Block {
     DoubleHeight(Vec<Line>),
 }
 
+impl Block {
+    /// The text lines of the block, none for a picture.
+    pub fn lines(&self) -> &[Line] {
+        match self {
+            Block::Lines(lines) | Block::DoubleHeight(lines) => lines,
+            Block::Picture(_) => &[],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Document {
     pub blocks: Vec<Block>,
@@ -183,6 +193,22 @@ pub fn printable(document: &Document) -> String {
     sanitize::lines(&plain(document))
 }
 
+/// The document as `terminal::write` prints it in truecolor with hyperlinks, `␛` for ESC: what colour snapshot tests compare.
+#[cfg(all(test, feature = "cli"))]
+pub(crate) fn ansi(document: &Document) -> String {
+    use crate::terminal::{Capabilities, ColorDepth};
+    let capabilities = Capabilities {
+        color: ColorDepth::TrueColor,
+        hyperlinks: true,
+        graphics: None,
+        double_height: false,
+        background: None,
+        columns: 80,
+        is_terminal: true,
+    };
+    crate::terminal::ansi(document, &capabilities, 0).replace('\x1b', "␛")
+}
+
 fn plain_block(block: &Block) -> String {
     match block {
         Block::Lines(lines) => lines.iter().map(|line| format!("{}\n", line.plain().trim_end())).collect(),
@@ -191,6 +217,8 @@ fn plain_block(block: &Block) -> String {
     }
 }
 
+/// `span` cut where it goes in or out of a range, the pieces inside restyled; `first` is the offset of its first char.
+/// A span no range edge falls inside comes back whole.
 fn split_span(span: &Span, first: usize, ranges: &[Range<usize>], restyle: &impl Fn(Style) -> Style) -> Vec<Span> {
     let is_inside = |offset: usize| ranges.iter().any(|range| range.contains(&offset));
     let mut pieces: Vec<(bool, String)> = Vec::new();

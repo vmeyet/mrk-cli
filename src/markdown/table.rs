@@ -166,7 +166,8 @@ fn records(rows: &[Row], context: &Context) -> Vec<Line> {
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::{plain_at, span_with};
+    use crate::document::{Span, Style};
+    use crate::markdown::{plain_at, styled};
     use crate::theme::MRK_DARK;
 
     const TABLE: &str =
@@ -202,10 +203,18 @@ mod tests {
     #[test]
     fn header_is_bold_accent_and_borders_subtle() {
         let palette = MRK_DARK.palette;
-        let header = span_with(TABLE, "Name");
+        let border = |text: &str| Span::new(text, Style::fg(palette.subtle));
 
-        assert_eq!((header.style.fg, header.style.bold), (Some(palette.accent), true));
-        assert_eq!(span_with(TABLE, "╭").style.fg, Some(palette.subtle));
+        assert_eq!(
+            styled("| a |\n|---|\n| b |"),
+            [
+                vec![border("╭───╮")],
+                vec![border("│ "), Span::new("a", Style::fg(palette.accent).bold()), border(" │")],
+                vec![border("├───┤")],
+                vec![border("│ "), Span::new("b", Style::fg(palette.text)), border(" │")],
+                vec![border("╰───╯")],
+            ]
+        );
     }
 
     #[test]

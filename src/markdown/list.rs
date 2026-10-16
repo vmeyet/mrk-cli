@@ -84,7 +84,8 @@ fn render_item<'a>(item: &'a AstNode<'a>, marker: &Marker, marker_width: usize, 
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::{plain_at, plain_with_pictures, span_with};
+    use crate::document::{Span, Style};
+    use crate::markdown::{plain_at, plain_with_pictures, styled};
     use crate::theme::MRK_DARK;
 
     #[test]
@@ -127,17 +128,23 @@ mod tests {
     #[test]
     fn done_task_is_dimmed_behind_a_success_check() {
         let palette = MRK_DARK.palette;
+        let space = Span::plain(" ");
 
-        assert_eq!(span_with("- [x] done", "✔").style.fg, Some(palette.success));
-        assert!(span_with("- [x] done", "done").style.dim);
-        assert_eq!(span_with("- [ ] open", "○").style.fg, Some(palette.muted));
-        assert!(!span_with("- [ ] open", "open").style.dim);
+        assert_eq!(
+            styled("- [x] done"),
+            [[Span::new("✔", Style::fg(palette.success)), space.clone(), Span::new("done", Style::fg(palette.text).dim())]]
+        );
+        assert_eq!(styled("- [ ] open"), [[Span::new("○", Style::fg(palette.muted)), space, Span::new("open", Style::fg(palette.text))]]);
     }
 
     #[test]
     fn markers_are_accent() {
-        assert_eq!(span_with("- a", "•").style.fg, Some(MRK_DARK.palette.accent));
-        assert_eq!(span_with("3. a", "3.").style.fg, Some(MRK_DARK.palette.accent));
+        let palette = MRK_DARK.palette;
+        let item =
+            |marker: &str| vec![Span::new(marker, Style::fg(palette.accent)), Span::plain(" "), Span::new("a", Style::fg(palette.text))];
+
+        assert_eq!(styled("- a"), [item("•")]);
+        assert_eq!(styled("3. a"), [item("3.")]);
     }
 
     #[test]

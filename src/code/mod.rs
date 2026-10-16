@@ -92,6 +92,14 @@ mod tests {
         assert_eq!(marker, Some(Some(palette.subtle)));
     }
 
+    #[cfg(feature = "cli")]
+    #[test]
+    fn rust_panel_in_colour() {
+        let lines = render("fn main() {\n    let a = \"b\";\n}\n", Some("rust"), &at_width(24));
+
+        insta::assert_snapshot!(crate::document::ansi(&crate::document::Document { blocks: vec![crate::document::Block::Lines(lines)] }));
+    }
+
     /// Run with `cargo test --release code::tests::cold -- --ignored --nocapture`, alone, so nothing warmed the sets first.
     #[test]
     #[ignore = "timing, meaningful only in release and in a fresh process"]

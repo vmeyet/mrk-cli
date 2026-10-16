@@ -99,21 +99,23 @@ fn plain_with_pictures(source: &str) -> String {
     crate::document::plain(&render(source, &Settings { width: 40, cell, ..crate::theme::test_settings() }))
 }
 
-/// The first span, at 80 columns, whose text contains `needle`.
+/// The spans of every line at 80 columns, pictures left out.
 #[cfg(test)]
-fn span_with(source: &str, needle: &str) -> crate::document::Span {
+fn styled(source: &str) -> Vec<Vec<Span>> {
     let document = render(source, &crate::theme::test_settings());
-    let spans = document.blocks.into_iter().flat_map(|block| match block {
-        Block::Lines(lines) | Block::DoubleHeight(lines) => lines.into_iter().flat_map(|line| line.spans).collect(),
-        Block::Picture(_) => Vec::new(),
-    });
-    spans.into_iter().find(|span| span.text.contains(needle)).unwrap_or_else(|| panic!("no span contains {needle:?}"))
+    document.blocks.iter().flat_map(Block::lines).map(|line| line.spans.clone()).collect()
+}
+
+/// `document::ansi` of the source at `width` columns.
+#[cfg(all(test, feature = "cli"))]
+fn ansi_at(source: &str, width: usize) -> String {
+    crate::document::ansi(&render(source, &Settings { width, ..crate::theme::test_settings() }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{Line, MIN_BLOCK_WIDTH};
+    use crate::document::{Line, MIN_BLOCK_WIDTH, Style};
     use crate::theme::MRK_DARK;
 
     /// The showcase without its fenced blocks, which belong to `code` and `mermaid`.
@@ -126,14 +128,7 @@ mod tests {
 
     fn lines(source: &str, width: usize) -> Vec<Line> {
         let settings = Settings { width, ..crate::theme::test_settings() };
-        render(source, &settings)
-            .blocks
-            .into_iter()
-            .flat_map(|block| match block {
-                Block::Lines(lines) | Block::DoubleHeight(lines) => lines,
-                Block::Picture(_) => Vec::new(),
-            })
-            .collect()
+        render(source, &settings).blocks.iter().flat_map(Block::lines).cloned().collect()
     }
 
     #[test]
@@ -188,11 +183,14 @@ mod tests {
 
     #[test]
     fn html_is_shown_as_muted_literal_text() {
-        let muted = Some(MRK_DARK.palette.muted);
+        let (muted, text) = (Style::fg(MRK_DARK.palette.muted), Style::fg(MRK_DARK.palette.text));
 
         assert_eq!(plain_at("<details>\n<summary>Hi</summary>\n</details>", 80), "<details>\n<summary>Hi</summary>\n</details>\n");
-        assert_eq!(span_with("<details>\n</details>", "<details>").style.fg, muted);
-        assert_eq!(span_with("a <kbd>b</kbd> c", "<kbd>").style.fg, muted);
+        assert_eq!(styled("<details>\n</details>"), [[Span::new("<details>", muted)], [Span::new("</details>", muted)]]);
+        assert_eq!(
+            styled("a <kbd>b</kbd> c"),
+            [[Span::new("a ", text), Span::new("<kbd>", muted), Span::new("b", text), Span::new("</kbd>", muted), Span::new(" c", text)]]
+        );
     }
 
     #[test]
@@ -203,7 +201,13 @@ mod tests {
     #[test]
     fn front_matter_is_muted_lines_then_a_rule() {
         insta::assert_snapshot!(plain_at("---\ntitle: Hello\ntags: [a, b]\n---\n\nBody", 30));
-        assert_eq!(span_with("---\ntitle: Hello\n---\n", "Hello").style.fg, Some(MRK_DARK.palette.muted));
+        assert_eq!(
+            styled("---\ntitle: Hello\n---\n"),
+            [
+                [Span::new("title: Hello", Style::fg(MRK_DARK.palette.muted))],
+                [Span::new("─".repeat(80), Style::fg(MRK_DARK.palette.subtle))]
+            ]
+        );
     }
 
     #[test]

@@ -49,7 +49,8 @@ fn barred(body: Vec<Block>, color: Rgb) -> Vec<Block> {
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::{plain_at, plain_with_pictures, span_with};
+    use crate::document::{Span, Style};
+    use crate::markdown::{plain_at, plain_with_pictures, styled};
     use crate::theme::MRK_DARK;
 
     #[test]
@@ -66,10 +67,11 @@ mod tests {
     #[test]
     fn quote_text_is_italic_muted_behind_a_subtle_bar() {
         let palette = MRK_DARK.palette;
-        let text = span_with("> quoted", "quoted");
 
-        assert_eq!((text.style.fg, text.style.italic), (Some(palette.muted), true));
-        assert_eq!(span_with("> quoted", "│").style.fg, Some(palette.subtle));
+        assert_eq!(
+            styled("> quoted"),
+            [[Span::new("│ ", Style::fg(palette.subtle)), Span::new("quoted", Style::fg(palette.muted).italic())]]
+        );
     }
 
     #[test]
@@ -89,10 +91,14 @@ mod tests {
     #[test]
     fn alert_bar_and_title_take_the_alert_colour_and_the_body_stays_text() {
         let palette = MRK_DARK.palette;
-        let source = "> [!WARNING]\n> Careful here.";
+        let bar = Span::new("│ ", Style::fg(palette.warning));
 
-        assert_eq!(span_with(source, "Warning").style.fg, Some(palette.warning));
-        assert_eq!(span_with(source, "│").style.fg, Some(palette.warning));
-        assert_eq!(span_with(source, "Careful").style, crate::document::Style::fg(palette.text));
+        assert_eq!(
+            styled("> [!WARNING]\n> Careful here."),
+            [
+                [bar.clone(), Span::new("▲ Warning", Style::fg(palette.warning).bold())],
+                [bar, Span::new("Careful here.", Style::fg(palette.text))]
+            ]
+        );
     }
 }
