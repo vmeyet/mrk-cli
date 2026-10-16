@@ -44,8 +44,12 @@ pub(super) fn render<'a>(node: &'a AstNode<'a>, table: &NodeTable, context: &Con
     }
 }
 
+fn header_style(context: &Context) -> Style {
+    Style::fg(context.palette().accent).bold()
+}
+
 fn rows<'a>(node: &'a AstNode<'a>, columns: usize, context: &Context) -> Vec<Row> {
-    let header = Style::fg(context.palette().accent).bold();
+    let header = header_style(context);
     node.children()
         .map(|row| {
             let is_header = matches!(row.data().value, NodeValue::TableRow(true));
@@ -146,18 +150,18 @@ fn aligned(line: Line, width: usize, alignment: TableAlignment) -> Vec<Span> {
         .collect()
 }
 
+/// One `header: value` line per cell, rows a blank line apart; a table with no body row lists its header names.
 fn records(rows: &[Row], context: &Context) -> Vec<Line> {
     let Some((header, body)) = rows.split_first() else { return Vec::new() };
-    let names: Vec<String> = header.cells.iter().map(|cell| cell.iter().map(|span| span.text.as_str()).collect()).collect();
-    let name_style = Style::fg(context.palette().accent).bold();
-    let records = body.iter().map(|row| {
-        let fields = names.iter().zip(&row.cells).flat_map(|(name, cell)| {
-            let spans: Vec<Span> = std::iter::once(Span::new(format!("{name}: "), name_style)).chain(cell.iter().cloned()).collect();
-            text::wrap(&spans, context.width(), &[Span::plain(RECORD_INDENT)])
-        });
-        fields.collect::<Vec<Line>>()
-    });
-    records.collect::<Vec<_>>().join(&Line::blank())
+    let wrap = |spans: &[Span]| text::wrap(spans, context.width(), &[Span::plain(RECORD_INDENT)]);
+    if body.is_empty() {
+        return header.cells.iter().flat_map(|name| wrap(name)).collect();
+    }
+    let separator = [Span::new(": ", header_style(context))];
+    let record = |row: &Row| -> Vec<Line> {
+        header.cells.iter().zip(&row.cells).flat_map(|(name, cell)| wrap(&[name, &separator[..], cell].concat())).collect()
+    };
+    body.iter().map(record).collect::<Vec<_>>().join(&Line::blank())
 }
 
 #[cfg(test)]
@@ -185,6 +189,14 @@ mod tests {
         let source = format!("| {header} |\n|{}\n| {row} |\n| {row} |", "---|".repeat(12));
 
         insta::assert_snapshot!(plain_at(&source, 30));
+    }
+
+    #[test]
+    fn a_header_only_table_too_wide_to_box_lists_its_names() {
+        let header = (1..=10).map(|column| format!("c{column}")).collect::<Vec<_>>().join(" | ");
+        let source = format!("| {header} |\n|{}", "---|".repeat(10));
+
+        assert_eq!(plain_at(&source, 20), "c1\nc2\nc3\nc4\nc5\nc6\nc7\nc8\nc9\nc10\n");
     }
 
     #[test]
