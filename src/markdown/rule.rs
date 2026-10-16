@@ -13,10 +13,10 @@ pub(super) fn thematic(context: &Context) -> Line {
     let width = context.width();
     let border = Style::fg(context.palette().subtle);
     let sides = width.saturating_sub(text::display_width(CENTRE));
-    let left = sides / 2;
     if sides == 0 {
         return full(context);
     }
+    let left = sides / 2;
     Line::new(vec![
         Span::new(RULE.repeat(left), border),
         Span::new(CENTRE, Style::fg(context.palette().muted)),

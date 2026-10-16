@@ -1,9 +1,9 @@
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 
-const PLAIN: [&str; 5] = ["text", "txt", "plain", "plaintext", "none"];
+const PLAIN: &[&str] = &["text", "txt", "plain", "plaintext", "none"];
 
 /// Fence names bat's syntaxes do not claim, and the token of the syntax they mean.
-const ALIASES: [(&str, &str); 16] = [
+const ALIASES: &[(&str, &str)] = &[
     ("jsx", "js"),
     ("mjs", "js"),
     ("cjs", "js"),
@@ -22,14 +22,12 @@ const ALIASES: [(&str, &str); 16] = [
     ("hcl", "terraform"),
 ];
 
-/// The syntax a fence language names, by token, extension or alias; `None` for plain text and unknown names.
+/// The syntax a fence language names, by token, extension or alias, in any case; `None` for plain text and unknown names.
 pub fn find<'a>(language: &str, syntaxes: &'a SyntaxSet) -> Option<&'a SyntaxReference> {
-    let token = language.to_ascii_lowercase();
-    if PLAIN.contains(&token.as_str()) {
+    if PLAIN.iter().any(|plain| plain.eq_ignore_ascii_case(language)) {
         return None;
     }
-
-    let token = ALIASES.iter().find(|(alias, _)| *alias == token).map_or(token.as_str(), |(_, target)| target);
+    let token = ALIASES.iter().find(|(alias, _)| alias.eq_ignore_ascii_case(language)).map_or(language, |(_, target)| target);
     syntaxes.find_syntax_by_token(token)
 }
 
@@ -63,6 +61,7 @@ mod tests {
             ("toml", "TOML"),
             ("sql", "SQL"),
             ("golang", "Go"),
+            ("GoLang", "Go"),
             ("hcl", "Terraform"),
         ];
 

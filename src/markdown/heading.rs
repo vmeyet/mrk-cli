@@ -12,18 +12,17 @@ const JUMBO_ROWS: u16 = 2;
 
 pub(super) fn render<'a>(node: &'a AstNode<'a>, level: u8, context: &Context) -> Vec<Block> {
     let palette = context.palette();
-    let lines = match level {
-        1 => return h1(node, context),
-        2 => h2(node, context),
+    match level {
+        1 => h1(node, context),
+        2 => layout::lines(h2(node, context)),
         3 => plain(node, Style::fg(palette.h3).bold(), context),
         4 | 5 => plain(node, Style::fg(palette.text).bold(), context),
         _ => plain(node, Style::fg(palette.muted).bold(), context),
-    };
-    layout::lines(lines)
+    }
 }
 
-fn plain<'a>(node: &'a AstNode<'a>, style: Style, context: &Context) -> Vec<Line> {
-    text::wrap(&inline::spans(node, style, context), context.width(), &[])
+fn plain<'a>(node: &'a AstNode<'a>, style: Style, context: &Context) -> Vec<Block> {
+    layout::lines(text::wrap(&inline::spans(node, style, context), context.width(), &[]))
 }
 
 fn h1<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
