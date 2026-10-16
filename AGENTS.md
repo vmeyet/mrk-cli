@@ -33,4 +33,5 @@ Every module ships its tests in the same file; rendering tests snapshot `documen
 ## Security
 
 `specs/02-security.md` is not optional: Markdown is untrusted input and the terminal is an interpreter.
-Every byte reaching the terminal passes `sanitize`; mrk never touches the network (except `mrk update`, run by the user) and never reads a file the user did not name.
+Every byte reaching the terminal passes `sanitize`; mrk never touches the network (except `mrk update`, run by the user).
+Beyond the file named, stdin and its config, mrk only reads font files, read-only, from the font directories; mermaid-rs-renderer also loads the system fonts and reads and writes a font copy under `$XDG_CACHE_HOME/mmdr`, `~/.cache/mmdr` by default (`specs/02-security.md` rule 3).

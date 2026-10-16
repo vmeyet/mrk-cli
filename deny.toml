@@ -5,7 +5,7 @@ all-features = true
 version = 2
 ignore = [
   { id = "RUSTSEC-2025-0141", reason = "bincode via syntect only decodes the syntax dumps embedded in the binary, never input" },
-  { id = "RUSTSEC-2026-0192", reason = "ttf-parser via fontdb/mermaid-rs-renderer only parses installed system fonts; no maintained drop-in yet" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained with no fixed release; usvg, fontdb, mermaid-rs-renderer and mrk's glyph check parse fonts with it, and no maintained parser replaces it under usvg. It parses the font files in the font directories and mermaid-rs-renderer's font copy under $XDG_CACHE_HOME/mmdr, which any program of the user can write (specs/02-security.md rule 3)" },
 ]
 
 [licenses]

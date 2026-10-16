@@ -5,7 +5,7 @@ use std::thread;
 
 use super::frame::Pictures;
 use super::page::Page;
-use crate::sanitize;
+use crate::{mermaid, sanitize};
 
 /// Alternate screen, cursor hidden, no line wrap so a line never spills onto the next row, and the wheel sent as
 /// arrow keys (alternate scroll) so it scrolls without capturing the mouse, which would break text selection.
@@ -23,8 +23,8 @@ fn give_back(forget: &str) {
 }
 
 /// The report of the last panic on the pager's thread, kept instead of printed onto the alternate screen, where it
-/// would be lost. A hook cannot tell a panic the mermaid renderers catch from one that ends mrk, so it never touches
-/// the terminal: a caught panic leaves the pager running, an uncaught one unwinds through `Screen`'s `Drop`.
+/// would be lost, and printed once the terminal is back if that panic ends mrk. A panic the mermaid renderers catch is
+/// left out: it leaves the pager running, and its report quotes the diagram.
 struct HeldPanics {
     report: Arc<Mutex<Option<String>>>,
     previous: Arc<Hook>,
@@ -37,6 +37,9 @@ impl HeldPanics {
         let pager_thread = thread::current().id();
         let (hook_report, hook_previous) = (Arc::clone(&report), Arc::clone(&previous));
         panic::set_hook(Box::new(move |info| {
+            if mermaid::is_catching() {
+                return;
+            }
             if thread::current().id() == pager_thread {
                 *hook_report.lock().unwrap_or_else(PoisonError::into_inner) = Some(info.to_string());
             } else {
