@@ -22,7 +22,7 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["dep:anyhow", "dep:base64", "dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:crossterm", "dep:dirs", "dep:png", "dep:roff", "dep:rustix", "dep:serde", "dep:shell-words", "dep:tempfile", "dep:toml"]
+cli = ["dep:anyhow", "dep:base64", "dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:crossterm", "dep:dirs", "dep:png", "dep:roff", "dep:rustix", "dep:serde", "dep:shell-words", "dep:signal-hook", "dep:tempfile", "dep:toml"]
 
 [dependencies]
 anyhow = { version = "1.0", optional = true }
@@ -39,6 +39,7 @@ png = { version = "0.18", optional = true }
 resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 roff = { version = "1.1", optional = true }
 shell-words = { version = "1.1", optional = true }
+signal-hook = { version = "0.3", optional = true }
 similar = "2.7"
 serde = { version = "1.0", features = ["derive"], optional = true }
 syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-onig"] }

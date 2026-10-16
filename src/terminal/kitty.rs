@@ -1,3 +1,5 @@
+use std::ops::{Range, RangeInclusive};
+
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
@@ -10,6 +12,11 @@ const PLACEMENT_ID: u32 = 1;
 const UNDER_TEXT: i32 = -1;
 /// The cell kitty draws a piece of a virtual placement in; its diacritics say which row, and its colour which image.
 const PLACEHOLDER: char = '\u{10eeee}';
+/// The high byte `placeholder_id` never gives a printed picture, kept for the pager's own ids.
+const PAGER_HIGH_BYTE: u32 = 0xff;
+/// The ids the pager gives its pictures through tmux: a low byte from 1 for the colour, nothing in the middle bytes,
+/// and a high byte no printed picture has, so freeing them never frees a picture left in the scrollback.
+pub const PAGER_PLACEHOLDER_IDS: RangeInclusive<u32> = (PAGER_HIGH_BYTE << 24 | 1)..=(PAGER_HIGH_BYTE << 24 | 0xff);
 /// The combining marks that number placeholder rows and columns, in kitty's order (`rowcolumn-diacritics.txt`).
 #[rustfmt::skip]
 const DIACRITICS: [char; 297] = [
@@ -81,7 +88,7 @@ pub fn draw(picture: &Picture) -> String {
 pub fn placeholder_id(png: &[u8]) -> u32 {
     let hash = png.iter().fold(0x811c_9dc5_u32, |hash, &byte| (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193));
     let low = hash % 255 + 1;
-    let high = (hash >> 8) & 0xff;
+    let high = (hash >> 8) % PAGER_HIGH_BYTE;
     (high << 24) | low
 }
 
@@ -117,6 +124,12 @@ pub struct Crop {
     pub height: u32,
 }
 
+impl Crop {
+    pub fn pixel_rows(self) -> Range<u32> {
+        self.y..self.y + self.height
+    }
+}
+
 /// A stored picture drawn at the cursor: the `crop` of its PNG scaled into `cols`×`rows` cells, on layer `z`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
@@ -150,7 +163,7 @@ pub fn free(id: u32) -> String {
 }
 
 /// Frees every picture with an id in `ids`, placements and data.
-pub fn forget(ids: std::ops::RangeInclusive<u32>) -> String {
+pub fn forget(ids: &RangeInclusive<u32>) -> String {
     format!("\x1b_Ga=d,d=R,x={},y={},q=2\x1b\\", ids.start(), ids.end())
 }
 
@@ -195,7 +208,7 @@ mod tests {
     fn the_pager_commands_follow_the_kitty_protocol() {
         let placement = Placement { id: 7, crop: Crop { x: 0, y: 40, width: 400, height: 60 }, cols: 40, rows: 3, z: -1 };
 
-        let commands = [store(&[1, 2, 3], 7), place(&placement), hide(7), forget(7..=9)].map(|command| readable(&command));
+        let commands = [store(&[1, 2, 3], 7), place(&placement), hide(7), forget(&(7..=9))].map(|command| readable(&command));
 
         insta::assert_snapshot!(commands.join("\n"));
     }
@@ -213,6 +226,7 @@ mod tests {
         let ids = [placeholder_id(&[1, 2, 3]), placeholder_id(&[1, 2, 4]), placeholder_id(&[])];
 
         assert!(ids.iter().all(|id| (1..=255).contains(&(id & 0xff)) && id & 0x00ff_ff00 == 0), "{ids:x?}");
+        assert!(ids.iter().all(|id| !PAGER_PLACEHOLDER_IDS.contains(id)), "{ids:x?}");
         assert_eq!(placeholder_id(&[1, 2, 3]), ids[0]);
         assert_ne!(ids[0], ids[1]);
     }

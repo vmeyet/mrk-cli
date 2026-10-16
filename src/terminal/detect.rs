@@ -1,8 +1,6 @@
 use crossterm::terminal::WindowSize;
 
-use super::environment::{
-    Environment, background_hint, color_depth, double_height, hyperlinks, known_graphics, wants_pictures,
-};
+use super::environment::{Environment, background_hint, color_depth, double_height, hyperlinks, known_graphics, wants_pictures};
 use super::query::{self, Questions};
 use super::reply::Replies;
 use super::{Capabilities, ColorChoice, ColorDepth, Graphics, ImagesMode, Protocol};
