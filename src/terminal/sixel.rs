@@ -226,13 +226,15 @@ mod tests {
     }
 
     #[test]
-    fn many_colours_are_reduced_to_256() {
-        let gradient: Vec<[u8; 4]> = (0..=255).flat_map(|red| (0..4).map(move |blue| [red, 0, blue * 80, 255])).collect();
+    fn past_256_colours_the_rarest_takes_the_nearest_common_one() {
+        let grid = (0..255u8).map(|index| [index % 32 * 8, index / 32 * 8, 0, 255]);
+        let common: Vec<[u8; 4]> = grid.chain([BLUE]).flat_map(|pixel| [pixel, pixel]).collect();
+        let rare = [0, 0, 200, 255];
 
-        let image = image(32, 32, &gradient);
+        let image = image(513, 1, &[common, vec![rare]].concat());
 
-        assert!(image.colors.matches(";2;").count() <= MAX_COLORS);
-        assert!(image.pixels.iter().all(Option::is_some));
+        assert_eq!(image.colors.matches(";2;").count(), MAX_COLORS);
+        assert_eq!(image.pixels[512], image.pixels[510]);
     }
 
     #[test]
