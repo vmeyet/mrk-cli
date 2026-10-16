@@ -16,6 +16,9 @@ use serde::Deserialize;
 pub use detect::{Preferences, detect};
 
 use self::ansi::Half;
+use self::kitty::Crop;
+use self::pager::picture;
+use self::sixel::Image;
 use crate::document::{Block, CellSize, Document, JumboTitle, Picture};
 use crate::sanitize;
 use crate::theme::Appearance;
@@ -37,6 +40,7 @@ pub struct Capabilities {
     pub double_height: bool,
     pub background: Option<Appearance>,
     pub columns: u16,
+    pub rows: u16,
     pub is_terminal: bool,
 }
 
@@ -110,22 +114,51 @@ fn placeholder(picture: &Picture, indent: &str) -> String {
     format!("{indent}[picture: {}]\n", sanitize::text(&picture.alt))
 }
 
-/// The picture's rows written first, after `indent` on each and its concealed text on the first, scrolling them into
-/// view; then `drawing` at the first of them, which leaves the cursor where it found it; then the cursor at the start
-/// of the line below the picture. Drawing at the bottom of the screen must not clip the picture.
-fn over_rows(picture: &Picture, indent: &str, drawing: &str) -> String {
+/// Rows of a picture drawn together, and the part of its PNG behind them; `None` when they are the whole picture.
+struct Run {
+    rows: u16,
+    crop: Option<Crop>,
+}
+
+/// The picture's rows in runs one row shorter than the screen, so the cursor can climb back to a run's first row
+/// once its rows scrolled into view: a single run when the picture fits. `None` when a cut is needed and the PNG
+/// cannot be read.
+fn runs(picture: &Picture, screen_rows: u16) -> Option<Vec<Run>> {
     let rows = picture.rows.max(1);
-    let first = format!("{indent}{}\n", ansi::concealed(picture));
-    let rest = format!("{indent}\n").repeat(usize::from(rows - 1));
-    format!("{first}{rest}\x1b[{rows}A\r{indent}{drawing}\x1b[{rows}B\r")
+    let longest = screen_rows.saturating_sub(1).max(1);
+    if rows <= longest {
+        return Some(vec![Run { rows, crop: None }]);
+    }
+    let size = picture::png_size(&picture.png)?;
+    let run = |start: u16| {
+        let end = rows.min(start + longest);
+        Run { rows: end - start, crop: Some(picture::crop(start..end, rows, size)) }
+    };
+    Some((0..rows).step_by(usize::from(longest)).map(run).collect())
+}
+
+/// Run after run, the rows written first, after `indent` on each and the concealed text on the picture's first,
+/// scrolling them into view; then `draw` of the run at its first row, which leaves the cursor where it found it; then
+/// the cursor at the start of the line below. Drawing at the bottom of the screen must not clip the picture.
+fn over_rows(picture: &Picture, indent: &str, screen_rows: u16, draw: impl Fn(&Run) -> String) -> Option<String> {
+    let drawn = |(index, run): (usize, &Run)| {
+        let concealed = if index == 0 { ansi::concealed(picture) } else { String::new() };
+        let rest = format!("{indent}\n").repeat(usize::from(run.rows - 1));
+        format!("{indent}{concealed}\n{rest}\x1b[{0}A\r{indent}{1}\x1b[{0}B\r", run.rows, draw(run))
+    };
+    Some(runs(picture, screen_rows)?.iter().enumerate().map(drawn).collect())
 }
 
 fn picture(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
     let indent = picture_indent(picture, capabilities, margin);
+    let screen_rows = capabilities.rows;
     let drawn = capabilities.graphics.and_then(|graphics| match graphics.protocol {
-        Protocol::Kitty => Some(over_rows(picture, &indent, &kitty::draw(picture))),
+        Protocol::Kitty => over_rows(picture, &indent, screen_rows, |run| kitty::draw(picture, run.rows, run.crop)),
         Protocol::KittyThroughTmux => kitty::draw_through_tmux(picture, &indent),
-        Protocol::Sixel => sixel::draw(picture).map(|drawing| over_rows(picture, &indent, &drawing)),
+        Protocol::Sixel => {
+            let image = Image::from_png(&picture.png)?;
+            over_rows(picture, &indent, screen_rows, |run| sixel::draw(&image, run.crop.map(Crop::pixel_rows)))
+        }
     });
     drawn.unwrap_or_else(|| placeholder(picture, &indent))
 }
@@ -237,6 +270,7 @@ mod tests {
             double_height: false,
             background: None,
             columns: 80,
+            rows: 24,
             is_terminal: true,
         }
     }
@@ -276,7 +310,34 @@ mod tests {
         assert_eq!(ansi(&document, &capabilities(ColorDepth::None, None), LEFT_MARGIN), "  │ [picture: flow]\n");
     }
 
+    #[test]
+    fn a_picture_taller_than_the_screen_is_drawn_in_runs_the_cursor_can_climb_back_over() {
+        let png = sixel::test_png(10, 50, &[[255, 0, 0, 255]; 500]);
+        let picture = Picture { png, cols: 1, rows: 5, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
+        let short_screen = Capabilities { rows: 3, ..capabilities(ColorDepth::None, KITTY) };
+
+        let drawn = ansi(&Document { blocks: vec![Block::Picture(picture)] }, &short_screen, 0);
+        let runs: Vec<&str> = drawn.split_inclusive("B\r").collect();
+
+        assert_eq!(runs.len(), 3, "{drawn:?}");
+        assert!(runs[0].starts_with("\n\n\x1b[2A\r\x1b_Ga=T,f=100,q=2,C=1,x=0,y=0,w=10,h=20,c=1,r=2,"), "{drawn:?}");
+        assert!(runs[1].starts_with("\n\n\x1b[2A\r\x1b_Ga=T,f=100,q=2,C=1,x=0,y=20,w=10,h=20,c=1,r=2,"), "{drawn:?}");
+        assert!(runs[2].starts_with("\n\x1b[1A\r\x1b_Ga=T,f=100,q=2,C=1,x=0,y=40,w=10,h=10,c=1,r=1,"), "{drawn:?}");
+        assert!(drawn.ends_with("\x1b[1B\r"), "{drawn:?}");
+    }
+
     const SIXEL: Option<Graphics> = Some(Graphics { protocol: Protocol::Sixel, cell: CELL });
+
+    #[test]
+    fn a_tall_sixel_picture_sends_each_run_of_pixel_rows() {
+        let png = sixel::test_png(1, 24, &[[255, 0, 0, 255]; 24]);
+        let picture = Picture { png, cols: 1, rows: 4, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
+        let short_screen = Capabilities { rows: 3, ..capabilities(ColorDepth::None, SIXEL) };
+
+        let drawn = ansi(&Document { blocks: vec![Block::Picture(picture)] }, &short_screen, 0);
+
+        assert_eq!(drawn.matches("\x1b7\x1bP0;1;0q\"1;1;1;12#").count(), 2, "{drawn:?}");
+    }
 
     #[test]
     fn a_sixel_picture_is_drawn_after_its_indent_and_the_cursor_put_back() {

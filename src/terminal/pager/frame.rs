@@ -226,6 +226,7 @@ mod tests {
         double_height: false,
         background: None,
         columns: 40,
+        rows: 10,
         is_terminal: true,
     };
 

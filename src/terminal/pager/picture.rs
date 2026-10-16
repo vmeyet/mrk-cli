@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use super::page::Placed;
 use crate::terminal::kitty::{self, Crop, Placement};
 
@@ -36,10 +38,10 @@ fn pixel_row(row: u16, rows: u16, height_px: u32) -> u32 {
     (u64::from(row) * u64::from(height_px) / u64::from(rows.max(1))) as u32
 }
 
-/// The band of pixels behind the visible rows, when the PNG's `height_px` spreads evenly over the picture's `rows`.
-pub fn crop(visible: Visible, rows: u16, (width_px, height_px): (u32, u32)) -> Crop {
-    let top = pixel_row(visible.skip, rows, height_px);
-    let bottom = pixel_row(visible.skip + visible.rows, rows, height_px);
+/// The band of pixels behind `shown`, rows of a picture `rows` tall, when the PNG's `height_px` spreads evenly over them.
+pub fn crop(shown: Range<u16>, rows: u16, (width_px, height_px): (u32, u32)) -> Crop {
+    let top = pixel_row(shown.start, rows, height_px);
+    let bottom = pixel_row(shown.end, rows, height_px);
     Crop { x: 0, y: top, width: width_px, height: bottom - top }
 }
 
@@ -49,7 +51,7 @@ pub fn placement(placed: &Placed, id: u32, top: usize, height: usize) -> Option<
     let rows = picture.rows.max(1);
     let shown = visible(placed.row, rows, top, height)?;
     let size = png_size(&picture.png)?;
-    let crop = crop(shown, rows, size);
+    let crop = crop(shown.skip..shown.skip + shown.rows, rows, size);
     Some((shown.screen_row, Placement { id, crop, cols: picture.cols, rows: shown.rows, z: kitty::z_index(picture) }))
 }
 
@@ -99,15 +101,15 @@ mod tests {
     fn the_crop_is_the_pixel_band_behind_the_visible_rows() {
         let size = (400, 120);
 
-        assert_eq!(crop(Visible { screen_row: 0, skip: 0, rows: 6 }, 6, size), Crop { x: 0, y: 0, width: 400, height: 120 });
-        assert_eq!(crop(Visible { screen_row: 0, skip: 2, rows: 4 }, 6, size), Crop { x: 0, y: 40, width: 400, height: 80 });
-        assert_eq!(crop(Visible { screen_row: 3, skip: 0, rows: 1 }, 6, size), Crop { x: 0, y: 0, width: 400, height: 20 });
+        assert_eq!(crop(0..6, 6, size), Crop { x: 0, y: 0, width: 400, height: 120 });
+        assert_eq!(crop(2..6, 6, size), Crop { x: 0, y: 40, width: 400, height: 80 });
+        assert_eq!(crop(0..1, 6, size), Crop { x: 0, y: 0, width: 400, height: 20 });
     }
 
     #[test]
     fn uneven_rows_tile_the_png_without_gaps() {
         let size = (10, 100);
-        let bands: Vec<Crop> = (0..3).map(|skip| crop(Visible { screen_row: 0, skip, rows: 1 }, 3, size)).collect();
+        let bands: Vec<Crop> = (0..3).map(|skip| crop(skip..skip + 1, 3, size)).collect();
 
         assert_eq!(bands.iter().map(|band| (band.y, band.height)).collect::<Vec<_>>(), [(0, 33), (33, 33), (66, 34)]);
     }

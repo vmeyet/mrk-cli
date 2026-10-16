@@ -1,7 +1,7 @@
 mod frame;
 mod keys;
 mod page;
-mod picture;
+pub(super) mod picture;
 mod screen;
 mod search;
 mod signals;

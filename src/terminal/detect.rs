@@ -8,6 +8,7 @@ use crate::document::{CellSize, Rgb};
 use crate::theme::Appearance;
 
 const DEFAULT_COLUMNS: u16 = 80;
+const DEFAULT_ROWS: u16 = 24;
 
 /// What the user asked for, which detection must respect.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -77,6 +78,7 @@ pub fn detect(preferences: Preferences) -> Capabilities {
 
     let background = background_hint(&environment).or(replies.background.map(appearance));
     let columns = window.as_ref().map(|window| window.columns).filter(|&columns| columns > 0).unwrap_or(DEFAULT_COLUMNS);
+    let rows = window.as_ref().map(|window| window.rows).filter(|&rows| rows > 0).unwrap_or(DEFAULT_ROWS);
     Capabilities {
         color,
         hyperlinks: hyperlinks(&environment, color),
@@ -84,6 +86,7 @@ pub fn detect(preferences: Preferences) -> Capabilities {
         double_height: double_height(&environment, color),
         background,
         columns,
+        rows,
         is_terminal: environment.stdout_is_tty,
     }
 }

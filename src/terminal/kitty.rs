@@ -76,10 +76,11 @@ pub fn z_index(picture: &Picture) -> i32 {
     if picture.concealed_text.is_some() { UNDER_TEXT } else { 0 }
 }
 
-/// Draws the picture at the cursor into its cell box with `C=1`, cursor unmoved: where kitty, Ghostty and WezTerm
-/// would otherwise leave it differs.
-pub fn draw(picture: &Picture) -> String {
-    chunked(&picture.png, &format!("a=T,f=100,q=2,C=1,c={},r={},z={}", picture.cols, picture.rows.max(1), z_index(picture)))
+/// Draws the `crop` of the picture, all of it when `None`, at the cursor into its columns and `rows` rows with `C=1`,
+/// cursor unmoved: where kitty, Ghostty and WezTerm would otherwise leave it differs.
+pub fn draw(picture: &Picture, rows: u16, crop: Option<Crop>) -> String {
+    let source = crop.map(|Crop { x, y, width, height }| format!(",x={x},y={y},w={width},h={height}")).unwrap_or_default();
+    chunked(&picture.png, &format!("a=T,f=100,q=2,C=1{source},c={},r={rows},z={}", picture.cols, z_index(picture)))
 }
 
 /// An image id a 256-colour placeholder can carry, the low byte as its colour and the high byte as a third diacritic,
@@ -177,19 +178,19 @@ mod tests {
 
     #[test]
     fn a_small_picture_is_one_final_chunk() {
-        assert_eq!(draw(&sample(vec![1, 2, 3])), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,z=0,m=0;AQID\x1b\\");
+        assert_eq!(draw(&sample(vec![1, 2, 3]), 3, None), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,z=0,m=0;AQID\x1b\\");
     }
 
     #[test]
     fn a_picture_with_concealed_text_is_drawn_under_the_text() {
         let title = Picture { concealed_text: Some("Title".to_owned()), ..sample(vec![1, 2, 3]) };
 
-        assert_eq!(draw(&title), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,z=-1,m=0;AQID\x1b\\");
+        assert_eq!(draw(&title, 3, None), "\x1b_Ga=T,f=100,q=2,C=1,c=40,r=3,z=-1,m=0;AQID\x1b\\");
     }
 
     #[test]
     fn a_large_picture_is_split_in_4096_byte_chunks() {
-        let out = draw(&sample(vec![0; 3 * 4096]));
+        let out = draw(&sample(vec![0; 3 * 4096]), 3, None);
         let commands: Vec<&str> = out.split("\x1b_G").skip(1).collect();
 
         assert_eq!(commands.len(), 4);

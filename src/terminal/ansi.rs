@@ -137,7 +137,7 @@ mod tests {
     const RED: Rgb = Rgb(255, 0, 0);
 
     fn capabilities(color: ColorDepth, hyperlinks: bool) -> Capabilities {
-        Capabilities { color, hyperlinks, graphics: None, double_height: false, background: None, columns: 80, is_terminal: true }
+        Capabilities { color, hyperlinks, graphics: None, double_height: false, background: None, columns: 80, rows: 24, is_terminal: true }
     }
 
     fn truecolor() -> Capabilities {

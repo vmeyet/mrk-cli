@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::ops::Range;
 
 use super::color::distance;
-use crate::document::{Picture, Rgb};
+use crate::document::Rgb;
 
 /// Sixel has 256 colour registers on the terminals that matter.
 const MAX_COLORS: usize = 256;
@@ -67,11 +67,10 @@ impl Image {
     }
 }
 
-/// Draws the picture with Sixel from the cursor, then puts the cursor back where it was: where it ends up after an
-/// image differs between terminals. `None` when the PNG cannot be read.
-pub fn draw(picture: &Picture) -> Option<String> {
-    let image = Image::from_png(&picture.png)?;
-    Some(format!("\x1b7{}\x1b8", image.encode(0..image.height)))
+/// Draws the pixel `rows` of the image, all of them when `None`, with Sixel from the cursor, then puts the cursor back
+/// where it was: where it ends up after an image differs between terminals.
+pub fn draw(image: &Image, rows: Option<Range<u32>>) -> String {
+    format!("\x1b7{}\x1b8", image.encode(rows.unwrap_or(0..image.height)))
 }
 
 fn decode(png: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
@@ -258,17 +257,12 @@ mod tests {
 
     #[test]
     fn a_drawn_picture_puts_the_cursor_back() {
-        let picture = Picture {
-            png: test_png(1, 6, &[RED; 6]),
-            cols: 1,
-            rows: 1,
-            alt: "flow".to_owned(),
-            indent: crate::document::Line::blank(),
-            concealed_text: None,
-        };
+        let image = image(1, 12, &[RED; 12]);
 
-        let drawn = draw(&picture).unwrap();
+        let drawn = draw(&image, None);
 
         assert!(drawn.starts_with("\x1b7\x1bP") && drawn.ends_with("\x1b\\\x1b8"), "{drawn:?}");
+        assert!(drawn.contains("\"1;1;1;12#"), "{drawn:?}");
+        assert!(draw(&image, Some(6..12)).contains("\"1;1;1;6#"));
     }
 }
