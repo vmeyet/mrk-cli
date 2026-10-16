@@ -51,7 +51,7 @@ pub enum SyntaxTheme {
     TwoDark,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Theme {
     pub name: &'static str,
     pub appearance: Appearance,
@@ -103,7 +103,7 @@ pub fn names() -> impl Iterator<Item = &'static str> {
 
 /// The built-in theme called `name`, ignoring case.
 pub fn find(name: &str) -> Option<Theme> {
-    presets::ALL.iter().find(|theme| theme.name.eq_ignore_ascii_case(name.trim())).cloned()
+    presets::ALL.iter().find(|theme| theme.name.eq_ignore_ascii_case(name.trim())).copied()
 }
 
 pub fn default_for(appearance: Appearance) -> Theme {

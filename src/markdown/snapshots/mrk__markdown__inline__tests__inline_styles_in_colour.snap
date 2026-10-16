@@ -1,0 +1,6 @@
+---
+source: src/markdown/inline.rs
+expression: "crate::markdown::ansi_at(source, 60)"
+---
+␛[38;2;212;215;224mRun ␛[38;2;218;208;205;48;2;42;42;50m mrk ␛[38;2;212;215;224;49m on ␛[1mbold␛[22m, ␛[3mitalic␛[23m and ␛[2;9mgone␛[22;29m text, see ␛]8;;https://example.com␛\␛[4;38;2;122;200;245mthe docs␛]8;;␛\␛[24;38;2;212;215;224m or␛[0m
+␛]8;;http://www.example.org␛\␛[4;38;2;122;200;245mwww.example.org␛]8;;␛\␛[24;38;2;212;215;224m.␛[0m

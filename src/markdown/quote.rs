@@ -1,6 +1,6 @@
 use comrak::nodes::{AlertType, AstNode, NodeAlert};
 
-use super::context::Context;
+use super::context::{Context, Nested};
 use super::layout::{self, Spacing};
 use crate::document::{Block, Rgb, Span, Style};
 use crate::text;
@@ -10,10 +10,12 @@ const BAR: &str = "│ ";
 /// A block quote: a `subtle` bar before every line, the text italic `muted`.
 pub(super) fn render<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     let palette = context.palette();
-    let Some(inner) = context.nested(text::display_width(BAR)) else { return super::raw::flat(node, context) };
-    let inner = inner.with_text(Style::fg(palette.muted).italic());
-    let body = super::children(node, &inner, Spacing::Loose);
-    barred(body, palette.subtle)
+    let text = Style::fg(palette.muted).italic();
+    match context.nested(text::display_width(BAR)) {
+        Nested::Indented(inner) => barred(super::children(node, &inner.with_text(text), Spacing::Loose), palette.subtle),
+        Nested::Unindented(inner) => super::children(node, &inner.with_text(text), Spacing::Loose),
+        Nested::TooDeep => super::raw::flat(node, context),
+    }
 }
 
 /// A GitHub alert: the bar and the `● Note` title in the alert colour, the body in `text`.
@@ -26,12 +28,18 @@ pub(super) fn alert<'a>(node: &'a AstNode<'a>, alert: &NodeAlert, context: &Cont
         AlertType::Warning => ("▲", palette.warning),
         AlertType::Caution => ("■", palette.caution),
     };
-    let Some(inner) = context.nested(text::display_width(BAR)) else { return super::raw::flat(node, context) };
-    let inner = inner.with_text(Style::fg(palette.text));
-    let title_text = alert.title.clone().unwrap_or_else(|| alert.alert_type.default_title().to_owned());
-    let title = text::wrap(&[Span::new(format!("{glyph} {title_text}"), Style::fg(color).bold())], inner.width(), &[Span::plain("  ")]);
-    let body = super::children(node, &inner, Spacing::Loose);
-    barred(layout::stack([layout::lines(title), body], Spacing::Tight), color)
+    let titled = |inner: &Context| {
+        let title_text = alert.title.as_deref().unwrap_or(alert.alert_type.default_title());
+        let title = Span::new(format!("{glyph} {title_text}"), Style::fg(color).bold());
+        let title = text::wrap(&[title], inner.width(), &[Span::plain("  ")]);
+        let body = super::children(node, &inner.with_text(Style::fg(palette.text)), Spacing::Loose);
+        layout::stack([layout::lines(title), body], Spacing::Tight)
+    };
+    match context.nested(text::display_width(BAR)) {
+        Nested::Indented(inner) => barred(titled(&inner), color),
+        Nested::Unindented(inner) => titled(&inner),
+        Nested::TooDeep => super::raw::flat(node, context),
+    }
 }
 
 fn barred(body: Vec<Block>, color: Rgb) -> Vec<Block> {
@@ -41,7 +49,8 @@ fn barred(body: Vec<Block>, color: Rgb) -> Vec<Block> {
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::{plain_at, plain_with_pictures, span_with};
+    use crate::document::{Span, Style};
+    use crate::markdown::{plain_at, plain_with_pictures, styled};
     use crate::theme::MRK_DARK;
 
     #[test]
@@ -50,12 +59,19 @@ mod tests {
     }
 
     #[test]
+    fn quotes_with_no_room_for_another_bar_stay_quotes_without_it() {
+        assert_eq!(plain_at("> > > > one\n> > > >\n> > > > > two", 18), "│ │ │ one\n│ │ │\n│ │ │ two\n");
+        assert_eq!(plain_at("> > > > > [!TIP]\n> > > > > tip", 18), "│ │ │ ◆ Tip\n│ │ │ tip\n");
+    }
+
+    #[test]
     fn quote_text_is_italic_muted_behind_a_subtle_bar() {
         let palette = MRK_DARK.palette;
-        let text = span_with("> quoted", "quoted");
 
-        assert_eq!((text.style.fg, text.style.italic), (Some(palette.muted), true));
-        assert_eq!(span_with("> quoted", "│").style.fg, Some(palette.subtle));
+        assert_eq!(
+            styled("> quoted"),
+            [[Span::new("│ ", Style::fg(palette.subtle)), Span::new("quoted", Style::fg(palette.muted).italic())]]
+        );
     }
 
     #[test]
@@ -75,10 +91,14 @@ mod tests {
     #[test]
     fn alert_bar_and_title_take_the_alert_colour_and_the_body_stays_text() {
         let palette = MRK_DARK.palette;
-        let source = "> [!WARNING]\n> Careful here.";
+        let bar = Span::new("│ ", Style::fg(palette.warning));
 
-        assert_eq!(span_with(source, "Warning").style.fg, Some(palette.warning));
-        assert_eq!(span_with(source, "│").style.fg, Some(palette.warning));
-        assert_eq!(span_with(source, "Careful").style, crate::document::Style::fg(palette.text));
+        assert_eq!(
+            styled("> [!WARNING]\n> Careful here."),
+            [
+                [bar.clone(), Span::new("▲ Warning", Style::fg(palette.warning).bold())],
+                [bar, Span::new("Careful here.", Style::fg(palette.text))]
+            ]
+        );
     }
 }

@@ -1,0 +1,14 @@
+---
+source: src/markdown/heading.rs
+expression: "crate::markdown::ansi_at(\"# One\\n\\n## Two\\n\\n### Three\\n\\n#### Four\\n\\n###### Six\",\n20)"
+---
+␛[1;38;2;197;148;247mOne␛[0m
+␛[38;2;62;68;85m━━━━━━━━━━━━━━━━━━━━␛[0m
+
+␛[38;2;138;180;248m▍ ␛[1mTwo␛[0m
+
+␛[1;38;2;111;211;198mThree␛[0m
+
+␛[1;38;2;212;215;224mFour␛[0m
+
+␛[1;38;2;139;145;163mSix␛[0m

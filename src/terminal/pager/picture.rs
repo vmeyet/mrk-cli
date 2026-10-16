@@ -15,7 +15,8 @@ pub fn visible(first_row: usize, rows: u16, top: usize, height: usize) -> Option
     let last_row = first_row + usize::from(rows);
     let start = first_row.max(top);
     let end = last_row.min(top + height);
-    (start < end).then(|| Visible { screen_row: start - top, skip: (start - first_row) as u16, rows: (end - start) as u16 })
+    let within = |cells: usize| u16::try_from(cells).unwrap_or(rows);
+    (start < end).then(|| Visible { screen_row: start - top, skip: within(start - first_row), rows: within(end - start) })
 }
 
 /// Where and how to place the picture so only its on-screen rows are drawn, `None` when it is off screen.

@@ -17,9 +17,8 @@ use self::blocks::Section;
 pub use self::blocks::{BlockKind, SourceBlock};
 use self::context::Context;
 use self::layout::Spacing;
-use crate::document::{Block, Document, Settings};
-
-const FRONT_MATTER_DELIMITER: &str = "---";
+use crate::document::{Block, Document, Settings, Span, Style};
+use crate::text;
 
 /// Renders GitHub-flavoured Markdown into a document at `settings.width`; images and links are never fetched.
 pub fn render(source: &str, settings: &Settings) -> Document {
@@ -49,7 +48,7 @@ fn options() -> Options<'static> {
     options.extension.autolink = true;
     options.extension.footnotes = true;
     options.extension.alerts = true;
-    options.extension.front_matter_delimiter = Some(FRONT_MATTER_DELIMITER.to_owned());
+    options.extension.front_matter_delimiter = Some(rule::FRONT_MATTER_DELIMITER.to_owned());
     options
 }
 
@@ -58,9 +57,26 @@ fn children<'a>(node: &'a AstNode<'a>, context: &Context, spacing: Spacing) -> V
     layout::stack(node.children().map(|child| block(child, context)), spacing)
 }
 
+/// A container's blocks at its own width, with no room left to indent them: `lead` (a list marker) opens its first
+/// paragraph, or stands on a line of its own above anything else.
+/// `restyle` changes the blocks, never the lead.
+fn unindented<'a>(node: &'a AstNode<'a>, lead: &[Span], context: &Context, spacing: Spacing, restyle: fn(Style) -> Style) -> Vec<Block> {
+    let opening = node.first_child().filter(|child| matches!(child.data().value, NodeValue::Paragraph));
+    let rest = node.children().skip(usize::from(opening.is_some())).map(|child| block(child, context));
+    let rest = layout::restyle(layout::stack(rest, spacing), restyle);
+    match opening {
+        Some(paragraph) => {
+            let text = inline::spans(paragraph, context.text, context).into_iter().map(|span| Span { style: restyle(span.style), ..span });
+            let led: Vec<Span> = lead.iter().cloned().chain(text).collect();
+            layout::stack([layout::lines(text::wrap(&led, context.width(), &[])), rest], spacing)
+        }
+        None => layout::stack([layout::lines(text::wrap(lead, context.width(), &[])), rest], Spacing::Tight),
+    }
+}
+
 fn block<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     match &node.data().value {
-        NodeValue::Paragraph => layout::lines(crate::text::wrap(&inline::spans(node, context.text, context), context.width(), &[])),
+        NodeValue::Paragraph => layout::lines(text::wrap(&inline::spans(node, context.text, context), context.width(), &[])),
         NodeValue::Heading(heading) => heading::render(node, heading.level, context),
         NodeValue::List(list) => list::render(node, list, context),
         NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => quote::render(node, context),
@@ -86,21 +102,23 @@ fn plain_with_pictures(source: &str) -> String {
     crate::document::plain(&render(source, &Settings { width: 40, cell, ..crate::theme::test_settings() }))
 }
 
-/// The first span, at 80 columns, whose text contains `needle`.
+/// The spans of every line at 80 columns, pictures left out.
 #[cfg(test)]
-fn span_with(source: &str, needle: &str) -> crate::document::Span {
+fn styled(source: &str) -> Vec<Vec<Span>> {
     let document = render(source, &crate::theme::test_settings());
-    let spans = document.blocks.into_iter().flat_map(|block| match block {
-        Block::Lines(lines) | Block::DoubleHeight(lines) => lines.into_iter().flat_map(|line| line.spans).collect(),
-        Block::Picture(_) => Vec::new(),
-    });
-    spans.into_iter().find(|span| span.text.contains(needle)).unwrap_or_else(|| panic!("no span contains {needle:?}"))
+    document.blocks.iter().flat_map(Block::lines).map(|line| line.spans.clone()).collect()
+}
+
+/// `document::ansi` of the source at `width` columns.
+#[cfg(all(test, feature = "cli"))]
+fn ansi_at(source: &str, width: usize) -> String {
+    crate::document::ansi(&render(source, &Settings { width, ..crate::theme::test_settings() }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::Line;
+    use crate::document::{Line, MIN_WIDTH, Style};
     use crate::theme::MRK_DARK;
 
     /// The showcase without its fenced blocks, which belong to `code` and `mermaid`.
@@ -113,14 +131,7 @@ mod tests {
 
     fn lines(source: &str, width: usize) -> Vec<Line> {
         let settings = Settings { width, ..crate::theme::test_settings() };
-        render(source, &settings)
-            .blocks
-            .into_iter()
-            .flat_map(|block| match block {
-                Block::Lines(lines) | Block::DoubleHeight(lines) => lines,
-                Block::Picture(_) => Vec::new(),
-            })
-            .collect()
+        render(source, &settings).blocks.iter().flat_map(Block::lines).cloned().collect()
     }
 
     #[test]
@@ -135,9 +146,11 @@ mod tests {
 
     #[test]
     fn no_line_exceeds_the_width() {
-        for width in [20, 40, 80] {
-            for source in [EVERYTHING.to_owned(), showcase_without_fences()] {
-                let too_wide: Vec<String> = lines(&source, width).iter().filter(|line| line.width() > width).map(Line::plain).collect();
+        let showcase = include_str!("../../tests/fixtures/showcase.md");
+        let zero_width_words = format!("{} \u{200b} b \u{ad} c \u{301} d\n", "a".repeat(20));
+        for width in MIN_WIDTH..=60 {
+            for source in [EVERYTHING, showcase, &zero_width_words] {
+                let too_wide: Vec<String> = lines(source, width).iter().filter(|line| line.width() > width).map(Line::plain).collect();
 
                 assert!(too_wide.is_empty(), "at {width} columns: {too_wide:#?}");
             }
@@ -152,6 +165,11 @@ mod tests {
         assert!(!is_blank(&lines[0]));
         assert!(!is_blank(&lines[lines.len() - 1]));
         assert!(lines.windows(2).all(|pair| !(is_blank(&pair[0]) && is_blank(&pair[1]))));
+    }
+
+    #[test]
+    fn a_width_under_the_minimum_lays_out_at_the_minimum() {
+        assert_eq!(plain_at(EVERYTHING, 3), plain_at(EVERYTHING, MIN_WIDTH));
     }
 
     #[test]
@@ -170,11 +188,14 @@ mod tests {
 
     #[test]
     fn html_is_shown_as_muted_literal_text() {
-        let muted = Some(MRK_DARK.palette.muted);
+        let (muted, text) = (Style::fg(MRK_DARK.palette.muted), Style::fg(MRK_DARK.palette.text));
 
         assert_eq!(plain_at("<details>\n<summary>Hi</summary>\n</details>", 80), "<details>\n<summary>Hi</summary>\n</details>\n");
-        assert_eq!(span_with("<details>\n</details>", "<details>").style.fg, muted);
-        assert_eq!(span_with("a <kbd>b</kbd> c", "<kbd>").style.fg, muted);
+        assert_eq!(styled("<details>\n</details>"), [[Span::new("<details>", muted)], [Span::new("</details>", muted)]]);
+        assert_eq!(
+            styled("a <kbd>b</kbd> c"),
+            [[Span::new("a ", text), Span::new("<kbd>", muted), Span::new("b", text), Span::new("</kbd>", muted), Span::new(" c", text)]]
+        );
     }
 
     #[test]
@@ -185,6 +206,26 @@ mod tests {
     #[test]
     fn front_matter_is_muted_lines_then_a_rule() {
         insta::assert_snapshot!(plain_at("---\ntitle: Hello\ntags: [a, b]\n---\n\nBody", 30));
-        assert_eq!(span_with("---\ntitle: Hello\n---\n", "Hello").style.fg, Some(MRK_DARK.palette.muted));
+        assert_eq!(
+            styled("---\ntitle: Hello\n---\n"),
+            [
+                [Span::new("title: Hello", Style::fg(MRK_DARK.palette.muted))],
+                [Span::new("─".repeat(80), Style::fg(MRK_DARK.palette.subtle))]
+            ]
+        );
+    }
+
+    #[test]
+    fn front_matter_keeps_every_line_between_its_fences() {
+        let source = "---\nnote: |\n  ---\n  +++\n---\n\n\nBody";
+
+        assert_eq!(plain_at(source, 30), format!("note: |\n  ---\n  +++\n{}\n\nBody\n", "─".repeat(30)));
+    }
+
+    #[test]
+    fn a_front_matter_indent_takes_at_most_half_the_width() {
+        let source = format!("---\n{}deep: value\n---\n", " ".repeat(100));
+
+        assert_eq!(plain_at(&source, 20).lines().next(), Some("          deep:"));
     }
 }

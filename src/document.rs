@@ -13,6 +13,7 @@ impl Rgb {
     }
 
     /// The colour `amount` of the way from this one to `other`: 0.0 keeps it, 1.0 gives `other`.
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a float `as u8` saturates into 0..=255")]
     pub fn mix(self, other: Rgb, amount: f32) -> Rgb {
         let channel = |from: u8, to: u8| (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8;
         Rgb(channel(self.0, other.0), channel(self.1, other.1), channel(self.2, other.2))
@@ -32,7 +33,11 @@ pub struct Style {
 
 impl Style {
     pub fn fg(color: Rgb) -> Self {
-        Self { fg: Some(color), ..Self::default() }
+        Self::default().with_fg(color)
+    }
+
+    pub fn with_fg(self, color: Rgb) -> Self {
+        Self { fg: Some(color), ..self }
     }
 
     pub fn on(self, color: Rgb) -> Self {
@@ -91,6 +96,21 @@ impl Line {
         Self { spans }
     }
 
+    /// A line of text slices, each styled and linked as its span, neighbours in the same style and link joined into one span.
+    /// Every span and text is allocated at its exact size: documents hold millions of lines.
+    pub fn joined<'a>(pieces: impl IntoIterator<Item = (&'a str, &'a Span)>) -> Self {
+        let pieces: Vec<(&str, &Span)> = pieces.into_iter().collect();
+        let runs = pieces.chunk_by(|(_, left), (_, right)| left.style == right.style && left.link == right.link);
+        let mut spans = Vec::with_capacity(runs.clone().count());
+        spans.extend(runs.map(|run| {
+            let mut text = String::with_capacity(run.iter().map(|(piece, _)| piece.len()).sum());
+            text.extend(run.iter().map(|(piece, _)| *piece));
+            let (_, span) = run[0];
+            Span { text, style: span.style, link: span.link.clone() }
+        }));
+        Self::new(spans)
+    }
+
     pub fn blank() -> Self {
         Self::default()
     }
@@ -132,6 +152,16 @@ pub enum Block {
     DoubleHeight(Vec<Line>),
 }
 
+impl Block {
+    /// The text lines of the block, none for a picture.
+    pub fn lines(&self) -> &[Line] {
+        match self {
+            Block::Lines(lines) | Block::DoubleHeight(lines) => lines,
+            Block::Picture(_) => &[],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Document {
     pub blocks: Vec<Block>,
@@ -153,7 +183,11 @@ pub enum JumboTitle {
     DoubleHeight,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// The narrowest width the renderers lay out at: a code panel needs its padding, its continuation marker and a wide
+/// grapheme side by side. A narrower `Settings::width` is laid out this wide.
+pub const MIN_WIDTH: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub width: usize,
     pub theme: Theme,
@@ -174,6 +208,23 @@ pub fn printable(document: &Document) -> String {
     sanitize::lines(&plain(document))
 }
 
+/// The document as `terminal::write` prints it in truecolor with hyperlinks, `␛` for ESC: what colour snapshot tests compare.
+#[cfg(all(test, feature = "cli"))]
+pub(crate) fn ansi(document: &Document) -> String {
+    use crate::terminal::{Capabilities, ColorDepth};
+    let capabilities = Capabilities {
+        color: ColorDepth::TrueColor,
+        hyperlinks: true,
+        graphics: None,
+        double_height: false,
+        background: None,
+        columns: 80,
+        rows: 24,
+        is_terminal: true,
+    };
+    crate::terminal::ansi(document, &capabilities, 0).replace('\x1b', "␛")
+}
+
 fn plain_block(block: &Block) -> String {
     match block {
         Block::Lines(lines) => lines.iter().map(|line| format!("{}\n", line.plain().trim_end())).collect(),
@@ -182,18 +233,43 @@ fn plain_block(block: &Block) -> String {
     }
 }
 
+/// `span` cut where a range starts or ends inside it, the pieces inside restyled; `first` is the offset of its first
+/// char, `ranges` are `normalized`. A span no range touches comes back whole.
 fn split_span(span: &Span, first: usize, ranges: &[Range<usize>], restyle: &impl Fn(Style) -> Style) -> Vec<Span> {
-    let is_inside = |offset: usize| ranges.iter().any(|range| range.contains(&offset));
-    let mut pieces: Vec<(bool, String)> = Vec::new();
-    for (offset, character) in span.text.chars().enumerate() {
-        let inside = is_inside(first + offset);
-        match pieces.last_mut() {
-            Some((last, text)) if *last == inside => text.push(character),
-            _ => pieces.push((inside, character.to_string())),
-        }
+    let end = first + span.text.chars().count();
+    let touching = ranges[ranges.partition_point(|range| range.end <= first)..].iter().take_while(|range| range.start < end);
+    let piece = |text: &str, style: Style| Span { text: text.to_owned(), style, link: span.link.clone() };
+    let mut pieces = Vec::new();
+    let (mut at, mut rest) = (first, span.text.as_str());
+    for range in touching.map(|range| range.start.max(first)..range.end.min(end)) {
+        let (outside, tail) = split_chars(rest, range.start - at);
+        let (inside, tail) = split_chars(tail, range.len());
+        pieces.extend((!outside.is_empty()).then(|| piece(outside, span.style)));
+        pieces.push(piece(inside, restyle(span.style)));
+        (at, rest) = (range.end, tail);
     }
-    let style = |inside: bool| if inside { restyle(span.style) } else { span.style };
-    pieces.into_iter().map(|(inside, text)| Span { text, style: style(inside), link: span.link.clone() }).collect()
+    if pieces.is_empty() || !rest.is_empty() {
+        pieces.push(piece(rest, span.style));
+    }
+    pieces
+}
+
+/// The first `count` chars of `text`, and the rest.
+fn split_chars(text: &str, count: usize) -> (&str, &str) {
+    text.split_at(text.char_indices().nth(count).map_or(text.len(), |(index, _)| index))
+}
+
+/// The ranges sorted, the ones that overlap or touch merged and the empty ones dropped, so cuts never repeat.
+fn normalized(ranges: &[Range<usize>]) -> Vec<Range<usize>> {
+    let mut sorted: Vec<Range<usize>> = ranges.iter().filter(|range| !range.is_empty()).cloned().collect();
+    sorted.sort_unstable_by_key(|range| range.start);
+    sorted.into_iter().fold(Vec::new(), |mut merged: Vec<Range<usize>>, range| {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+        merged
+    })
 }
 
 /// The char offset in `plain` text at which each span starts, spans and lines taken in order with nothing between them.
@@ -207,14 +283,16 @@ fn span_offsets(lines: &[Line]) -> impl Iterator<Item = usize> {
 
 /// Restyles the text inside `ranges`, for a search match or a word-level diff; text, widths and links never change.
 ///
-/// Ranges are char offsets into the lines' plain text joined with no separator:
-/// `lines.iter().map(Line::plain).collect::<String>()`. A span is split where a range starts or ends inside it.
+/// Ranges are char offsets into the lines' plain text joined with no separator,
+/// `lines.iter().map(Line::plain).collect::<String>()`, in any order; overlapping ones restyle once. A span is split
+/// where a range starts or ends inside it.
 pub fn highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line> {
+    let ranges = normalized(ranges);
     let mut offsets = span_offsets(lines);
     lines
         .iter()
         .map(|line| {
-            let spans = line.spans.iter().zip(offsets.by_ref()).flat_map(|(span, first)| split_span(span, first, ranges, &restyle));
+            let spans = line.spans.iter().zip(offsets.by_ref()).flat_map(|(span, first)| split_span(span, first, &ranges, &restyle));
             Line::new(spans.collect())
         })
         .collect()
@@ -288,6 +366,16 @@ mod tests {
     }
 
     #[test]
+    fn joined_merges_neighbours_of_the_same_look_into_spans_of_exact_size() {
+        let (plain, red) = (Span::plain("a"), Span::new("b", Style::fg(RED)));
+
+        let line = Line::joined([("ab", &plain), ("c", &plain), ("d", &red), ("e", &plain)]);
+
+        assert_eq!(line.spans, [Span::plain("abc"), Span::new("d", Style::fg(RED)), Span::plain("e")]);
+        assert_eq!((line.spans.capacity(), line.spans[0].text.capacity()), (3, 3));
+    }
+
+    #[test]
     fn line_width_counts_cells_not_bytes() {
         let line = Line::new(vec![Span::plain("é漢")]);
 
@@ -321,6 +409,28 @@ mod tests {
         assert_eq!(lit[0].spans, [Span::plain("one "), Span::new("two", Style::default().bold())]);
         assert_eq!(lit[1].spans, [Span::new("th", Style::default().bold()), Span::plain("ree")]);
         assert_eq!(lit.iter().map(Line::width).collect::<Vec<_>>(), [7, 5]);
+    }
+
+    #[test]
+    fn neighbouring_ranges_restyle_as_one_piece_and_a_range_over_a_whole_span_keeps_it_whole() {
+        let line = Line::new(vec![Span::plain("abcd"), Span::plain("ef")]);
+
+        let lit = highlight(&[line], &[1..2, 2..3, 4..6], Style::bold);
+
+        assert_eq!(
+            lit[0].spans,
+            [Span::plain("a"), Span::new("bc", Style::default().bold()), Span::plain("d"), Span::new("ef", Style::default().bold())]
+        );
+    }
+
+    #[test]
+    fn ranges_in_any_order_overlapping_or_repeated_cut_each_edge_once() {
+        let lines = [Line::new(vec![Span::plain("abcdef")])];
+        let bold = Style::default().bold();
+
+        let lit = highlight(&lines, &[4..5, 1..3, 2..3, 1..3, 5..5], Style::bold);
+
+        assert_eq!(lit[0].spans, [Span::plain("a"), Span::new("bc", bold), Span::plain("d"), Span::new("e", bold), Span::plain("f")]);
     }
 
     #[test]

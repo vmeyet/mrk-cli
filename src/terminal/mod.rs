@@ -162,20 +162,20 @@ fn picture(picture: &Picture, capabilities: &Capabilities, margin: usize) -> Str
     drawn.unwrap_or_else(|| placeholder(picture, &indent))
 }
 
-fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
+/// The block as the strings to write, one per row (a picture is one), so a long block is never held whole as text.
+fn rows<'a>(block: &'a Block, capabilities: &'a Capabilities, margin: usize) -> Box<dyn Iterator<Item = String> + 'a> {
     match block {
-        Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin) + "\n").collect(),
-        Block::Picture(each) => picture(each, capabilities, margin),
-        Block::DoubleHeight(lines) => lines
-            .iter()
-            .flat_map(|line| [Half::Top, Half::Bottom].map(|half| ansi::half(line, half, capabilities, margin) + "\n"))
-            .collect(),
+        Block::Lines(lines) => Box::new(lines.iter().map(move |line| ansi::line(line, capabilities, margin) + "\n")),
+        Block::Picture(each) => Box::new(std::iter::once(picture(each, capabilities, margin))),
+        Block::DoubleHeight(lines) => Box::new(
+            lines.iter().flat_map(move |line| [Half::Top, Half::Bottom].map(|half| ansi::half(line, half, capabilities, margin) + "\n")),
+        ),
     }
 }
 
 /// Writes the document for this terminal, `margin` columns from the left.
 pub fn write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write) -> std::io::Result<()> {
-    document.blocks.iter().try_for_each(|each| out.write_all(block(each, capabilities, margin).as_bytes()))
+    document.blocks.iter().flat_map(|each| rows(each, capabilities, margin)).try_for_each(|row| out.write_all(row.as_bytes()))
 }
 
 fn cleaned(message: &dyn std::fmt::Display) -> String {
@@ -198,7 +198,7 @@ pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
 /// The bytes `write` produces, as a string.
 #[cfg(test)]
 pub fn ansi(document: &Document, capabilities: &Capabilities, margin: usize) -> String {
-    document.blocks.iter().map(|each| block(each, capabilities, margin)).collect()
+    document.blocks.iter().flat_map(|each| rows(each, capabilities, margin)).collect()
 }
 
 #[cfg(test)]

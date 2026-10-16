@@ -8,24 +8,25 @@ use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
 use super::language;
 use crate::document::{Rgb, Span, Style};
-use crate::text::TAB;
 use crate::theme::{SyntaxTheme, Theme};
 
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 static THEMES: LazyLock<EmbeddedLazyThemeSet> = LazyLock::new(two_face::theme::extra);
 
-/// One entry per source line: tabs expanded, no line ending, no background.
-/// A language without a syntax, or a highlighting failure, gives plain text in the palette's `text`.
-pub fn highlight(code: &str, language: Option<&str>, theme: &Theme) -> Vec<Vec<Span>> {
-    language.and_then(|language| highlight_with_syntax(code, language, theme)).unwrap_or_else(|| plain(code, theme.palette.text))
-}
-
-fn highlight_with_syntax(code: &str, language: &str, theme: &Theme) -> Option<Vec<Vec<Span>>> {
-    let syntax = language::find(language, &SYNTAXES)?;
-    let mut highlighter = HighlightLines::new(syntax, THEMES.get(embedded(theme.syntax)));
-    LinesWithEndings::from(code)
-        .map(|line| highlighter.highlight_line(line, &SYNTAXES).ok().map(|regions| spans(&regions, theme.palette.surface)))
-        .collect()
+/// One entry per source line, highlighted as it is taken so a long block is never held twice: no line ending, no
+/// background. A language without a syntax gives plain text in the palette's `text`, and so does a line that fails.
+pub fn highlight<'a>(code: &'a str, language: Option<&str>, theme: &Theme) -> Box<dyn Iterator<Item = Vec<Span>> + 'a> {
+    let (text, surface) = (theme.palette.text, theme.palette.surface);
+    match language.and_then(|language| language::find(language, &SYNTAXES)) {
+        Some(syntax) => {
+            let mut highlighter = HighlightLines::new(syntax, THEMES.get(embedded(theme.syntax)));
+            Box::new(LinesWithEndings::from(code).map(move |line| match highlighter.highlight_line(line, &SYNTAXES) {
+                Ok(regions) => spans(&regions, surface),
+                Err(_) => plain(line, text),
+            }))
+        }
+        None => Box::new(code.lines().map(move |line| plain(line, text))),
+    }
 }
 
 fn embedded(theme: SyntaxTheme) -> EmbeddedThemeName {
@@ -44,8 +45,8 @@ fn embedded(theme: SyntaxTheme) -> EmbeddedThemeName {
     }
 }
 
-fn plain(code: &str, color: Rgb) -> Vec<Vec<Span>> {
-    code.lines().map(|line| non_empty_span(line, Style::fg(color)).into_iter().collect()).collect()
+fn plain(line: &str, color: Rgb) -> Vec<Span> {
+    non_empty_span(line, Style::fg(color)).into_iter().collect()
 }
 
 fn spans(regions: &[(SyntaxStyle, &str)], surface: Rgb) -> Vec<Span> {
@@ -53,7 +54,7 @@ fn spans(regions: &[(SyntaxStyle, &str)], surface: Rgb) -> Vec<Span> {
 }
 
 fn non_empty_span(text: &str, style: Style) -> Option<Span> {
-    let text = text.trim_end_matches(['\n', '\r']).replace('\t', TAB);
+    let text = text.trim_end_matches(['\n', '\r']);
     (!text.is_empty()).then(|| Span::new(text, style))
 }
 
@@ -69,8 +70,7 @@ fn style_from(syntax: SyntaxStyle, surface: Rgb) -> Style {
 
 /// Some themes fade a colour with alpha; the terminal has no alpha, so it is mixed into the panel background.
 fn blend(color: Color, background: Rgb) -> Rgb {
-    let mix = |front: u8, back: u8| ((u16::from(front) * u16::from(color.a) + u16::from(back) * (255 - u16::from(color.a))) / 255) as u8;
-    Rgb(mix(color.r, background.0), mix(color.g, background.1), mix(color.b, background.2))
+    background.mix(Rgb(color.r, color.g, color.b), f32::from(color.a) / f32::from(u8::MAX))
 }
 
 #[cfg(test)]
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn a_keyword_and_a_string_get_different_colours() {
-        let lines = highlight("fn main() {\n    let greeting = \"hello\";\n}\n", Some("rust"), &MRK_DARK);
+        let lines = highlight("fn main() {\n    let greeting = \"hello\";\n}\n", Some("rust"), &MRK_DARK).collect::<Vec<_>>();
 
         let keyword = foreground_of(&lines, "fn");
         let string = foreground_of(&lines, "hello");
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn every_theme_highlights_with_its_syntax_theme() {
         for theme in crate::theme::names().filter_map(crate::theme::find) {
-            let lines = highlight("fn main() {}\n", Some("rust"), &theme);
+            let lines: Vec<Vec<Span>> = highlight("fn main() {}\n", Some("rust"), &theme).collect();
 
             assert_ne!(foreground_of(&lines, "fn"), Some(theme.palette.text), "{}", theme.name);
         }
@@ -103,24 +103,16 @@ mod tests {
 
     #[test]
     fn unknown_language_is_plain_text_colour() {
-        let lines = highlight("let a = \"b\";\n", Some("klingon"), &MRK_DARK);
+        let lines: Vec<Vec<Span>> = highlight("let a = \"b\";\n", Some("klingon"), &MRK_DARK).collect();
 
         assert_eq!(lines, vec![vec![Span::new("let a = \"b\";", Style::fg(MRK_DARK.palette.text))]]);
     }
 
     #[test]
-    fn tabs_expand_and_line_endings_go() {
-        let lines = highlight("\tx\r\n\n", None, &MRK_DARK);
+    fn line_endings_go() {
+        let lines: Vec<Vec<Span>> = highlight("x\r\n\n", None, &MRK_DARK).collect();
 
-        assert_eq!(lines, vec![vec![Span::new("    x", Style::fg(MRK_DARK.palette.text))], vec![]]);
-    }
-
-    #[test]
-    fn highlighted_lines_keep_tabs_expanded() {
-        let lines = highlight("fn a() {\n\treturn;\n}\n", Some("rs"), &MRK_DARK);
-        let second: String = lines[1].iter().map(|span| span.text.as_str()).collect();
-
-        assert_eq!(second, "    return;");
+        assert_eq!(lines, vec![vec![Span::new("x", Style::fg(MRK_DARK.palette.text))], vec![]]);
     }
 
     #[test]

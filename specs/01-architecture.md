@@ -41,7 +41,7 @@ src/
   diff.rs          blocks(): two versions of a file rendered with render_blocks, paired block by block, changed words as char ranges (similar)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight(); Line::printable() is the text safe to print
   sanitize.rs      text, lines, link: what may reach a terminal, for the binary and library users alike
-  text.rs          display_width, cut, wrap
+  text.rs          display_width, cut, wrap (at spaces), hard_wrap (where a line is full, for code and source), expand_tabs
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names, UnknownTheme
   update.rs        `mrk update`: the latest release tag and its commit from `git ls-remote --tags`, compared with the running version;
                    `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
@@ -81,11 +81,11 @@ src/
 - `markdown::render(source: &str, settings: &Settings) -> Document`
 - `markdown::render_blocks(source: &str, settings: &Settings) -> Vec<SourceBlock>`: the same rendering cut into top-level blocks, each with `first_line`/`last_line` (1-based, inclusive, from comrak's `sourcepos`, trailing blank lines dropped), a `BlockKind` and its `blocks`. A list gives one block per top-level item, nested items inside; quotes and alerts stay whole; the footnote definitions are one last block spanning the earliest to the latest definition. No blank line sits before, after or between blocks. `render` is these blocks stacked a blank line apart (none between items of a tight list), so the two cannot drift.
 - `diff::blocks(old: &str, new: &str, settings: &Settings) -> Vec<BlockChange>`: both sides through `render_blocks`, in reading order, each block of a side exactly once.
-  Blocks are equal when their kind, their plain text (`Line::plain` over every `Lines` and `DoubleHeight` line) and their pictures' PNG are; `similar`'s Patience diff gives `Same`, and in each run of differing blocks a removed block pairs with the next added block of the same `BlockKind` variant (a heading's level, a task's state, a fence's language may differ) into `Changed`, the others being `Removed` or `Added`.
+  Blocks are equal when their kind, their lines of plain text (`Line::plain` of every `Lines` and `DoubleHeight` line, line by line) and their pictures' PNG are; `similar`'s Patience diff gives `Same`, and in each run of differing blocks a removed block pairs with the next added block of the same `BlockKind` variant (a heading's level, a task's state, a fence's language may differ) into `Changed`, the others being `Removed` or `Added`.
   A `Changed` pair carries char ranges of that plain text, ready for `document::highlight`: a Myers diff over the words and punctuation of each line (never across lines; spaces, bars and borders left out), each run of changed words one range; none for Mermaid.
   It returns ranges, never colours.
-- `document::highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line>`: ranges are char offsets into the lines' plain text joined with no separator; spans split at range edges and keep their link, text and widths never change. The pager search paints its matches with it.
-- `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells.
+- `document::highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line>`: ranges are char offsets into the lines' plain text joined with no separator, in any order; spans split at range edges and keep their link, text and widths never change. The pager search paints its matches with it.
+- `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells, or `document::MIN_WIDTH` when that is narrower.
   `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `BlockKind::Code`.
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
 - `raster::line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) -> Result<Picture, RasterError>`: the text in bold `font-weight` on a transparent PNG `rows` cells tall and as many whole cells wide as it needs, shrunk to fit `max_cols`; `raster::Svg` parses and draws mermaid's SVG the same way.
@@ -95,8 +95,13 @@ src/
   A picture is drawn after its rows scrolled into view, the cursor sent back up to the first; one taller than the window is drawn in runs one row shorter than the window, each a crop of its PNG (kitty receives the PNG once per run), since the cursor cannot climb above the top row. A Sixel run goes on to a whole six-pixel band, into the next run, which covers it again, so no pixel row goes missing between runs.
 - Escape sequences are produced only inside `terminal/`: `ansi.rs` for styled lines, `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs`, `sixel.rs` and `tmux.rs` for pictures, `query.rs` for the capability queries, `error_report` for dimmed error causes.
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
-- A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` helps.
-- Every width is `text::display_width`: counted per grapheme (at most two cells), a tab as four, the characters `sanitize` removes as none.
+- A `Line` never exceeds `settings.width` cells, for any width from `document::MIN_WIDTH` up; the renderer that builds it guarantees it, `text::wrap` and `text::hard_wrap` help.
+  `document::MIN_WIDTH` (8) is the narrowest the renderers lay out, enough for a code panel's padding, its continuation marker and a wide grapheme: a narrower width lays out at 8.
+  A list item, quote or footnote whose indent would leave less than 12 cells stops indenting: its blocks keep the container's width, a marker opening the first paragraph (or on a line of its own), a quote or alert without its bar.
+  Past 32 nested containers, a container renders as its bare text: bounded recursion on hostile input.
+- Every width is `text::display_width`: counted per grapheme (at most two cells), a tab up to the next tab stop, the characters `sanitize` removes as none.
+  `text::expand_tabs` is the one tab rule: a tab is the spaces up to the next column that is a multiple of four, counted from the start of the line, so `ab\tc` puts `c` in column 4.
+  `hard_wrap` (code, source) and `sanitize` expand tabs this way; `wrap` breaks at a tab as at a space.
   Every cut to a width goes through `text::cut`, which never splits a grapheme.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 

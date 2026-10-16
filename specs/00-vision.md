@@ -56,14 +56,14 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Link | underlined `link`, OSC 8 hyperlink; autolinks likewise. Without hyperlinks (piped, no colour, dumb terminal) the text is followed by ` <url>` in `muted`, except when the text already is the URL |
 | Image | `▣ alt text` in `muted`, hyperlinked to the source (` <source>` after it without hyperlinks); never fetched |
 | Bullets | `•` `◦` `▪` by depth, in `accent`; numbers right-aligned in `accent` |
-| Task | `✔` in `success` / `○` in `muted`; done items dimmed |
+| Task | `✔` in `success` / `○` in `muted`, after the number in an ordered list; done items dimmed |
 | Blockquote | `│ ` bar in `subtle`, text italic `muted` |
 | Alert (`> [!NOTE]`) | bar and title (`● Note`, `◆ Tip`, `▲ Warning`, …) in the alert colour, body in `text` |
-| Code block | panel on `surface` spanning the content width, one column of padding, language label right-aligned in `muted` on the first row, syntax colours from the theme |
-| Table | rounded box (`╭┬╮ ├┼┤ ╰┴╯`) in `subtle`, bold header in `accent`, column alignment honoured, cells wrap when the table is too wide |
+| Code block | panel on `surface` spanning the content width, two columns of padding, language label right-aligned in `muted` on the first row, syntax colours from the theme |
+| Table | rounded box (`╭┬╮ ├┼┤ ╰┴╯`) in `subtle`, bold header in `accent`, column alignment honoured, cells wrap when the table is too wide. When even three cells per column cannot fit, each row is a record instead: one `header: value` line per cell, records a blank line apart; a table with only a header lists its names one per line |
 | Rule | `─` in `subtle` across the width, with a centred `◆` |
 | Footnote | `¹`-style marker in `accent`; notes listed at the end under a short rule |
-| Front matter | key/value lines in `muted`, then a rule |
+| Front matter | its lines in `muted`, each behind its indent (at most half the width), then a rule |
 | Pager status bar | last row on `surface`: file name in bold `text`, the search prompt or `3/12` in `accent`, `Top`/`Bot`/`42%` in `accent` and a `muted` key hint |
 | Search match | current match `surface` on `accent`, bold; other matches `text` on `subtle` |
 | Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off. In a list or quote the image keeps the indent and bar beside every row, and an item that opens on a diagram has its marker on a line of its own |

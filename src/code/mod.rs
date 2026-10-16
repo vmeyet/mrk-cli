@@ -2,13 +2,13 @@ mod highlight;
 mod language;
 mod panel;
 
-use crate::document::{Line, Settings};
+use crate::document::{Line, MIN_WIDTH, Settings};
 
-/// A fenced code block as a panel: every line exactly `settings.width` cells, highlighted when the language is known.
-/// `language` is a language name (`rust`, `ts`), not a whole fence info string.
+/// A fenced code block as a panel: every line exactly `settings.width` cells, at least `MIN_WIDTH`, highlighted
+/// when the language is known. `language` is a language name (`rust`, `ts`), not a whole fence info string.
 pub fn render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line> {
     let rows = highlight::highlight(code, language, &settings.theme);
-    panel::panel(&rows, language, settings.width, &settings.theme.palette)
+    panel::panel(rows, language, settings.width.max(MIN_WIDTH), &settings.theme.palette)
 }
 
 #[cfg(test)]
@@ -44,6 +44,11 @@ mod tests {
     }
 
     #[test]
+    fn a_width_under_the_minimum_renders_at_the_minimum() {
+        assert!(render("let tab =\t1;\n", None, &at_width(4)).iter().all(|line| line.width() == MIN_WIDTH));
+    }
+
+    #[test]
     fn a_label_too_wide_is_shortened() {
         insta::assert_snapshot!(framed(&render("x\n", Some("averyveryverylonglanguagename"), &at_width(16))));
     }
@@ -59,7 +64,7 @@ mod tests {
     #[test]
     fn every_line_is_exactly_the_width() {
         let code = "fn wide() {\n\tlet 漢字 = \"日本語のテキストはとても長いのでここで折り返されるはずです\";\n}\n";
-        for width in [8, 12, 20, 40, 80, 100] {
+        for width in [MIN_WIDTH, 9, 12, 20, 40, 80, 100] {
             for language in [Some("rust"), None, Some("klingon")] {
                 let lines = render(code, language, &at_width(width));
                 assert!(lines.iter().all(|line| line.width() == width), "width {width}, {language:?}:\n{}", framed(&lines));
@@ -85,6 +90,14 @@ mod tests {
         let marker = lines[2].spans.iter().find(|span| span.text == "↪ ").map(|span| span.style.fg);
         assert_eq!(label, Some(Some(palette.muted)));
         assert_eq!(marker, Some(Some(palette.subtle)));
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn rust_panel_in_colour() {
+        let lines = render("fn main() {\n    let a = \"b\";\n}\n", Some("rust"), &at_width(24));
+
+        insta::assert_snapshot!(crate::document::ansi(&crate::document::Document { blocks: vec![crate::document::Block::Lines(lines)] }));
     }
 
     /// Run with `cargo test --release code::tests::cold -- --ignored --nocapture`, alone, so nothing warmed the sets first.

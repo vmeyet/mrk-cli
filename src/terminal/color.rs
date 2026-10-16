@@ -26,7 +26,7 @@ fn cube_candidate(color: Rgb) -> (u8, Rgb) {
 }
 
 fn gray_candidate(color: Rgb) -> (u8, Rgb) {
-    let average = ((u16::from(color.0) + u16::from(color.1) + u16::from(color.2)) / 3) as u8;
+    let average = u8::try_from((u16::from(color.0) + u16::from(color.1) + u16::from(color.2)) / 3).unwrap_or(u8::MAX);
     let step = (0..GRAY_STEPS).min_by_key(|&step| gray_level(step).abs_diff(average)).unwrap_or(0);
     let level = gray_level(step);
     (GRAY_START + step, Rgb(level, level, level))

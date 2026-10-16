@@ -111,12 +111,12 @@ impl Pictures {
 
 /// "mrk" in ASCII, so the pager's image ids stay clear of the small ids other programs pick.
 fn image_id(index: usize) -> u32 {
-    FIRST_IMAGE_ID + (index as u32 & 0xffff)
+    FIRST_IMAGE_ID + u32::try_from(index & 0xffff).unwrap_or_default()
 }
 
 /// Through tmux every pane shares the terminal outside, so the id also follows the process: two pagers never share one.
 fn placeholder_id(index: usize) -> u32 {
-    kitty::placeholder_id(&[std::process::id().to_le_bytes(), (index as u32).to_le_bytes()].concat())
+    kitty::placeholder_id(&[std::process::id().to_le_bytes(), u32::try_from(index).unwrap_or(u32::MAX).to_le_bytes()].concat())
 }
 
 fn go_to(row: usize, column: usize) -> String {

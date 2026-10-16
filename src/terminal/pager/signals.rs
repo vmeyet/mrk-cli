@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,13 +17,13 @@ const PATIENCE: Duration = Duration::from_secs(1);
 
 /// The first ending signal caught while the pager holds the terminal.
 pub struct Ending {
-    caught: Arc<AtomicUsize>,
+    caught: Arc<AtomicI32>,
 }
 
 impl Ending {
     pub fn watch() -> io::Result<Self> {
         let mut signals = Signals::new(ENDING)?;
-        let caught = Arc::new(AtomicUsize::new(0));
+        let caught = Arc::new(AtomicI32::new(0));
         let seen = Arc::clone(&caught);
         thread::spawn(move || {
             let mut first = None;
@@ -31,7 +31,7 @@ impl Ending {
                 match first {
                     None => {
                         first = Some(Instant::now());
-                        seen.store(signal as usize, Ordering::SeqCst);
+                        seen.store(signal, Ordering::SeqCst);
                     }
                     Some(at) if at.elapsed() >= PATIENCE => {
                         let _ = low_level::emulate_default_handler(signal);
@@ -47,7 +47,7 @@ impl Ending {
     pub fn caught(&self) -> Option<i32> {
         match self.caught.load(Ordering::SeqCst) {
             0 => None,
-            signal => Some(signal as i32),
+            signal => Some(signal),
         }
     }
 }

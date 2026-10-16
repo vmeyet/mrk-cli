@@ -16,7 +16,7 @@ pub fn png_size(png: &[u8]) -> Option<(u32, u32)> {
 }
 
 fn pixel_row(row: u16, rows: u16, height_px: u32) -> u32 {
-    (u64::from(row) * u64::from(height_px) / u64::from(rows.max(1))) as u32
+    u32::try_from(u64::from(row) * u64::from(height_px) / u64::from(rows.max(1))).unwrap_or(height_px)
 }
 
 /// A part of a PNG, in pixels.

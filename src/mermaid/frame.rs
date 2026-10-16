@@ -38,9 +38,10 @@ pub fn fit(width: f32, height: f32, font_size_px: f32, cell: CellSize, max_cols:
 }
 
 fn whole_cells(pixels: u32, cell_px: u16) -> usize {
-    (pixels / u32::from(cell_px)) as usize
+    usize::try_from(pixels / u32::from(cell_px)).unwrap_or(usize::MAX)
 }
 
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a float `as usize` saturates, and callers bound it")]
 fn cells_covering(pixels: f32, cell_px: u16) -> usize {
     (pixels / f32::from(cell_px)).ceil() as usize
 }

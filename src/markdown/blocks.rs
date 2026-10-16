@@ -27,6 +27,8 @@ pub enum BlockKind {
     Rule,
     Html,
     Footnotes,
+    /// A top-level node none of the enabled Markdown extensions produce, rendered as its children.
+    Other,
 }
 
 /// One top-level block of the document, rendered as `render` draws it, with the source lines it came from.
@@ -81,7 +83,8 @@ fn kind<'a>(node: &'a AstNode<'a>) -> BlockKind {
         NodeValue::HtmlBlock(_) => BlockKind::Html,
         NodeValue::ThematicBreak => BlockKind::Rule,
         NodeValue::Table(_) => BlockKind::Table,
-        _ => BlockKind::Paragraph,
+        NodeValue::Paragraph => BlockKind::Paragraph,
+        _ => BlockKind::Other,
     }
 }
 
@@ -161,7 +164,7 @@ mod tests {
                 let settings = Settings { width, cell, ..test_settings() };
                 let blocks: Vec<Block> = render_blocks(SHOWCASE, &settings).into_iter().flat_map(|block| block.blocks).collect();
 
-                assert!(content(blocks) == content(render(SHOWCASE, &settings).blocks), "width {width}, cell {cell:?}");
+                assert_eq!(content(blocks), content(render(SHOWCASE, &settings).blocks), "width {width}, cell {cell:?}");
             }
         }
     }

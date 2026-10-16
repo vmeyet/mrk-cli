@@ -13,6 +13,7 @@ pub fn line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) 
     let max_cols = max_cols.min((MAX_SIDE_PX / u32::from(cell.width_px.max(1))) as usize);
     let max_width_px = max_cols as f32 * f32::from(cell.width_px);
     let drawing = fitted(text, color, height_px, max_width_px)?;
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped to 1..=max_cols, at most 4096")]
     let cols = (drawing.ink_right() / f32::from(cell.width_px)).ceil().clamp(1.0, max_cols.max(1) as f32) as u16;
     let png = drawing.draw(1.0, u32::from(cols) * u32::from(cell.width_px), height_px)?;
     Ok(Picture { png, cols, rows, alt: text.to_owned(), indent: Line::blank(), concealed_text: None })

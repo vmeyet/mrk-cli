@@ -1,5 +1,5 @@
 //! Text and links made safe to write to a terminal, which interprets the escape sequences an untrusted input can carry.
-use crate::text::{TAB, is_forbidden};
+use crate::text::{expand_tabs, is_forbidden};
 
 const MAX_LINK_BYTES: usize = 2048;
 const WEB_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
@@ -18,15 +18,10 @@ pub fn lines(raw: &str) -> String {
 }
 
 fn clean(raw: &str, keeps_newlines: bool) -> String {
-    let mut cleaned = String::with_capacity(raw.len());
-    for character in raw.chars() {
-        match character {
-            '\t' => cleaned.push_str(TAB),
-            '\n' if keeps_newlines => cleaned.push(character),
-            _ if is_forbidden(character) => {}
-            _ => cleaned.push(character),
-        }
-    }
+    let is_kept = |character: char| (keeps_newlines && character == '\n') || !is_forbidden(character);
+    let expanded = expand_tabs(raw, 0);
+    let mut cleaned = String::with_capacity(expanded.len());
+    cleaned.extend(expanded.chars().filter(|&character| is_kept(character)));
     cleaned
 }
 
@@ -151,8 +146,8 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_becomes_spaces() {
-        assert_eq!(text("a\tb"), "a    b");
+    fn a_tab_becomes_the_spaces_up_to_the_next_tab_stop() {
+        assert_eq!(text("a\tb"), "a   b");
     }
 
     #[test]
@@ -208,7 +203,8 @@ mod tests {
 
     #[test]
     fn every_tab_becomes_spaces_wherever_it_sits() {
-        assert_eq!(text("\ta\x1b\tb\t"), "    a    b    ");
+        assert_eq!(text("\ta\x1b\tb\t"), "    a   b   ");
+        assert_eq!(lines("ab\tc\nabcd\te"), "ab  c\nabcd    e");
     }
 
     #[test]
