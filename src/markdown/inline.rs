@@ -88,11 +88,13 @@ fn shown_target(spans: &[Span], url: &str, base: Style, context: &Context) -> Op
         return None;
     }
     let text: String = spans.iter().map(|span| span.text.as_str()).collect();
-    let is_autolink = text == url || url.strip_prefix("mailto:") == Some(text.as_str());
-    if is_autolink {
-        return None;
-    }
-    Some(Span::new(format!(" <{url}>"), Style { fg: Some(context.palette().muted), ..base }))
+    (!reads_as(&text, url)).then(|| Span::new(format!(" <{url}>"), Style { fg: Some(context.palette().muted), ..base }))
+}
+
+/// Whether `text` is `url`, or the address an autolink made it from: comrak adds `mailto:` to an email and `http://`
+/// to a `www.` address.
+fn reads_as(text: &str, url: &str) -> bool {
+    ["", "mailto:", "http://"].iter().any(|scheme| url.strip_prefix(scheme) == Some(text))
 }
 
 #[cfg(test)]
@@ -141,8 +143,8 @@ mod tests {
     #[test]
     fn without_hyperlinks_autolinks_are_not_repeated() {
         assert_eq!(
-            without_hyperlinks("visit https://example.org or <me@example.org>", 80),
-            "visit https://example.org or me@example.org\n"
+            without_hyperlinks("visit https://example.org, www.example.com or <me@example.org>", 80),
+            "visit https://example.org, www.example.com or me@example.org\n"
         );
     }
 
