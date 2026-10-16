@@ -3,7 +3,22 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
-cargo check --no-default-features
+cargo test --no-default-features
 cargo test --all-targets
 cargo deny check --hide-inclusion-graph
 cargo machete
+
+msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+if rustup toolchain list | grep -q "^$msrv-"; then
+  cargo "+$msrv" check --all-targets --locked
+  cargo "+$msrv" check --no-default-features --locked
+else
+  echo "skipped the MSRV check: install it with \`rustup toolchain install $msrv\`" >&2
+fi
+
+target=x86_64-unknown-linux-musl
+if command -v musl-gcc >/dev/null && rustup target list --installed | grep -qx "$target"; then
+  cargo build --profile dist --target "$target" --locked
+else
+  echo "skipped the $target release build: needs musl-gcc and \`rustup target add $target\`" >&2
+fi
