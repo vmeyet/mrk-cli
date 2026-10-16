@@ -110,7 +110,7 @@ src/
   The replies are read until the DA1 reply or the timeout, skipping keys typed meanwhile; raw mode ends with `TCSAFLUSH`, which discards the input still unread, so the shell or the pager never reads a reply that arrived during the round as keys.
   Known limit: a reply arriving after the timeout (a slow link such as SSH, or the terminal outside tmux) reaches the shell or the pager as input.
   The DA1 reply lists Sixel as attribute `4`; Sixel draws only when kitty graphics does not.
-  Inside tmux (`TMUX` set) the environment cannot vouch for kitty graphics, since it was inherited from whatever terminal started the server; only `LC_TERMINAL=iTerm2` still rules them out.
+  Inside tmux (`TMUX` set) the environment cannot vouch for kitty graphics, since it was inherited from whatever terminal started the server; it can still rule them out (iTerm2 by `LC_TERMINAL` or `TERM_PROGRAM`, Apple Terminal, VS Code), since a wrong no only costs pictures, and iTerm2 answers the query yet draws nothing.
   The kitty query goes through tmux (`ESC Ptmux; … ESC \`, inner ESCs doubled) and the round waits for its answer after tmux's own DA1, up to the timeout: no answer means passthrough is off or the terminal outside has no kitty graphics, and diagrams stay text.
   mrk never runs `tmux` to read `allow-passthrough`.
   A Sixel in tmux's own DA1 means tmux (3.4+, built with it) draws Sixel itself, so Sixel goes out unwrapped.
