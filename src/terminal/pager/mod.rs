@@ -86,6 +86,9 @@ fn latest_size(columns: u16, rows: u16) -> io::Result<((u16, u16), Option<Event>
     Ok((size, None))
 }
 
+/// A terminal reply arrives in one burst; a pause this long inside one means the keys are the reader's.
+const REPLY_GAP: Duration = Duration::from_millis(20);
+
 struct Reader<'a, R: Fn(u16) -> Rendered> {
     session: &'a Session<'a>,
     render: R,
@@ -93,7 +96,7 @@ struct Reader<'a, R: Fn(u16) -> Rendered> {
 
 impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
     fn pictures(&self, page: &Page) -> Pictures {
-        Pictures::new(page, self.session.capabilities.graphics.map(|graphics| graphics.protocol), std::process::id())
+        Pictures::new(page, self.session.capabilities, std::process::id())
     }
 
     fn first_view(&self, (columns, rows): (u16, u16)) -> View {
@@ -149,7 +152,7 @@ pub fn run(session: &Session, render: impl Fn(u16) -> Rendered) -> io::Result<()
             None => event::read()?,
         };
         let (next_keys, step) = step(keys, &event, view.pager.prompt.is_some());
-        keys = next_keys;
+        keys = if next_keys.is_reading_reply() && !event::poll(REPLY_GAP)? { Keys::default() } else { next_keys };
         match step {
             Step::Quit => return Ok(()),
             Step::Nothing => continue,

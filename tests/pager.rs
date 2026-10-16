@@ -129,10 +129,15 @@ impl Pager {
     }
 
     /// How mrk ended, and whether the tty was back to reading lines with echo, as a shell needs it.
-    fn ending(mut self) -> String {
-        let ending = report(&mut self.reports);
+    fn ending(&mut self) -> String {
+        report(&mut self.reports)
+    }
+}
+
+/// The launcher ends once the tty drained what mrk wrote.
+impl Drop for Pager {
+    fn drop(&mut self) {
         let _ = self.launcher.wait();
-        ending
     }
 }
 
@@ -150,7 +155,7 @@ fn report(reports: &mut BufReader<ChildStdout>) -> String {
 
 #[test]
 fn an_ending_signal_gives_the_terminal_back_then_ends_mrk_as_it_would_have() {
-    let pager = Pager::start();
+    let mut pager = Pager::start();
     pager.wait_for_the_first_frame();
 
     pager.send(Signal::TERM);
@@ -161,7 +166,7 @@ fn an_ending_signal_gives_the_terminal_back_then_ends_mrk_as_it_would_have() {
 
 #[test]
 fn a_second_signal_on_the_heels_of_the_first_finds_the_terminal_given_back() {
-    let pager = Pager::start();
+    let mut pager = Pager::start();
     pager.wait_for_the_first_frame();
 
     pager.send(Signal::HUP);
@@ -169,6 +174,21 @@ fn a_second_signal_on_the_heels_of_the_first_finds_the_terminal_given_back() {
 
     assert!(pager.wrote_after(FRAME_END, ALTERNATE_SCREEN_LEFT));
     assert_eq!(pager.ending(), format!("signal {}, cooked true", Signal::HUP.as_raw()));
+}
+
+#[test]
+fn a_terminal_that_stopped_reading_does_not_keep_mrk_from_ending() {
+    let mut pager = Pager::start();
+    pager.wait_for_the_first_frame();
+    let written = Arc::clone(&pager.written);
+    let stalled = written.lock().unwrap();
+
+    pager.press(&[b' '; 40]);
+    thread::sleep(Duration::from_millis(200));
+    pager.send(Signal::TERM);
+
+    assert_eq!(pager.ending(), format!("signal {}, cooked true", Signal::TERM.as_raw()));
+    drop(stalled);
 }
 
 #[test]

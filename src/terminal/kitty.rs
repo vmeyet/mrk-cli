@@ -2,7 +2,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
 use super::crop::Crop;
-use super::tmux;
+use super::{ColorDepth, tmux};
 use crate::document::Picture;
 
 const CHUNK_BYTES: usize = 4096;
@@ -87,16 +87,19 @@ pub fn placeholder_id(png: &[u8]) -> u32 {
     (high << 24) | low
 }
 
-/// Set in the low 24 bits of every pager id, which stay below 256 in a printed picture's (`placeholder_id`).
+/// Set in the low 24 bits of every true-colour pager id, which stay below 256 in a printed picture's (`placeholder_id`).
 const PAGER_MARK: u32 = 1 << 23;
 
-/// The id of the picture at `index` in the pager of process `pid`, `None` past the 256th: the index as the high byte,
-/// the process id under `PAGER_MARK` as the low 24 bits. Process ids stay below 2^22 (Linux's limit; macOS and the BSDs
-/// stop under 100 000), so two live pagers never share an id, though every tmux pane shares the terminal outside, and
-/// the mark keeps them clear of printed pictures and of the small ids other programs pick.
-pub fn pager_id(pid: u32, index: usize) -> Option<u32> {
-    let number = u32::from(u8::try_from(index).ok()?);
-    Some((number << 24) | PAGER_MARK | (pid & (PAGER_MARK - 1)))
+/// The id through tmux of the picture at `index` in the pager of process `pid`, `None` past the 256th: the index as the
+/// high byte, and every tmux pane shares the terminal outside, so the low bits follow the process. With true colour
+/// they are the process id under `PAGER_MARK`: process ids stay below 2^22 (Linux's limit; macOS and the BSDs stop
+/// under 100 000), so two live pagers never share an id, and the mark keeps them clear of printed pictures. A tmux
+/// that downgrades true colour only carries a 256-colour index, so without it the low byte is the process id modulo
+/// 255, plus one: two pagers, or a pager and a printed picture, may then share an id.
+pub fn pager_id(pid: u32, index: usize, color: ColorDepth) -> Option<u32> {
+    let number = u32::from(u8::try_from(index).ok()?) << 24;
+    let low = if color == ColorDepth::TrueColor { PAGER_MARK | (pid & (PAGER_MARK - 1)) } else { pid % 255 + 1 };
+    Some(number | low)
 }
 
 /// Sends the picture through tmux under `id` with a virtual placement of its cell box, for placeholder cells to show.
@@ -232,21 +235,31 @@ mod tests {
 
     #[test]
     fn a_pager_id_is_the_picture_number_over_the_marked_process_id() {
-        assert_eq!(pager_id(70_807, 0), Some(0x0081_1497));
-        assert_eq!(pager_id(70_807, 3), Some(0x0381_1497));
-        assert_eq!(pager_id((1 << 22) - 1, 255), Some(0xffbf_ffff));
-        assert_eq!(pager_id(70_807, 256), None);
+        assert_eq!(pager_id(70_807, 0, ColorDepth::TrueColor), Some(0x0081_1497));
+        assert_eq!(pager_id(70_807, 3, ColorDepth::TrueColor), Some(0x0381_1497));
+        assert_eq!(pager_id((1 << 22) - 1, 255, ColorDepth::TrueColor), Some(0xffbf_ffff));
+        assert_eq!(pager_id(70_807, 256, ColorDepth::TrueColor), None);
     }
 
     #[test]
     fn pager_ids_never_meet_between_processes_pictures_or_printed_pictures() {
         let pids = [1, 2, 255, 256, 23_668, 70_807, 99_998, (1 << 22) - 1];
-        let ids: Vec<u32> = pids.iter().flat_map(|&pid| (0..=255).filter_map(move |index| pager_id(pid, index))).collect();
+        let ids: Vec<u32> =
+            pids.iter().flat_map(|&pid| (0..=255).filter_map(move |index| pager_id(pid, index, ColorDepth::TrueColor))).collect();
         let distinct: std::collections::BTreeSet<u32> = ids.iter().copied().collect();
 
         assert_eq!(distinct.len(), pids.len() * 256);
         assert!(ids.iter().all(|id| id & 0x00ff_ffff > 0xff), "a printed id keeps its low 24 bits under 256");
         assert!(placeholder_id(&[1, 2, 3]) & 0x00ff_ffff <= 0xff);
+    }
+
+    #[test]
+    fn without_true_colour_a_pager_id_fits_a_256_colour_cell() {
+        let ids: Vec<u32> = (0..3).filter_map(|index| pager_id(70_807, index, ColorDepth::Ansi256)).collect();
+
+        assert_eq!(ids, [0x0000_00ad, 0x0100_00ad, 0x0200_00ad]);
+        assert_eq!(pager_id(254, 0, ColorDepth::Ansi256), Some(0xff));
+        assert_eq!(pager_id(255, 0, ColorDepth::Ansi256), Some(1));
     }
 
     #[test]

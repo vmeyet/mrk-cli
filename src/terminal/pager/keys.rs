@@ -147,6 +147,10 @@ impl Keys {
         }
         (Self { is_in_reply: false }, action(key, is_prompting))
     }
+
+    pub fn is_reading_reply(self) -> bool {
+        self.is_in_reply
+    }
 }
 
 #[cfg(test)]

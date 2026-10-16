@@ -43,7 +43,6 @@ mod tty {
     use std::io::{self, Read, Write};
     use std::time::{Duration, Instant};
 
-    use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
     use rustix::process::getpgrp;
     use rustix::termios::tcgetpgrp;
 
@@ -53,13 +52,6 @@ mod tty {
     const MAX_REPLY_BYTES: usize = 4096;
     const READ_BYTES: usize = 256;
     const IDLE_WAIT: Duration = Duration::from_millis(2);
-
-    /// Non-blocking reads rather than `poll`, which macOS refuses on `/dev/tty`.
-    fn open_nonblocking() -> io::Result<File> {
-        let tty = tty::open()?;
-        fcntl_setfl(&tty, fcntl_getfl(&tty)? | OFlags::NONBLOCK)?;
-        Ok(tty)
-    }
 
     /// A background job that changes the terminal's modes is stopped by `SIGTTOU`.
     fn is_foreground(tty: &File) -> bool {
@@ -94,7 +86,8 @@ mod tty {
 
     pub fn exchange(request: &str, timeout: Duration, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
         let deadline = Instant::now() + timeout;
-        let tty = open_nonblocking()?;
+        // Non-blocking reads rather than `poll`, which macOS refuses on `/dev/tty`.
+        let tty = tty::open_nonblocking()?;
         if !is_foreground(&tty) {
             return Ok(Vec::new());
         }

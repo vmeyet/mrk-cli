@@ -1,11 +1,13 @@
 use std::fs::File;
 use std::io::{self, Stdout, Write};
 use std::panic::{self, PanicHookInfo};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 
 use super::frame::Pictures;
 use super::page::Page;
+use rustix::termios::{OptionalActions, Termios, tcsetattr};
+
 use super::signals;
 use crate::terminal::environment::{self, Environment};
 use crate::terminal::tty::{self, RawMode};
@@ -44,13 +46,39 @@ struct Taken {
 }
 
 impl Taken {
-    fn enter() -> io::Result<Self> {
+    /// The terminal taken, and how to force it back.
+    fn enter() -> io::Result<(Self, Forced)> {
         let raw = RawMode::enable(tty::open()?)?;
         let (enter, leave) = modes(environment::saves_modes(&Environment::read()));
+        let forced = Forced { tty: tty::open_nonblocking()?, saved: raw.saved().clone(), leave: format!("{STRING_END}{leave}") };
         let mut out = io::stdout();
         out.write_all(enter.as_bytes())?;
         out.flush()?;
-        Ok(Self { out, raw, leave, free: String::new() })
+        Ok((Self { out, raw, leave, free: String::new() }, forced))
+    }
+
+    /// Frees the pictures, leaves the pager's modes, then restores the tty's, which waits for the output to drain.
+    fn give_back(mut self) {
+        let _ = self.out.write_all((self.free + &self.leave).as_bytes()).and_then(|()| self.out.flush());
+        drop(self.raw);
+    }
+}
+
+/// Ends a string sequence (APC, DCS) a stalled write may have left open, so the bytes after it are read as sequences.
+const STRING_END: &str = "\x1b\\";
+
+/// The terminal given back without waiting on anything: the tty opened again without blocking, so a terminal that
+/// stopped reading drops the leave sequence rather than hold mrk, and its modes restored at once.
+struct Forced {
+    tty: File,
+    saved: Termios,
+    leave: String,
+}
+
+impl Forced {
+    fn give_back(&self) {
+        let _ = rustix::io::write(&self.tty, self.leave.as_bytes());
+        let _ = tcsetattr(&self.tty, OptionalActions::Now, &self.saved);
     }
 }
 
@@ -59,6 +87,7 @@ impl Taken {
 #[derive(Default)]
 struct Held {
     taken: Mutex<Option<Taken>>,
+    forced: OnceLock<Forced>,
     /// The reports of the panics while the screen was held, printed once the terminal is back: on the alternate
     /// screen they would be lost.
     reports: Mutex<Vec<String>>,
@@ -69,11 +98,19 @@ impl Held {
         lock(&self.reports).push(report);
     }
 
+    /// Holds `taken` until the terminal is back, so a signal meanwhile waits rather than end mrk halfway.
     fn give_back(&self) {
-        let Some(Taken { mut out, raw, leave, free }) = lock(&self.taken).take() else { return };
-        let _ = out.write_all((free + &leave).as_bytes()).and_then(|()| out.flush());
-        drop(raw);
+        let mut taken = lock(&self.taken);
+        let Some(given) = taken.take() else { return };
+        given.give_back();
+        drop(taken);
         let _ = io::stderr().write_all(printed(&std::mem::take(&mut *lock(&self.reports))).as_bytes());
+    }
+
+    fn force_back(&self) {
+        if let Some(forced) = self.forced.get() {
+            forced.give_back();
+        }
     }
 }
 
@@ -106,12 +143,17 @@ pub struct Screen {
 }
 
 impl Screen {
-    /// Signals are caught before the terminal changes, so none can end mrk with the terminal not given back.
+    /// Signals are caught first, and the terminal changes while `taken` is held, so a signal from then on waits for it
+    /// and gives back whatever was taken.
     pub fn take() -> io::Result<Self> {
         let held = Arc::new(Held::default());
-        let giver = Arc::clone(&held);
-        signals::on_ending(move || giver.give_back())?;
-        *lock(&held.taken) = Some(Taken::enter()?);
+        let (giver, forcer) = (Arc::clone(&held), Arc::clone(&held));
+        signals::on_ending(move || giver.give_back(), move || forcer.force_back())?;
+        let mut taken = lock(&held.taken);
+        let (entered, forced) = Taken::enter()?;
+        *taken = Some(entered);
+        let _ = held.forced.set(forced);
+        drop(taken);
         Ok(Self { previous_hook: Some(hold_panics(&held)), held })
     }
 
