@@ -8,7 +8,7 @@ use crate::document::{Line, MIN_WIDTH, Settings};
 /// when the language is known. `language` is a language name (`rust`, `ts`), not a whole fence info string.
 pub fn render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line> {
     let rows = highlight::highlight(code, language, &settings.theme);
-    panel::panel(&rows, language, settings.width.max(MIN_WIDTH), &settings.theme.palette)
+    panel::panel(rows, language, settings.width.max(MIN_WIDTH), &settings.theme.palette)
 }
 
 #[cfg(test)]

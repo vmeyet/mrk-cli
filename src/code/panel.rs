@@ -8,10 +8,11 @@ const ELLIPSIS: &str = "…";
 
 /// The highlighted rows framed on `surface`: a padded top row carrying the label, the rows hard-wrapped to fit, each
 /// continuation opening with a marker, and a padded bottom row.
-pub fn panel(rows: &[Vec<Span>], label: Option<&str>, width: usize, palette: &Palette) -> Vec<Line> {
+/// `rows` are taken one at a time, each freed once framed: a block of millions of rows is never held twice.
+pub fn panel(rows: impl Iterator<Item = Vec<Span>>, label: Option<&str>, width: usize, palette: &Palette) -> Vec<Line> {
     let content_width = width.saturating_sub(2 * display_width(PADDING));
     let continuation = [Span::new(CONTINUATION, Style::fg(palette.subtle))];
-    let body = rows.iter().flat_map(|row| hard_wrap(row, content_width, &continuation));
+    let body = rows.flat_map(|row| hard_wrap(&row, content_width, &continuation));
     let framed = std::iter::once(label_row(label, content_width, palette)).chain(body).chain(std::iter::once(Line::blank()));
     framed.map(|content| pad(content, width, palette)).collect()
 }
@@ -33,10 +34,12 @@ fn fit(text: &str, width: usize) -> String {
     format!("{kept}{ELLIPSIS}")
 }
 
+/// One span per style run: a panel line is mostly padding in the text style, and a large block has millions of them.
 fn pad(content: Line, width: usize, palette: &Palette) -> Line {
     let fill = Span::plain(" ".repeat(width.saturating_sub(display_width(PADDING) + content.width())));
     let spans = std::iter::once(Span::plain(PADDING)).chain(content.spans).chain(std::iter::once(fill));
-    Line::new(spans.filter(|span| !span.text.is_empty()).map(|span| on_surface(span, palette)).collect())
+    let surfaced: Vec<Span> = spans.filter(|span| !span.text.is_empty()).map(|span| on_surface(span, palette)).collect();
+    Line::joined(surfaced.iter().map(|span| (span.text.as_str(), span)))
 }
 
 fn on_surface(span: Span, palette: &Palette) -> Span {

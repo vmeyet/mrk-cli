@@ -99,6 +99,10 @@ pub fn wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
 pub fn hard_wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
     let indent_width = spans_width(indent);
     let width = width.max(indent_width + WIDEST_GRAPHEME);
+    let fits = spans_width(spans) <= width && !spans.iter().any(|span| span.text.contains('\t'));
+    if fits {
+        return vec![Line::joined(pieces_of(spans).map(|piece| (piece.text, piece.span)))];
+    }
     let texts: Vec<Cow<str>> = spans
         .iter()
         .scan(0, |column, span| {
@@ -139,16 +143,8 @@ fn pieces_width(pieces: &[Piece]) -> usize {
     pieces.iter().map(|piece| piece.width()).sum()
 }
 
-/// The pieces as a line, neighbours in the same style and link joined into one span.
 fn line_of(pieces: Vec<Piece>) -> Line {
-    let spans = pieces.into_iter().fold(Vec::new(), |mut spans: Vec<Span>, piece| {
-        match spans.last_mut() {
-            Some(last) if last.style == piece.span.style && last.link == piece.span.link => last.text.push_str(piece.text),
-            _ => spans.push(Span { text: piece.text.to_owned(), style: piece.span.style, link: piece.span.link.clone() }),
-        }
-        spans
-    });
-    Line::new(spans)
+    Line::joined(pieces.into_iter().map(|piece| (piece.text, piece.span)))
 }
 
 /// `pieces` cut into rows of whole graphemes, the first at most `first` cells wide and the others `rest`, which must hold

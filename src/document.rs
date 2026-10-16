@@ -96,6 +96,21 @@ impl Line {
         Self { spans }
     }
 
+    /// A line of text slices, each styled and linked as its span, neighbours in the same style and link joined into one span.
+    /// Every span and text is allocated at its exact size: documents hold millions of lines.
+    pub fn joined<'a>(pieces: impl IntoIterator<Item = (&'a str, &'a Span)>) -> Self {
+        let pieces: Vec<(&str, &Span)> = pieces.into_iter().collect();
+        let runs = pieces.chunk_by(|(_, left), (_, right)| left.style == right.style && left.link == right.link);
+        let mut spans = Vec::with_capacity(runs.clone().count());
+        spans.extend(runs.map(|run| {
+            let mut text = String::with_capacity(run.iter().map(|(piece, _)| piece.len()).sum());
+            text.extend(run.iter().map(|(piece, _)| *piece));
+            let (_, span) = run[0];
+            Span { text, style: span.style, link: span.link.clone() }
+        }));
+        Self::new(spans)
+    }
+
     pub fn blank() -> Self {
         Self::default()
     }
@@ -348,6 +363,16 @@ mod tests {
     #[test]
     fn hex_writes_two_digits_per_channel() {
         assert_eq!(Rgb(0, 15, 255).hex(), "#000fff");
+    }
+
+    #[test]
+    fn joined_merges_neighbours_of_the_same_look_into_spans_of_exact_size() {
+        let (plain, red) = (Span::plain("a"), Span::new("b", Style::fg(RED)));
+
+        let line = Line::joined([("ab", &plain), ("c", &plain), ("d", &red), ("e", &plain)]);
+
+        assert_eq!(line.spans, [Span::plain("abc"), Span::new("d", Style::fg(RED)), Span::plain("e")]);
+        assert_eq!((line.spans.capacity(), line.spans[0].text.capacity()), (3, 3));
     }
 
     #[test]
