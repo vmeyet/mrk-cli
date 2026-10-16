@@ -4,6 +4,7 @@ mod page;
 mod picture;
 mod screen;
 mod search;
+mod signals;
 mod state;
 mod status;
 
@@ -15,6 +16,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 use self::frame::{Look, Pictures};
 use self::page::Page;
 use self::screen::Screen;
+use self::signals::Ending;
 use self::state::Pager;
 use super::Capabilities;
 use crate::document::Document;
@@ -79,10 +81,6 @@ fn latest_size(columns: u16, rows: u16) -> io::Result<((u16, u16), Option<Event>
     Ok((size, None))
 }
 
-fn store(out: &mut impl Write, view: &View) -> io::Result<()> {
-    out.write_all(view.pictures.store(&view.pager.page).as_bytes())
-}
-
 struct Reader<'a, R: Fn(u16) -> Rendered> {
     session: &'a Session<'a>,
     render: R,
@@ -99,7 +97,9 @@ impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
         View { pictures: self.pictures(&pager.page), pager, margin, columns }
     }
 
-    fn draw(&self, out: &mut impl Write, view: &View) -> io::Result<()> {
+    /// Draws the view, which comes back with the Sixel bands it sent kept for the next frame.
+    fn draw(&self, out: &mut impl Write, view: View) -> io::Result<View> {
+        let view = View { pictures: view.pictures.encoded(&view.pager), ..view };
         let capabilities = Capabilities { columns: view.columns, ..*self.session.capabilities };
         let session = self.session;
         let look = Look {
@@ -110,11 +110,12 @@ impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
             columns: usize::from(view.columns),
         };
         out.write_all(frame::frame(&view.pager, &look, &view.pictures).as_bytes())?;
-        out.flush()
+        out.flush()?;
+        Ok(view)
     }
 
     /// Renders again only when the width changed; a new height just shows more or fewer rows.
-    fn resized(&self, out: &mut impl Write, view: View, (columns, rows): (u16, u16)) -> io::Result<View> {
+    fn resized(&self, out: &mut impl Write, screen: &mut Screen, view: View, (columns, rows): (u16, u16)) -> io::Result<View> {
         if columns == view.columns {
             return Ok(View { pager: view.pager.with_height(content_height(rows)), ..view });
         }
@@ -122,34 +123,60 @@ impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
         let Rendered { document, margin } = (self.render)(columns);
         let pager = view.pager.resized(page::flatten(document), content_height(rows));
         let view = View { pictures: self.pictures(&pager.page), pager, margin, columns };
-        store(out, &view)?;
+        screen.store(out, &view.pictures, &view.pager.page)?;
         Ok(view)
     }
 }
 
+/// How often waiting for a key looks for an ending signal, which does not wake that wait.
+const SIGNAL_CHECK: Duration = Duration::from_millis(100);
+
+/// The event still to handle, else the next one from the terminal; `None` once an ending signal came.
+fn next_event(pending: Option<Event>, ending: &Ending) -> io::Result<Option<Event>> {
+    if pending.is_some() {
+        return Ok(pending);
+    }
+    while ending.caught().is_none() {
+        if event::poll(SIGNAL_CHECK)? {
+            return event::read().map(Some);
+        }
+    }
+    Ok(None)
+}
+
 /// Shows the document on the alternate screen until the reader quits, re-rendering it with `render` whenever the
 /// window changes width. Stays open even when the document fits, like a program another program hands the terminal to.
+/// An ending signal gives the terminal back, then ends mrk as that signal would have.
 pub fn run(session: &Session, render: impl Fn(u16) -> Rendered) -> io::Result<()> {
-    let reader = Reader { session, render };
+    match show(&Reader { session, render })? {
+        Some(signal) => signals::end_as(signal),
+        None => Ok(()),
+    }
+}
+
+/// The pager until the reader quits, or the ending signal that stopped it. Signals are caught only once the screen is
+/// taken, so one during the first render ends mrk at once, with nothing to give back.
+fn show(reader: &Reader<'_, impl Fn(u16) -> Rendered>) -> io::Result<Option<i32>> {
     let mut view = reader.first_view(crossterm::terminal::size()?);
 
-    let _screen = Screen::take()?;
+    let mut screen = Screen::take()?;
+    let ending = Ending::watch()?;
     let mut out = io::stdout().lock();
-    store(&mut out, &view)?;
-    reader.draw(&mut out, &view)?;
+    screen.store(&mut out, &view.pictures, &view.pager.page)?;
+    view = reader.draw(&mut out, view)?;
     let mut pending = None;
     loop {
-        let event = if let Some(event) = pending.take() { event } else { event::read()? };
+        let Some(event) = next_event(pending.take(), &ending)? else { return Ok(ending.caught()) };
         match step(&event, view.pager.prompt.is_some()) {
-            Step::Quit => return Ok(()),
+            Step::Quit => return Ok(None),
             Step::Nothing => continue,
-            Step::Act(action) => view = View { pager: view.pager.apply(&action), ..view },
+            Step::Act(action) => view = View { pager: view.pager.apply(action), ..view },
             Step::Resize(columns, rows) => {
                 let (size, next) = latest_size(columns, rows)?;
                 pending = next;
-                view = reader.resized(&mut out, view, size)?;
+                view = reader.resized(&mut out, &mut screen, view, size)?;
             }
         }
-        reader.draw(&mut out, &view)?;
+        view = reader.draw(&mut out, view)?;
     }
 }

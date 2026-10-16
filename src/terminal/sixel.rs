@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::ops::Range;
 
 use super::color::distance;
-use crate::document::{Picture, Rgb};
+use crate::document::Rgb;
 
 /// Sixel has 256 colour registers on the terminals that matter.
 const MAX_COLORS: usize = 256;
@@ -67,11 +67,14 @@ impl Image {
     }
 }
 
-/// Draws the picture with Sixel from the cursor, then puts the cursor back where it was: where it ends up after an
-/// image differs between terminals. `None` when the PNG cannot be read.
-pub fn draw(picture: &Picture) -> Option<String> {
-    let image = Image::from_png(&picture.png)?;
-    Some(format!("\x1b7{}\x1b8", image.encode(0..image.height)))
+/// Draws the pixel `rows` of the image, all of them when `None`, with Sixel from the cursor, then puts the cursor back
+/// where it was: where it ends up after an image differs between terminals. Rows that stop inside the image run on to a
+/// whole band, the next part of the image, which the part drawn after them covers again, so cutting a picture in parts
+/// leaves no gap between them.
+pub fn draw(image: &Image, rows: Option<Range<u32>>) -> String {
+    let rows = rows.unwrap_or(0..image.height);
+    let whole_bands = rows.start..rows.start + (rows.end - rows.start).next_multiple_of(BAND_PX);
+    format!("\x1b7{}\x1b8", image.encode(whole_bands))
 }
 
 fn decode(png: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
@@ -226,13 +229,15 @@ mod tests {
     }
 
     #[test]
-    fn many_colours_are_reduced_to_256() {
-        let gradient: Vec<[u8; 4]> = (0..=255).flat_map(|red| (0..4).map(move |blue| [red, 0, blue * 80, 255])).collect();
+    fn past_256_colours_the_rarest_takes_the_nearest_common_one() {
+        let grid = (0..255u8).map(|index| [index % 32 * 8, index / 32 * 8, 0, 255]);
+        let common: Vec<[u8; 4]> = grid.chain([BLUE]).flat_map(|pixel| [pixel, pixel]).collect();
+        let rare = [0, 0, 200, 255];
 
-        let image = image(32, 32, &gradient);
+        let image = image(513, 1, &[common, vec![rare]].concat());
 
-        assert!(image.colors.matches(";2;").count() <= MAX_COLORS);
-        assert!(image.pixels.iter().all(Option::is_some));
+        assert_eq!(image.colors.matches(";2;").count(), MAX_COLORS);
+        assert_eq!(image.pixels[512], image.pixels[510]);
     }
 
     #[test]
@@ -256,17 +261,12 @@ mod tests {
 
     #[test]
     fn a_drawn_picture_puts_the_cursor_back() {
-        let picture = Picture {
-            png: test_png(1, 6, &[RED; 6]),
-            cols: 1,
-            rows: 1,
-            alt: "flow".to_owned(),
-            indent: crate::document::Line::blank(),
-            concealed_text: None,
-        };
+        let image = image(1, 12, &[RED; 12]);
 
-        let drawn = draw(&picture).unwrap();
+        let drawn = draw(&image, None);
 
         assert!(drawn.starts_with("\x1b7\x1bP") && drawn.ends_with("\x1b\\\x1b8"), "{drawn:?}");
+        assert!(drawn.contains("\"1;1;1;12#"), "{drawn:?}");
+        assert!(draw(&image, Some(6..12)).contains("\"1;1;1;6#"));
     }
 }

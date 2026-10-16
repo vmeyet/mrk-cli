@@ -77,6 +77,40 @@ impl Search {
     pub fn current_match(&self) -> Option<Match> {
         self.current.and_then(|current| self.matches.get(current)).copied()
     }
+
+    /// The same query over `rows`, the page `previous` rendered again at another width. The current match keeps its
+    /// number when the count did not change; else it is the one nearest where the current one stood in the text, the
+    /// closest number breaking a tie; with none before, the first at or below `from_row`.
+    pub fn rewrapped(&self, previous: &[Row], rows: &[Row], from_row: usize) -> Self {
+        let search = Self::new(rows, &self.query, from_row);
+        let Some(current) = self.current else { return search };
+        if search.matches.len() == self.matches.len() {
+            return Self { current: Some(current), ..search };
+        }
+        let target = text_positions(previous, &self.matches[current..=current])[0];
+        let positions = text_positions(rows, &search.matches);
+        let nearest = (0..positions.len()).min_by_key(|&index| (positions[index].abs_diff(target), index.abs_diff(current)));
+        Self { current: nearest.or(search.current), ..search }
+    }
+}
+
+fn alphanumerics(text: impl Iterator<Item = char>) -> usize {
+    text.filter(|character| character.is_alphanumeric()).count()
+}
+
+/// How many letters and digits come before each match: wrapping again moves spaces, indents and bars, but keeps the
+/// words in order, so this stays about the same for the same match.
+fn text_positions(rows: &[Row], matches: &[Match]) -> Vec<usize> {
+    let plain = |row: &Row| if let Row::Line(line) = row { line.plain() } else { String::new() };
+    let before_row: Vec<usize> = rows
+        .iter()
+        .scan(0, |total, row| {
+            let before = *total;
+            *total += alphanumerics(plain(row).chars());
+            Some(before)
+        })
+        .collect();
+    matches.iter().map(|found| before_row[found.row] + alphanumerics(plain(&rows[found.row]).chars().take(found.start))).collect()
 }
 
 fn matched_style(palette: &Palette) -> Style {
@@ -143,6 +177,40 @@ mod tests {
         assert_eq!(search.previous().previous().current, Some(2));
         assert_eq!(Search::new(&rows, "x", 9).current, Some(0));
         assert_eq!(Search::new(&rows, "zz", 0).current, None);
+    }
+
+    #[test]
+    fn wrapped_again_the_current_match_stays_on_the_same_words_though_others_split() {
+        let wide = rows(&["foo bar", "foo bar", "target foo bar"]);
+        let narrow = rows(&["foo", "bar foo bar", "target foo bar"]);
+        let third = Search { current: Some(2), ..Search::new(&wide, "foo bar", 0) };
+
+        let rewrapped = third.rewrapped(&wide, &narrow, 0);
+
+        assert_eq!(rewrapped.matches.len(), 2);
+        assert_eq!(rewrapped.current_match(), Some(Match { row: 2, start: 7, end: 14 }));
+        assert_eq!(Search::new(&wide, "zz", 0).rewrapped(&wide, &narrow, 1), Search::new(&narrow, "zz", 1));
+    }
+
+    #[test]
+    fn wrapped_again_with_as_many_matches_the_current_one_keeps_its_number() {
+        let wide = rows(&["-- a --", "-- b"]);
+        let narrow = rows(&["--", "a --", "--", "b"]);
+        let second = Search { current: Some(1), ..Search::new(&wide, "--", 0) };
+
+        assert_eq!(second.rewrapped(&wide, &narrow, 0).current, Some(1));
+    }
+
+    #[test]
+    fn a_tie_in_the_text_goes_to_the_closest_number() {
+        let wide = rows(&["-- -- --", "x"]);
+        let narrow = rows(&["-- -", "- --", "x"]);
+        let third = Search { current: Some(2), ..Search::new(&wide, "--", 0) };
+
+        let rewrapped = third.rewrapped(&wide, &narrow, 0);
+
+        assert_eq!(rewrapped.matches.len(), 2);
+        assert_eq!(rewrapped.current, Some(1));
     }
 
     #[test]

@@ -57,9 +57,9 @@ fn sgr(from: Style, to: Style, depth: ColorDepth) -> String {
 
 fn hyperlink(from: Option<&str>, to: Option<&str>) -> String {
     match to {
-        _ if from == to => String::new(),
-        Some(target) => format!("\x1b]8;;{target}\x1b\\"),
-        None => HYPERLINK_CLOSE.to_owned(),
+        Some(target) if from != to => format!("\x1b]8;;{target}\x1b\\"),
+        None if from.is_some() => HYPERLINK_CLOSE.to_owned(),
+        _ => String::new(),
     }
 }
 
@@ -77,11 +77,11 @@ fn close(pen: &Pen) -> String {
     format!("{link}{style}")
 }
 
-/// One line behind the margin, attributes emitted only when they change, everything closed before the newline
-/// so a background or a hyperlink never runs past the line.
+/// One line behind the margin, without its newline: attributes emitted only when they change, everything closed at
+/// its end so a background or a hyperlink never runs past it.
 pub fn line(line: &Line, capabilities: &Capabilities, margin: usize) -> String {
     if line.spans.is_empty() {
-        return "\n".to_owned();
+        return String::new();
     }
 
     let mut out = " ".repeat(margin);
@@ -101,7 +101,6 @@ pub fn line(line: &Line, capabilities: &Capabilities, margin: usize) -> String {
         pen = next;
     }
     out.push_str(&close(&pen));
-    out.push('\n');
     out
 }
 
@@ -138,7 +137,7 @@ mod tests {
     const RED: Rgb = Rgb(255, 0, 0);
 
     fn capabilities(color: ColorDepth, hyperlinks: bool) -> Capabilities {
-        Capabilities { color, hyperlinks, graphics: None, double_height: false, background: None, columns: 80, is_terminal: true }
+        Capabilities { color, hyperlinks, graphics: None, double_height: false, background: None, columns: 80, rows: 24, is_terminal: true }
     }
 
     fn truecolor() -> Capabilities {
@@ -147,12 +146,12 @@ mod tests {
 
     #[test]
     fn a_blank_line_has_no_margin() {
-        assert_eq!(line(&Line::blank(), &truecolor()), "\n");
+        assert_eq!(line(&Line::blank(), &truecolor()), "");
     }
 
     #[test]
     fn plain_spans_get_the_margin_and_no_escape() {
-        assert_eq!(line(&Line::new(vec![Span::plain("a"), Span::plain("b")]), &truecolor()), "  ab\n");
+        assert_eq!(line(&Line::new(vec![Span::plain("a"), Span::plain("b")]), &truecolor()), "  ab");
     }
 
     #[test]
@@ -160,14 +159,14 @@ mod tests {
         let style = Style::fg(RED).bold();
         let out = line(&Line::new(vec![Span::new("a", style), Span::new("b", style)]), &truecolor());
 
-        assert_eq!(out, "  \x1b[1;38;2;255;0;0mab\x1b[0m\n");
+        assert_eq!(out, "  \x1b[1;38;2;255;0;0mab\x1b[0m");
     }
 
     #[test]
     fn only_the_changed_attribute_is_emitted() {
         let out = line(&Line::new(vec![Span::new("a", Style::fg(RED)), Span::new("b", Style::fg(RED).italic())]), &truecolor());
 
-        assert_eq!(out, "  \x1b[38;2;255;0;0ma\x1b[3mb\x1b[0m\n");
+        assert_eq!(out, "  \x1b[38;2;255;0;0ma\x1b[3mb\x1b[0m");
     }
 
     #[test]
@@ -175,7 +174,7 @@ mod tests {
         let out =
             line(&Line::new(vec![Span::new("a", Style::default().bold().dim()), Span::new("b", Style::default().dim())]), &truecolor());
 
-        assert_eq!(out, "  \x1b[1;2ma\x1b[22;2mb\x1b[0m\n");
+        assert_eq!(out, "  \x1b[1;2ma\x1b[22;2mb\x1b[0m");
     }
 
     #[test]
@@ -183,64 +182,64 @@ mod tests {
         let styled = Style::fg(RED).on(RED).italic().underline().strike();
         let out = line(&Line::new(vec![Span::new("a", styled), Span::plain("b")]), &truecolor());
 
-        assert_eq!(out, "  \x1b[3;4;9;38;2;255;0;0;48;2;255;0;0ma\x1b[23;24;29;39;49mb\n");
+        assert_eq!(out, "  \x1b[3;4;9;38;2;255;0;0;48;2;255;0;0ma\x1b[23;24;29;39;49mb");
     }
 
     #[test]
-    fn a_background_is_reset_before_the_newline() {
+    fn a_background_is_reset_at_the_end_of_the_line() {
         let out = line(&Line::new(vec![Span::new("code ", Style::default().on(RED))]), &truecolor());
 
-        assert!(out.ends_with("\x1b[0m\n"));
+        assert!(out.ends_with("\x1b[0m"));
     }
 
     #[test]
     fn ansi256_downgrades_colours() {
         let out = line(&Line::new(vec![Span::new("a", Style::fg(RED).on(Rgb(128, 128, 128)))]), &capabilities(ColorDepth::Ansi256, false));
 
-        assert_eq!(out, "  \x1b[38;5;196;48;5;244ma\x1b[0m\n");
+        assert_eq!(out, "  \x1b[38;5;196;48;5;244ma\x1b[0m");
     }
 
     #[test]
     fn no_colour_means_plain_text_and_no_hyperlink() {
         let span = Span::new("a", Style::fg(RED).bold().underline()).linked("https://x.y");
 
-        assert_eq!(line(&Line::new(vec![span]), &capabilities(ColorDepth::None, false)), "  a\n");
+        assert_eq!(line(&Line::new(vec![span]), &capabilities(ColorDepth::None, false)), "  a");
     }
 
     #[test]
     fn a_link_opens_once_across_spans_and_closes_at_line_end() {
         let spans = vec![Span::plain("see ").linked("https://x.y"), Span::new("docs", Style::default().bold()).linked("https://x.y")];
 
-        assert_eq!(line(&Line::new(spans), &truecolor()), "  \x1b]8;;https://x.y\x1b\\see \x1b[1mdocs\x1b]8;;\x1b\\\x1b[0m\n");
+        assert_eq!(line(&Line::new(spans), &truecolor()), "  \x1b]8;;https://x.y\x1b\\see \x1b[1mdocs\x1b]8;;\x1b\\\x1b[0m");
     }
 
     #[test]
     fn a_link_closes_before_unlinked_text() {
         let spans = vec![Span::plain("a").linked("https://x.y"), Span::plain("b")];
 
-        assert_eq!(line(&Line::new(spans), &truecolor()), "  \x1b]8;;https://x.y\x1b\\a\x1b]8;;\x1b\\b\n");
+        assert_eq!(line(&Line::new(spans), &truecolor()), "  \x1b]8;;https://x.y\x1b\\a\x1b]8;;\x1b\\b");
     }
 
     #[test]
     fn links_are_off_without_the_capability() {
         let span = Span::plain("a").linked("https://x.y");
 
-        assert_eq!(line(&Line::new(vec![span]), &capabilities(ColorDepth::TrueColor, false)), "  a\n");
+        assert_eq!(line(&Line::new(vec![span]), &capabilities(ColorDepth::TrueColor, false)), "  a");
     }
 
     #[test]
     fn a_rejected_link_keeps_its_text() {
         let span = Span::plain("click").linked("javascript:alert(1)");
 
-        assert_eq!(line(&Line::new(vec![span]), &truecolor()), "  click\n");
+        assert_eq!(line(&Line::new(vec![span]), &truecolor()), "  click");
     }
 
     #[test]
     fn a_double_height_half_names_its_half_before_half_the_margin() {
         let big = Line::new(vec![Span::plain("Big")]);
 
-        assert_eq!(half(&big, Half::Top, &truecolor(), 5), "\x1b#3  Big\n");
-        assert_eq!(half(&big, Half::Bottom, &truecolor(), 5), "\x1b#4  Big\n");
+        assert_eq!(half(&big, Half::Top, &truecolor(), 5), "\x1b#3  Big");
+        assert_eq!(half(&big, Half::Bottom, &truecolor(), 5), "\x1b#4  Big");
     }
 
     #[test]
@@ -255,6 +254,6 @@ mod tests {
     fn hostile_span_text_reaches_the_terminal_defused() {
         let span = Span::plain("\x1b]52;c;AAAA\x07\x1b[2J\u{9b}31m\u{202e}x");
 
-        assert_eq!(line(&Line::new(vec![span]), &truecolor()), "  ]52;c;AAAA[2J31mx\n");
+        assert_eq!(line(&Line::new(vec![span]), &truecolor()), "  ]52;c;AAAA[2J31mx");
     }
 }

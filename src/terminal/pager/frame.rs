@@ -1,4 +1,4 @@
-use std::ops::RangeInclusive;
+use std::ops::Range;
 
 use super::page::{Page, Placed, Row};
 use super::picture;
@@ -6,18 +6,12 @@ use super::search::{self, Match};
 use super::state::Pager;
 use super::status;
 use crate::document::Line;
-use crate::terminal::ansi::Half;
 use crate::terminal::kitty::Placement;
 use crate::terminal::sixel::Image;
-use crate::terminal::{Capabilities, Protocol, ansi, kitty};
+use crate::terminal::{Capabilities, Protocol, ansi, kitty, tmux};
 use crate::theme::Palette;
 
-/// "mrk" in ASCII, so the pager's image ids stay clear of the small ids other programs pick.
 const FIRST_IMAGE_ID: u32 = 0x6d72_6b00;
-const LAST_IMAGE_ID: u32 = FIRST_IMAGE_ID + 0xffff;
-pub const IMAGE_IDS: RangeInclusive<u32> = FIRST_IMAGE_ID..=LAST_IMAGE_ID;
-/// Freed one by one as well, for terminals that ignore the range delete.
-const FREED_ONE_BY_ONE: usize = 64;
 
 const BEGIN_SYNCHRONIZED: &str = "\x1b[?2026h";
 const END_SYNCHRONIZED: &str = "\x1b[?2026l";
@@ -39,44 +33,90 @@ pub struct Look<'a> {
 pub enum Pictures {
     Off,
     Kitty,
-    /// The image id of each picture of the page.
-    KittyThroughTmux(Vec<u32>),
+    KittyThroughTmux,
     /// Each picture of the page, `None` when its PNG cannot be read.
-    Sixel(Vec<Option<Image>>),
+    Sixel(Vec<Option<SixelPicture>>),
+}
+
+/// A picture reduced to Sixel colours, and the rows of it the last frame sent, kept so a frame where it did not move
+/// sends the same bytes without encoding them again.
+#[derive(Clone, Debug)]
+pub struct SixelPicture {
+    image: Image,
+    sent: Option<(Range<u32>, String)>,
+}
+
+impl SixelPicture {
+    fn with_sent(self, rows: Option<Range<u32>>) -> Self {
+        let Some(rows) = rows else { return self };
+        if self.sent.as_ref().is_some_and(|(sent_rows, _)| *sent_rows == rows) {
+            return self;
+        }
+        let sixel = self.image.encode(rows.clone());
+        Self { sent: Some((rows, sixel)), ..self }
+    }
 }
 
 impl Pictures {
     pub fn new(page: &Page, protocol: Option<Protocol>) -> Self {
-        let pngs = page.pictures.iter().map(|placed| placed.picture.png.as_slice());
+        let sixel = |placed: &Placed| Some(SixelPicture { image: Image::from_png(&placed.picture.png)?, sent: None });
         match protocol {
             None => Self::Off,
             Some(Protocol::Kitty) => Self::Kitty,
-            Some(Protocol::KittyThroughTmux) => Self::KittyThroughTmux(pngs.map(kitty::placeholder_id).collect()),
-            Some(Protocol::Sixel) => Self::Sixel(pngs.map(Image::from_png).collect()),
+            Some(Protocol::KittyThroughTmux) => Self::KittyThroughTmux,
+            Some(Protocol::Sixel) => Self::Sixel(page.pictures.iter().map(sixel).collect()),
         }
     }
 
-    /// What to send once per render, before any frame: the kitty pictures, after freeing the last render's; through
-    /// tmux their ids follow their PNG, so sending one again replaces it.
+    /// What to send once per render, before any frame: the kitty pictures, under the pager's ids.
     pub fn store(&self, page: &Page) -> String {
+        let indexed = page.pictures.iter().enumerate();
         match self {
-            Self::Kitty => forget_pictures() + &store_pictures(page),
-            Self::KittyThroughTmux(ids) => {
-                page.pictures.iter().zip(ids).map(|(placed, &id)| kitty::store_through_tmux(&placed.picture, id)).collect()
+            Self::Kitty => indexed.map(|(index, placed)| kitty::store(&placed.picture.png, image_id(index))).collect(),
+            Self::KittyThroughTmux => {
+                indexed.map(|(index, placed)| kitty::store_through_tmux(&placed.picture, placeholder_id(index))).collect()
             }
             Self::Off | Self::Sixel(_) => String::new(),
         }
     }
 
+    /// What frees exactly the pictures `store` sent for `page`, through tmux passed on to the terminal outside; never a
+    /// range, which could free another program's pictures.
+    pub fn forget(&self, page: &Page) -> String {
+        let indexes = 0..page.pictures.len();
+        match self {
+            Self::Kitty => indexes.map(|index| kitty::free(image_id(index))).collect(),
+            Self::KittyThroughTmux => indexes.map(|index| tmux::passthrough(&kitty::free(placeholder_id(index)))).collect(),
+            Self::Off | Self::Sixel(_) => String::new(),
+        }
+    }
+
+    /// The Sixel pictures with the rows this screen shows of each encoded, the last frame's kept where it did not move.
+    pub fn encoded(self, pager: &Pager) -> Self {
+        let Self::Sixel(pictures) = self else { return self };
+        let shown = |placed: &Placed| picture::placement(placed, 0, pager.top, pager.height).map(|(_, at)| at.crop.pixel_rows());
+        Self::Sixel(
+            pictures.into_iter().zip(&pager.page.pictures).map(|(each, placed)| each.map(|each| each.with_sent(shown(placed)))).collect(),
+        )
+    }
+
     /// The placeholder cells of row `row` of the picture at `index`, through tmux; nothing otherwise.
     fn cells(&self, index: usize, placed: &Placed, row: usize) -> String {
-        let Self::KittyThroughTmux(ids) = self else { return String::new() };
-        ids.get(index).and_then(|&id| kitty::placeholder_row(id, row, placed.picture.cols)).unwrap_or_default()
+        if !matches!(self, Self::KittyThroughTmux) {
+            return String::new();
+        }
+        kitty::placeholder_row(placeholder_id(index), row, placed.picture.cols).unwrap_or_default()
     }
 }
 
+/// "mrk" in ASCII, so the pager's image ids stay clear of the small ids other programs pick.
 fn image_id(index: usize) -> u32 {
     FIRST_IMAGE_ID + (index as u32 & 0xffff)
+}
+
+/// Through tmux every pane shares the terminal outside, so the id also follows the process: two pagers never share one.
+fn placeholder_id(index: usize) -> u32 {
+    kitty::placeholder_id(&[std::process::id().to_le_bytes(), (index as u32).to_le_bytes()].concat())
 }
 
 fn go_to(row: usize, column: usize) -> String {
@@ -90,11 +130,7 @@ fn row_matches(matches: &[Match], row: usize) -> &[Match] {
 }
 
 fn drawn_line(line: &Line, look: &Look) -> String {
-    ansi::line(line, look.capabilities, look.margin).trim_end_matches('\n').to_owned()
-}
-
-fn drawn_half(line: &Line, half: Half, look: &Look) -> String {
-    ansi::half(line, half, look.capabilities, look.margin).trim_end_matches('\n').to_owned()
+    ansi::line(line, look.capabilities, look.margin)
 }
 
 fn picture_row(pager: &Pager, picture: usize, row: usize, look: &Look, pictures: &Pictures) -> String {
@@ -109,7 +145,7 @@ fn row_text(pager: &Pager, index: usize, look: &Look, pictures: &Pictures) -> St
         Some(Row::Line(line)) if matches.is_empty() => drawn_line(line, look),
         Some(Row::Line(line)) => drawn_line(&search::highlight(line, matches, pager.search.current_match(), look.palette), look),
         Some(Row::Picture(picture)) => picture_row(pager, *picture, index, look, pictures),
-        Some(Row::DoubleHeight(line, half)) => drawn_half(line, *half, look),
+        Some(Row::DoubleHeight(line, half)) => ansi::half(line, *half, look.capabilities, look.margin),
         None => String::new(),
     }
 }
@@ -128,7 +164,7 @@ fn text_rows(pager: &Pager, look: &Look, pictures: &Pictures) -> String {
 
 fn status_row(pager: &Pager, look: &Look) -> String {
     let bar = status::bar(pager, look.name, look.palette, look.columns);
-    format!("{}{}", row_start(pager.height, look), ansi::line(&bar, look.capabilities, 0).trim_end_matches('\n'))
+    format!("{}{}", row_start(pager.height, look), ansi::line(&bar, look.capabilities, 0))
 }
 
 fn hidden_pictures(page: &Page) -> String {
@@ -147,35 +183,24 @@ fn placed_pictures(pager: &Pager, look: &Look) -> String {
     on_screen(pager, look).map(|(_, at, placement)| at + &kitty::place(&placement)).collect()
 }
 
-fn sixel_pictures(pager: &Pager, look: &Look, images: &[Option<Image>]) -> String {
+fn sixel_pictures(pager: &Pager, look: &Look, pictures: &[Option<SixelPicture>]) -> String {
     let drawn = |(index, at, placement): (usize, String, Placement)| {
-        let image = images.get(index)?.as_ref()?;
-        Some(at + &image.encode(placement.crop.y..placement.crop.y + placement.crop.height))
+        let (rows, sixel) = pictures.get(index)?.as_ref()?.sent.as_ref()?;
+        (*rows == placement.crop.pixel_rows()).then(|| at + sixel)
     };
     on_screen(pager, look).filter_map(drawn).collect()
 }
 
-/// One whole screen, drawn at once: last frame's kitty pictures taken off, every text row and the status bar written
+/// One whole screen, drawn at once, with the Sixel pictures `Pictures::encoded` for it: last frame's kitty pictures taken off, every text row and the status bar written
 /// over, which also erases last frame's Sixel pictures, then the pictures on screen drawn again, clipped to the rows
 /// that show.
 pub fn frame(pager: &Pager, look: &Look, pictures: &Pictures) -> String {
     let (hidden, drawn) = match pictures {
-        Pictures::Off | Pictures::KittyThroughTmux(_) => (String::new(), String::new()),
+        Pictures::Off | Pictures::KittyThroughTmux => (String::new(), String::new()),
         Pictures::Kitty => (hidden_pictures(&pager.page), placed_pictures(pager, look)),
-        Pictures::Sixel(images) => (String::new(), sixel_pictures(pager, look, images)),
+        Pictures::Sixel(each) => (String::new(), sixel_pictures(pager, look, each)),
     };
     [BEGIN_SYNCHRONIZED, &hidden, &text_rows(pager, look, pictures), &status_row(pager, look), &drawn, END_SYNCHRONIZED].concat()
-}
-
-/// Sends every picture of the page to the terminal once, so frames only place them.
-pub fn store_pictures(page: &Page) -> String {
-    page.pictures.iter().enumerate().map(|(index, placed)| kitty::store(&placed.picture.png, image_id(index))).collect()
-}
-
-/// Frees every picture the pager may have sent.
-pub fn forget_pictures() -> String {
-    let one_by_one: String = (0..FREED_ONE_BY_ONE).map(|index| kitty::free(image_id(index))).collect();
-    kitty::forget(IMAGE_IDS) + &one_by_one
 }
 
 #[cfg(test)]
@@ -194,6 +219,7 @@ mod tests {
         double_height: false,
         background: None,
         columns: 40,
+        rows: 10,
         is_terminal: true,
     };
 
@@ -225,9 +251,12 @@ mod tests {
         drawn_on(pager, protocol, &CAPABILITIES)
     }
 
+    fn look(capabilities: &Capabilities) -> Look<'_> {
+        Look { name: "a.md", palette: &MRK_DARK.palette, capabilities, margin: 2, columns: 40 }
+    }
+
     fn drawn_on(pager: &Pager, protocol: Option<Protocol>, capabilities: &Capabilities) -> String {
-        let look = Look { name: "a.md", palette: &MRK_DARK.palette, capabilities, margin: 2, columns: 40 };
-        frame(pager, &look, &Pictures::new(&pager.page, protocol))
+        frame(pager, &look(capabilities), &Pictures::new(&pager.page, protocol).encoded(pager))
     }
 
     #[test]
@@ -287,15 +316,59 @@ mod tests {
     fn through_tmux_the_visible_picture_rows_are_placeholder_cells_numbered_from_the_hidden_ones() {
         let pager = indented_sample(text("│ "));
         let pictures = Pictures::new(&pager.page, Some(Protocol::KittyThroughTmux));
-        let Pictures::KittyThroughTmux(ids) = &pictures else { panic!("{pictures:?}") };
+        let id = placeholder_id(0);
 
         let frame = drawn(&pager, Some(Protocol::KittyThroughTmux));
 
-        assert!(frame.contains(&kitty::placeholder_row(ids[0], 1, 20).unwrap_or_default()), "{frame:?}");
-        assert!(frame.contains(&kitty::placeholder_row(ids[0], 2, 20).unwrap_or_default()), "{frame:?}");
-        assert!(!frame.contains(&kitty::placeholder_row(ids[0], 0, 20).unwrap_or_default()), "{frame:?}");
+        assert!(frame.contains(&kitty::placeholder_row(id, 1, 20).unwrap_or_default()), "{frame:?}");
+        assert!(frame.contains(&kitty::placeholder_row(id, 2, 20).unwrap_or_default()), "{frame:?}");
+        assert!(!frame.contains(&kitty::placeholder_row(id, 0, 20).unwrap_or_default()), "{frame:?}");
         assert!(!frame.contains("\x1b_G") && !frame.contains("\x1bP"), "{frame:?}");
-        assert_eq!(pictures.store(&pager.page).matches("\x1bPtmux;").count(), 1);
+        assert_eq!(pictures.store(&pager.page).matches(&format!("\x1bPtmux;\x1b\x1b_Ga=T,U=1,f=100,i={id},")).count(), 1);
+    }
+
+    #[test]
+    fn exactly_the_pictures_sent_are_freed_and_through_tmux_passed_on() {
+        let page = sample().page;
+        let kitty = Pictures::new(&page, Some(Protocol::Kitty)).forget(&page);
+        let through_tmux = Pictures::new(&page, Some(Protocol::KittyThroughTmux)).forget(&page);
+        let id = placeholder_id(0);
+
+        assert_eq!(kitty, format!("\x1b_Ga=d,d=I,i={FIRST_IMAGE_ID},q=2\x1b\\"));
+        assert_eq!(through_tmux, format!("\x1bPtmux;\x1b\x1b_Ga=d,d=I,i={id},q=2\x1b\x1b\\\x1b\\"));
+    }
+
+    #[test]
+    fn through_tmux_ids_differ_between_pictures_and_follow_the_process() {
+        let ids: Vec<u32> = (0..3).map(placeholder_id).collect();
+
+        assert!(ids[0] != ids[1] && ids[1] != ids[2], "{ids:x?}");
+        assert_eq!(placeholder_id(1), ids[1]);
+        assert_ne!(ids[0], kitty::placeholder_id(&[(std::process::id() + 1).to_le_bytes(), 0u32.to_le_bytes()].concat()));
+    }
+
+    #[test]
+    fn nothing_is_freed_where_no_kitty_picture_was_sent() {
+        let page = sample().page;
+
+        for protocol in [None, Some(Protocol::Sixel)] {
+            assert_eq!(Pictures::new(&page, protocol).forget(&page), "", "{protocol:?}");
+        }
+        assert_eq!(Pictures::new(&Page::default(), Some(Protocol::Kitty)).forget(&Page::default()), "");
+    }
+
+    #[test]
+    fn a_sixel_picture_that_did_not_move_is_sent_as_last_frame_encoded_it() {
+        let pager = indented_sample(text("│ "));
+        let pictures = Pictures::new(&pager.page, Some(Protocol::Sixel)).encoded(&pager);
+        let Pictures::Sixel(each) = &pictures else { panic!("{pictures:?}") };
+        let Some(SixelPicture { sent: Some((rows, sixel)), .. }) = &each[0] else { panic!("{each:?}") };
+
+        assert_eq!(*rows, 20..60);
+        assert!(frame(&pager, &look(&CAPABILITIES), &pictures).contains(sixel.as_str()));
+        let scrolled = Pager { top: 2, ..pager };
+        let Pictures::Sixel(moved) = pictures.encoded(&scrolled) else { unreachable!() };
+        assert!(matches!(&moved[0], Some(SixelPicture { sent: Some((rows, _)), .. }) if *rows == (0..60)));
     }
 
     #[test]
@@ -310,7 +383,7 @@ mod tests {
     #[test]
     fn a_hostile_query_is_drawn_sanitized() {
         let typed =
-            [Action::StartSearch, Action::Type('\x1b'), Action::Type(']'), Action::Type('\x07')].iter().fold(sample(), Pager::apply);
+            [Action::StartSearch, Action::Type('\x1b'), Action::Type(']'), Action::Type('\x07')].into_iter().fold(sample(), Pager::apply);
 
         let frame = drawn(&typed, None);
 
@@ -320,7 +393,8 @@ mod tests {
 
     #[test]
     fn stored_pictures_are_sent_once_each_under_their_id() {
-        let stored = store_pictures(&sample().page);
+        let page = sample().page;
+        let stored = Pictures::new(&page, Some(Protocol::Kitty)).store(&page);
 
         assert_eq!(stored.matches("a=t,").count(), 1);
         assert!(stored.contains(&format!("i={FIRST_IMAGE_ID},")));

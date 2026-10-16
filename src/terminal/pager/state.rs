@@ -66,18 +66,17 @@ impl Pager {
     }
 
     fn confirm(self) -> Self {
-        let query = self.prompt.clone().unwrap_or_default();
+        let query = self.prompt.unwrap_or_default();
         let search = Search::new(&self.page.rows, &query, self.top);
         Self { search, prompt: None, ..self }.reveal_match()
     }
 
     fn move_match(self, next: fn(Search) -> Search) -> Self {
-        let search = next(self.search.clone());
-        Self { search, ..self }.reveal_match()
+        Self { search: next(self.search), ..self }.reveal_match()
     }
 
     /// The pager after `action`; `Quit` is for the caller and changes nothing.
-    pub fn apply(self, action: &Action) -> Self {
+    pub fn apply(self, action: Action) -> Self {
         match action {
             Action::LineDown => self.down(1),
             Action::LineUp => self.up(1),
@@ -102,7 +101,7 @@ impl Pager {
             Action::StartSearch => Self { prompt: Some(String::new()), ..self },
             Action::NextMatch => self.move_match(Search::next),
             Action::PreviousMatch => self.move_match(Search::previous),
-            Action::Type(character) => self.type_char(*character),
+            Action::Type(character) => self.type_char(character),
             Action::Erase => self.erase(),
             Action::Confirm => self.confirm(),
             Action::Cancel => Self { prompt: None, ..self },
@@ -119,10 +118,8 @@ impl Pager {
     pub fn resized(self, page: Page, height: usize) -> Self {
         let old_rows = self.page.rows.len().max(1);
         let top = self.top * page.rows.len() / old_rows;
-        let current = self.search.current;
-        let search = Search::new(&page.rows, &self.search.query, top);
-        let current = current.filter(|&index| index < search.matches.len()).or(search.current);
-        Self { page, height, search: Search { current, ..search }, ..self }.at(top)
+        let search = self.search.rewrapped(&self.page.rows, &page.rows, top);
+        Self { page, height, search, ..self }.at(top)
     }
 }
 
@@ -142,7 +139,7 @@ mod tests {
     }
 
     fn after(pager: Pager, actions: &[Action]) -> Pager {
-        actions.iter().fold(pager, Pager::apply)
+        actions.iter().copied().fold(pager, Pager::apply)
     }
 
     #[test]

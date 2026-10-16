@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     LineDown,
     LineUp,
@@ -54,7 +54,7 @@ const PROMPTING: &[Binding] = &[
 ];
 
 fn find(bindings: &[Binding], is_bound: impl Fn(&Binding) -> bool) -> Option<Action> {
-    bindings.iter().find(|binding| is_bound(binding)).map(|binding| binding.action.clone())
+    bindings.iter().find(|binding| is_bound(binding)).map(|binding| binding.action)
 }
 
 fn control(code: KeyCode) -> Option<Action> {
@@ -97,13 +97,12 @@ pub fn help() -> Vec<(String, &'static str)> {
 /// What a key press does, while reading or while typing a search query.
 pub fn action(key: KeyEvent, is_prompting: bool) -> Option<Action> {
     let is_control = key.modifiers.contains(KeyModifiers::CONTROL);
-    let is_quit = is_control && key.code == KeyCode::Char('c');
-    match () {
-        () if is_quit => Some(Action::Quit),
-        () if is_control && is_prompting => None,
-        () if is_control => control(key.code),
-        () if is_prompting => prompting(key.code),
-        () => reading(key.code),
+    match (is_control, is_prompting) {
+        (true, _) if key.code == KeyCode::Char('c') => Some(Action::Quit),
+        (true, true) => None,
+        (true, false) => control(key.code),
+        (false, true) => prompting(key.code),
+        (false, false) => reading(key.code),
     }
 }
 
@@ -123,26 +122,26 @@ mod tests {
         KeyEvent::new(KeyCode::Char(character), KeyModifiers::CONTROL)
     }
 
-    fn reads(keys: &[KeyEvent], expected: &Action) {
+    fn reads(keys: &[KeyEvent], expected: Action) {
         for key in keys {
-            assert_eq!(action(*key, false).as_ref(), Some(expected), "{key:?}");
+            assert_eq!(action(*key, false), Some(expected), "{key:?}");
         }
     }
 
     #[test]
     fn every_reading_key_maps_to_its_action() {
-        reads(&[chars("j"), vec![press(KeyCode::Down), press(KeyCode::Enter)]].concat(), &Action::LineDown);
-        reads(&[chars("k"), vec![press(KeyCode::Up)]].concat(), &Action::LineUp);
-        reads(&[chars(" f"), vec![press(KeyCode::PageDown), ctrl('f')]].concat(), &Action::PageDown);
-        reads(&[chars("b"), vec![press(KeyCode::PageUp), ctrl('b')]].concat(), &Action::PageUp);
-        reads(&[chars("d"), vec![ctrl('d')]].concat(), &Action::HalfDown);
-        reads(&[chars("u"), vec![ctrl('u')]].concat(), &Action::HalfUp);
-        reads(&[chars("g"), vec![press(KeyCode::Home)]].concat(), &Action::Top);
-        reads(&[chars("G"), vec![press(KeyCode::End)]].concat(), &Action::Bottom);
-        reads(&chars("/"), &Action::StartSearch);
-        reads(&chars("n"), &Action::NextMatch);
-        reads(&chars("N"), &Action::PreviousMatch);
-        reads(&[chars("q"), vec![press(KeyCode::Esc), ctrl('c')]].concat(), &Action::Quit);
+        reads(&[chars("j"), vec![press(KeyCode::Down), press(KeyCode::Enter)]].concat(), Action::LineDown);
+        reads(&[chars("k"), vec![press(KeyCode::Up)]].concat(), Action::LineUp);
+        reads(&[chars(" f"), vec![press(KeyCode::PageDown), ctrl('f')]].concat(), Action::PageDown);
+        reads(&[chars("b"), vec![press(KeyCode::PageUp), ctrl('b')]].concat(), Action::PageUp);
+        reads(&[chars("d"), vec![ctrl('d')]].concat(), Action::HalfDown);
+        reads(&[chars("u"), vec![ctrl('u')]].concat(), Action::HalfUp);
+        reads(&[chars("g"), vec![press(KeyCode::Home)]].concat(), Action::Top);
+        reads(&[chars("G"), vec![press(KeyCode::End)]].concat(), Action::Bottom);
+        reads(&chars("/"), Action::StartSearch);
+        reads(&chars("n"), Action::NextMatch);
+        reads(&chars("N"), Action::PreviousMatch);
+        reads(&[chars("q"), vec![press(KeyCode::Esc), ctrl('c')]].concat(), Action::Quit);
     }
 
     #[test]

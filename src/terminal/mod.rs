@@ -1,5 +1,6 @@
 mod ansi;
 mod color;
+mod crop;
 mod detect;
 mod environment;
 mod kitty;
@@ -16,6 +17,8 @@ use serde::Deserialize;
 pub use detect::{Preferences, detect};
 
 use self::ansi::Half;
+use self::crop::Crop;
+use self::sixel::Image;
 use crate::document::{Block, CellSize, Document, JumboTitle, Picture};
 use crate::sanitize;
 use crate::theme::Appearance;
@@ -37,6 +40,7 @@ pub struct Capabilities {
     pub double_height: bool,
     pub background: Option<Appearance>,
     pub columns: u16,
+    pub rows: u16,
     pub is_terminal: bool,
 }
 
@@ -102,7 +106,7 @@ pub fn jumbo_title(capabilities: &Capabilities) -> Option<JumboTitle> {
 
 /// What stands left of each row of a picture: the margin, then its indent.
 fn picture_indent(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
-    format!("{}{}", " ".repeat(margin), ansi::line(&picture.indent, capabilities, 0).trim_end_matches('\n'))
+    format!("{}{}", " ".repeat(margin), ansi::line(&picture.indent, capabilities, 0))
 }
 
 /// What stands in for a picture, after `indent`, when the terminal cannot draw it.
@@ -110,49 +114,89 @@ fn placeholder(picture: &Picture, indent: &str) -> String {
     format!("{indent}[picture: {}]\n", sanitize::text(&picture.alt))
 }
 
-/// The picture's rows written first, after `indent` on each and its concealed text on the first, scrolling them into
-/// view; then `drawing` at the first of them, which leaves the cursor where it found it; then the cursor at the start
-/// of the line below the picture. Drawing at the bottom of the screen must not clip the picture.
-fn over_rows(picture: &Picture, indent: &str, drawing: &str) -> String {
+/// Rows of a picture drawn together, and the part of its PNG behind them; `None` when they are the whole picture.
+struct Run {
+    rows: u16,
+    crop: Option<Crop>,
+}
+
+/// The picture's rows in runs one row shorter than the screen, so the cursor can climb back to a run's first row
+/// once its rows scrolled into view: a single run when the picture fits. `None` when a cut is needed and the PNG
+/// cannot be read.
+fn runs(picture: &Picture, screen_rows: u16) -> Option<Vec<Run>> {
     let rows = picture.rows.max(1);
-    let first = format!("{indent}{}\n", ansi::concealed(picture));
-    let rest = format!("{indent}\n").repeat(usize::from(rows - 1));
-    format!("{first}{rest}\x1b[{rows}A\r{indent}{drawing}\x1b[{rows}B\r")
+    let longest = screen_rows.saturating_sub(1).max(1);
+    if rows <= longest {
+        return Some(vec![Run { rows, crop: None }]);
+    }
+    let run = |start: u16| {
+        let end = rows.min(start + longest);
+        Some(Run { rows: end - start, crop: Some(Crop::behind(start..end, rows, &picture.png)?) })
+    };
+    (0..rows).step_by(usize::from(longest)).map(run).collect()
+}
+
+/// Run after run, the rows written first, after `indent` on each and the concealed text on the picture's first,
+/// scrolling them into view; then `draw` of the run at its first row, which leaves the cursor where it found it; then
+/// the cursor at the start of the line below. Drawing at the bottom of the screen must not clip the picture.
+fn over_rows(picture: &Picture, indent: &str, screen_rows: u16, draw: impl Fn(&Run) -> String) -> Option<String> {
+    let drawn = |(index, run): (usize, &Run)| {
+        let concealed = if index == 0 { ansi::concealed(picture) } else { String::new() };
+        let rest = format!("{indent}\n").repeat(usize::from(run.rows - 1));
+        format!("{indent}{concealed}\n{rest}\x1b[{0}A\r{indent}{1}\x1b[{0}B\r", run.rows, draw(run))
+    };
+    Some(runs(picture, screen_rows)?.iter().enumerate().map(drawn).collect())
 }
 
 fn picture(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
     let indent = picture_indent(picture, capabilities, margin);
+    let screen_rows = capabilities.rows;
     let drawn = capabilities.graphics.and_then(|graphics| match graphics.protocol {
-        Protocol::Kitty => Some(over_rows(picture, &indent, &kitty::draw(picture))),
+        Protocol::Kitty => over_rows(picture, &indent, screen_rows, |run| kitty::draw(picture, run.rows, run.crop)),
         Protocol::KittyThroughTmux => kitty::draw_through_tmux(picture, &indent),
-        Protocol::Sixel => sixel::draw(picture).map(|drawing| over_rows(picture, &indent, &drawing)),
+        Protocol::Sixel => {
+            let image = Image::from_png(&picture.png)?;
+            over_rows(picture, &indent, screen_rows, |run| sixel::draw(&image, run.crop.map(Crop::pixel_rows)))
+        }
     });
     drawn.unwrap_or_else(|| placeholder(picture, &indent))
 }
 
 fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
     match block {
-        Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin)).collect(),
+        Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin) + "\n").collect(),
         Block::Picture(each) => picture(each, capabilities, margin),
-        Block::DoubleHeight(lines) => {
-            lines.iter().flat_map(|line| [Half::Top, Half::Bottom].map(|half| ansi::half(line, half, capabilities, margin))).collect()
-        }
+        Block::DoubleHeight(lines) => lines
+            .iter()
+            .flat_map(|line| [Half::Top, Half::Bottom].map(|half| ansi::half(line, half, capabilities, margin) + "\n"))
+            .collect(),
     }
 }
 
-/// Writes the document for this terminal, `margin` columns from the left: the only place mrk produces escape sequences.
+/// Writes the document for this terminal, `margin` columns from the left.
 pub fn write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write) -> std::io::Result<()> {
     document.blocks.iter().try_for_each(|each| out.write_all(block(each, capabilities, margin).as_bytes()))
 }
 
-/// An error and its causes for stderr, sanitized, causes dimmed when `is_styled`.
-pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
-    let (dim, reset) = if is_styled { ("\x1b[2m", "\x1b[0m") } else { ("", "") };
-    let causes: String = error.chain().skip(1).map(|cause| format!("  {dim}{}{reset}\n", sanitize::text(&cause.to_string()))).collect();
-    format!("✗ {}\n{causes}", sanitize::text(&error.to_string()))
+fn cleaned(message: &dyn std::fmt::Display) -> String {
+    sanitize::lines(message.to_string().trim_end())
 }
 
-/// The bytes `write` would produce, as a string for tests.
+fn indented(message: &str, (dim, reset): (&str, &str)) -> String {
+    message.lines().map(|line| format!("  {dim}{line}{reset}\n")).collect()
+}
+
+/// An error and its causes for stderr, sanitized, every line after the first indented, causes dimmed when `is_styled`.
+pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
+    let dimmed = if is_styled { ("\x1b[2m", "\x1b[0m") } else { ("", "") };
+    let message = cleaned(error);
+    let (first, rest) = message.split_once('\n').unwrap_or((&message, ""));
+    let causes: String = error.chain().skip(1).map(|cause| indented(&cleaned(cause), dimmed)).collect();
+    format!("✗ {first}\n{}{causes}", indented(rest, ("", "")))
+}
+
+/// The bytes `write` produces, as a string.
+#[cfg(test)]
 pub fn ansi(document: &Document, capabilities: &Capabilities, margin: usize) -> String {
     document.blocks.iter().map(|each| block(each, capabilities, margin)).collect()
 }
@@ -181,6 +225,17 @@ mod tests {
         assert_eq!(error_report(&error, false), "✗ cannot read [31mfile\n  inner ]52;c;AAAA\n");
         assert_eq!(error_report(&error, true), "✗ cannot read [31mfile\n  \x1b[2minner ]52;c;AAAA\x1b[0m\n");
     }
+
+    #[test]
+    fn an_error_report_keeps_every_line_of_a_message_indented() {
+        let error = anyhow::anyhow!("fatal: no remote\r\nhint: add one\n").context("update failed\nfor the tag");
+
+        assert_eq!(
+            error_report(&error, true),
+            "✗ update failed\n  for the tag\n  \x1b[2mfatal: no remote\x1b[0m\n  \x1b[2mhint: add one\x1b[0m\n"
+        );
+    }
+
     use crate::document::{Line, Span, Style};
     use crate::theme::MRK_DARK;
 
@@ -216,6 +271,7 @@ mod tests {
             double_height: false,
             background: None,
             columns: 80,
+            rows: 24,
             is_terminal: true,
         }
     }
@@ -255,7 +311,35 @@ mod tests {
         assert_eq!(ansi(&document, &capabilities(ColorDepth::None, None), LEFT_MARGIN), "  │ [picture: flow]\n");
     }
 
+    #[test]
+    fn a_picture_taller_than_the_screen_is_drawn_in_runs_the_cursor_can_climb_back_over() {
+        let png = sixel::test_png(10, 50, &[[255, 0, 0, 255]; 500]);
+        let picture = Picture { png, cols: 1, rows: 5, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
+        let short_screen = Capabilities { rows: 3, ..capabilities(ColorDepth::None, KITTY) };
+
+        let drawn = ansi(&Document { blocks: vec![Block::Picture(picture)] }, &short_screen, 0);
+        let runs: Vec<&str> = drawn.split_inclusive("B\r").collect();
+
+        assert_eq!(runs.len(), 3, "{drawn:?}");
+        assert!(runs[0].starts_with("\n\n\x1b[2A\r\x1b_Ga=T,f=100,q=2,C=1,x=0,y=0,w=10,h=20,c=1,r=2,"), "{drawn:?}");
+        assert!(runs[1].starts_with("\n\n\x1b[2A\r\x1b_Ga=T,f=100,q=2,C=1,x=0,y=20,w=10,h=20,c=1,r=2,"), "{drawn:?}");
+        assert!(runs[2].starts_with("\n\x1b[1A\r\x1b_Ga=T,f=100,q=2,C=1,x=0,y=40,w=10,h=10,c=1,r=1,"), "{drawn:?}");
+        assert!(drawn.ends_with("\x1b[1B\r"), "{drawn:?}");
+    }
+
     const SIXEL: Option<Graphics> = Some(Graphics { protocol: Protocol::Sixel, cell: CELL });
+
+    #[test]
+    fn a_tall_sixel_picture_sends_each_run_on_to_a_whole_band_so_no_rows_go_missing() {
+        let png = sixel::test_png(1, 100, &[[255, 0, 0, 255]; 100]);
+        let picture = Picture { png, cols: 1, rows: 5, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
+        let short_screen = Capabilities { rows: 3, ..capabilities(ColorDepth::None, SIXEL) };
+
+        let drawn = ansi(&Document { blocks: vec![Block::Picture(picture)] }, &short_screen, 0);
+        let heights: Vec<&str> = drawn.split("\"1;1;1;").skip(1).filter_map(|rest| rest.split('#').next()).collect();
+
+        assert_eq!(heights, ["42", "42", "18"], "{drawn:?}");
+    }
 
     #[test]
     fn a_sixel_picture_is_drawn_after_its_indent_and_the_cursor_put_back() {

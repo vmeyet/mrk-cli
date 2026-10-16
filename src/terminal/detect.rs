@@ -1,8 +1,6 @@
 use crossterm::terminal::WindowSize;
 
-use super::environment::{
-    Environment, background_hint, color_depth, double_height, hyperlinks, inside_tmux, known_graphics, wants_pictures,
-};
+use super::environment::{Environment, background_hint, color_depth, double_height, hyperlinks, known_graphics, wants_pictures};
 use super::query::{self, Questions};
 use super::reply::Replies;
 use super::{Capabilities, ColorChoice, ColorDepth, Graphics, ImagesMode, Protocol};
@@ -10,6 +8,7 @@ use crate::document::{CellSize, Rgb};
 use crate::theme::Appearance;
 
 const DEFAULT_COLUMNS: u16 = 80;
+const DEFAULT_ROWS: u16 = 24;
 
 /// What the user asked for, which detection must respect.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -42,7 +41,7 @@ fn questions(environment: &Environment, color: ColorDepth, window_cell: Option<C
         graphics: may_draw && known.is_none(),
         cell: may_draw && window_cell.is_none(),
         background: is_background_unknown && environment.stdout_is_tty && color != ColorDepth::None,
-        passthrough: inside_tmux(environment),
+        passthrough: environment.is_tmux(),
     }
 }
 
@@ -52,7 +51,7 @@ fn protocol(environment: &Environment, replies: &Replies) -> Option<Protocol> {
     match known_graphics(environment) {
         Some(true) => Some(Protocol::Kitty),
         Some(false) => None,
-        None if replies.graphics && inside_tmux(environment) => Some(Protocol::KittyThroughTmux),
+        None if replies.graphics && environment.is_tmux() => Some(Protocol::KittyThroughTmux),
         None if replies.graphics => Some(Protocol::Kitty),
         None => replies.sixel.then_some(Protocol::Sixel),
     }
@@ -79,6 +78,7 @@ pub fn detect(preferences: Preferences) -> Capabilities {
 
     let background = background_hint(&environment).or(replies.background.map(appearance));
     let columns = window.as_ref().map(|window| window.columns).filter(|&columns| columns > 0).unwrap_or(DEFAULT_COLUMNS);
+    let rows = window.as_ref().map(|window| window.rows).filter(|&rows| rows > 0).unwrap_or(DEFAULT_ROWS);
     Capabilities {
         color,
         hyperlinks: hyperlinks(&environment, color),
@@ -86,6 +86,7 @@ pub fn detect(preferences: Preferences) -> Capabilities {
         double_height: double_height(&environment, color),
         background,
         columns,
+        rows,
         is_terminal: environment.stdout_is_tty,
     }
 }
