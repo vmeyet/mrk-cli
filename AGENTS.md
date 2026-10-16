@@ -10,6 +10,7 @@ The design lives in `specs/`; read `specs/00-vision.md` then `specs/01-architect
 - Branches: `<scope>/<kebab-title>` with scope in `feat fix chore refactor docs test ci`; worktrees under `.claude/worktrees/<scope>+<kebab-title>`.
 - Commits follow conventional commits; body in two short imperative sentences at most. No co-author trailers.
 - `scripts/check` runs what CI runs; a new CI step lands in both.
+- A change that deletes files outside its scope says so in the PR; `tests/links.rs` checks that every relative link and heading anchor in the documentation resolves.
 
 ## Code
 
