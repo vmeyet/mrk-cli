@@ -19,7 +19,10 @@ pub fn lines(raw: &str) -> String {
 
 fn clean(raw: &str, keeps_newlines: bool) -> String {
     let is_kept = |character: char| (keeps_newlines && character == '\n') || !is_forbidden(character);
-    expand_tabs(raw, 0).chars().filter(|&character| is_kept(character)).collect()
+    let expanded = expand_tabs(raw, 0);
+    let mut cleaned = String::with_capacity(expanded.len());
+    cleaned.extend(expanded.chars().filter(|&character| is_kept(character)));
+    cleaned
 }
 
 fn percent_encode(raw: &str) -> String {
