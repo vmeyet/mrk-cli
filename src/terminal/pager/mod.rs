@@ -1,7 +1,7 @@
 mod frame;
 mod keys;
 mod page;
-pub(super) mod picture;
+mod picture;
 mod screen;
 mod search;
 mod signals;
@@ -131,8 +131,11 @@ impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
 /// How often waiting for a key looks for an ending signal, which does not wake that wait.
 const SIGNAL_CHECK: Duration = Duration::from_millis(100);
 
-/// The next event from the terminal, `None` once an ending signal came.
-fn next_event(ending: &Ending) -> io::Result<Option<Event>> {
+/// The event still to handle, else the next one from the terminal; `None` once an ending signal came.
+fn next_event(pending: Option<Event>, ending: &Ending) -> io::Result<Option<Event>> {
+    if pending.is_some() {
+        return Ok(pending);
+    }
     while !ending.is_caught() {
         if event::poll(SIGNAL_CHECK)? {
             return event::read().map(Some);
@@ -159,7 +162,7 @@ fn show(reader: &Reader<'_, impl Fn(u16) -> Rendered>, ending: &Ending) -> io::R
     view = reader.draw(&mut out, view)?;
     let mut pending = None;
     loop {
-        let Some(event) = pending.take().map_or_else(|| next_event(ending), |event| Ok(Some(event)))? else { return Ok(()) };
+        let Some(event) = next_event(pending.take(), ending)? else { return Ok(()) };
         match step(&event, view.pager.prompt.is_some()) {
             Step::Quit => return Ok(()),
             Step::Nothing => continue,

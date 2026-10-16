@@ -57,9 +57,12 @@ impl SixelPicture {
         }
     }
 
-    fn sent(self, rows: Option<Range<u32>>) -> Self {
+    fn with_sent(self, rows: Option<Range<u32>>) -> Self {
         let Some(rows) = rows else { return self };
-        let sixel = self.sixel(rows.clone()).into_owned();
+        if self.sent.as_ref().is_some_and(|(sent_rows, _)| *sent_rows == rows) {
+            return self;
+        }
+        let sixel = self.image.encode(rows.clone());
         Self { sent: Some((rows, sixel)), ..self }
     }
 }
@@ -97,14 +100,17 @@ impl Pictures {
     /// The Sixel pictures with the rows this screen shows of each encoded, the last frame's kept where it did not move.
     pub fn encoded(self, pager: &Pager) -> Self {
         let Self::Sixel(pictures) = self else { return self };
-        let shown =
-            |index: usize| picture::placement(&pager.page.pictures[index], 0, pager.top, pager.height).map(|(_, at)| at.crop.pixel_rows());
-        Self::Sixel(pictures.into_iter().enumerate().map(|(index, picture)| picture.map(|picture| picture.sent(shown(index)))).collect())
+        let shown = |placed: &Placed| picture::placement(placed, 0, pager.top, pager.height).map(|(_, at)| at.crop.pixel_rows());
+        Self::Sixel(
+            pictures.into_iter().zip(&pager.page.pictures).map(|(each, placed)| each.map(|each| each.with_sent(shown(placed)))).collect(),
+        )
     }
 
     /// The placeholder cells of row `row` of the picture at `index`, through tmux; nothing otherwise.
     fn cells(&self, index: usize, placed: &Placed, row: usize) -> String {
-        let Self::KittyThroughTmux = self else { return String::new() };
+        if !matches!(self, Self::KittyThroughTmux) {
+            return String::new();
+        }
         kitty::placeholder_row(image_id(&PAGER_PLACEHOLDER_IDS, index), row, placed.picture.cols).unwrap_or_default()
     }
 }

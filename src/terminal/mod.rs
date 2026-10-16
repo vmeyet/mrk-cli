@@ -17,7 +17,6 @@ pub use detect::{Preferences, detect};
 
 use self::ansi::Half;
 use self::kitty::Crop;
-use self::pager::picture;
 use self::sixel::Image;
 use crate::document::{Block, CellSize, Document, JumboTitle, Picture};
 use crate::sanitize;
@@ -129,12 +128,11 @@ fn runs(picture: &Picture, screen_rows: u16) -> Option<Vec<Run>> {
     if rows <= longest {
         return Some(vec![Run { rows, crop: None }]);
     }
-    let size = picture::png_size(&picture.png)?;
     let run = |start: u16| {
         let end = rows.min(start + longest);
-        Run { rows: end - start, crop: Some(picture::crop(start..end, rows, size)) }
+        Some(Run { rows: end - start, crop: Some(Crop::behind(start..end, rows, &picture.png)?) })
     };
-    Some((0..rows).step_by(usize::from(longest)).map(run).collect())
+    (0..rows).step_by(usize::from(longest)).map(run).collect()
 }
 
 /// Run after run, the rows written first, after `indent` on each and the concealed text on the picture's first,
@@ -190,8 +188,10 @@ fn indented(message: &str, (dim, reset): (&str, &str)) -> String {
 /// An error and its causes for stderr, sanitized, every line after the first indented, causes dimmed when `is_styled`.
 pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
     let dimmed = if is_styled { ("\x1b[2m", "\x1b[0m") } else { ("", "") };
+    let message = cleaned(error);
+    let (first, rest) = message.split_once('\n').unwrap_or((&message, ""));
     let causes: String = error.chain().skip(1).map(|cause| indented(&cleaned(cause), dimmed)).collect();
-    format!("✗ {}\n{causes}", cleaned(error).replace('\n', "\n  "))
+    format!("✗ {first}\n{}{causes}", indented(rest, ("", "")))
 }
 
 /// The bytes `write` produces, as a string.
