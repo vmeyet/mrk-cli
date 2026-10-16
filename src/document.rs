@@ -204,6 +204,7 @@ pub(crate) fn ansi(document: &Document) -> String {
         double_height: false,
         background: None,
         columns: 80,
+        rows: 24,
         is_terminal: true,
     };
     crate::terminal::ansi(document, &capabilities, 0).replace('\x1b', "␛")
