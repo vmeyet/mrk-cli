@@ -164,9 +164,14 @@ pub struct Settings {
 }
 
 /// The document as bare text, one `[picture: alt cols×rows]` line per picture and each double-height line twice:
-/// what snapshot tests compare.
+/// what snapshot tests compare. It keeps the input's escape sequences, so never print it; print `printable` instead.
 pub fn plain(document: &Document) -> String {
     document.blocks.iter().map(plain_block).collect()
+}
+
+/// `plain` safe to write to a terminal: through [`sanitize::lines`].
+pub fn printable(document: &Document) -> String {
+    sanitize::lines(&plain(document))
 }
 
 fn plain_block(block: &Block) -> String {
@@ -229,6 +234,14 @@ mod tests {
 
         assert_eq!(line.plain(), "hi \x1b]52;c;AAAA\x07 there");
         assert_eq!(line.printable(), "hi ]52;c;AAAA there");
+    }
+
+    #[test]
+    fn a_printable_document_keeps_its_line_breaks_and_loses_escape_sequences() {
+        let line = Line::new(vec![Span::plain("a\x1b[2J")]);
+        let document = Document { blocks: vec![Block::Lines(vec![line.clone(), line])] };
+
+        assert_eq!(printable(&document), "a[2J\na[2J\n");
     }
 
     #[test]
