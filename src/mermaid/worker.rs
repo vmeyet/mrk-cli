@@ -8,7 +8,8 @@ use super::catch::caught;
 /// The renderers recurse over the diagram; a stack this deep outlasts any nesting the budget lets through.
 const STACK_BYTES: usize = 64 * 1024 * 1024;
 
-/// `render` with its panics caught: on this thread without a deadline, else on a thread of its own given up at it.
+/// `render` with its panics caught: on this thread without a deadline, else on a thread of its own given up at it,
+/// or never started once it has passed.
 /// A renderer cannot be stopped, so a thread given up on runs to its end unseen and its result is dropped.
 pub fn run<T: Send + 'static>(
     deadline: Option<Instant>,
@@ -25,7 +26,7 @@ fn within<T: Send + 'static>(
     render: impl FnOnce() -> Result<T, DiagramError> + Send + 'static,
 ) -> Result<T, DiagramError> {
     if Instant::now() >= deadline {
-        return Err(DiagramError::TimedOut);
+        return Err(DiagramError::OutOfTime);
     }
     let (sender, receiver) = mpsc::channel();
     thread::Builder::new()
@@ -81,7 +82,7 @@ mod tests {
 
     #[test]
     fn a_deadline_already_past_starts_nothing() {
-        assert_eq!(run(Some(Instant::now()), || -> Result<(), _> { unreachable!("started") }), Err(DiagramError::TimedOut));
+        assert_eq!(run(Some(Instant::now()), || -> Result<(), _> { unreachable!("started") }), Err(DiagramError::OutOfTime));
     }
 
     #[test]

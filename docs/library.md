@@ -33,7 +33,7 @@ for section in markdown::render_sections(source, &settings) {
 - `document::highlight` restyles character ranges of a section's text, for search or word-level diffs.
 - `diff::sections` pairs the sections of two versions of a file as `Same`, `Added`, `Removed` or `Changed`, a changed pair with the char ranges of its changed words on each side, for `highlight`.
 - Set `cell` to the terminal cell size in pixels to get Mermaid diagrams as PNG pictures instead of text.
-- Mermaid layout runs on the calling thread, bounded by a per-diagram and a per-document budget, so the same input always gives the same document; set `diagram_deadline` to also give up on a diagram after that long, on a thread of its own that keeps running unseen once given up on.
+- Mermaid layout runs on the calling thread, bounded by a per-diagram and a per-document budget, so the same input always gives the same pictures (mermaid-text's box-drawing text may order a subgraph differently from one process to the next); set `diagram_deadline` to stop laying diagrams out at that moment, each on a thread of its own that keeps running unseen once given up on.
 - Set `jumbo_title` to draw level-1 headings two rows tall: `Picture` (with `cell` set) gives a picture per line, its text in `concealed_text`; `DoubleHeight` gives `Block::DoubleHeight` lines, for terminals that draw DEC double-height lines.
 
 ## Printing safely

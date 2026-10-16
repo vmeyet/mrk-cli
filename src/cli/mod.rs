@@ -18,7 +18,7 @@ use mrk::terminal::{self, Align, ColorChoice, ColorDepth, ImagesMode, Preference
 use mrk::theme::{self, Appearance, Palette, Theme};
 
 use crate::config::{self, Config};
-use environment::Environment;
+use environment::{Environment, flag_or};
 use output::{Layout, Output};
 
 const SWATCH: &str = "██";
@@ -123,7 +123,8 @@ fn print_man() -> io::Result<()> {
 }
 
 fn theme_choice(cli: &Cli, environment: &Environment, config: &Config) -> Result<theme::Choice> {
-    let name = cli.theme.as_deref().or(environment.theme.as_deref()).or(config.theme.as_deref());
+    let named = flag_or(cli.theme.clone(), || environment.theme())?;
+    let name = named.as_deref().or(config.theme.as_deref());
     theme::Choice::new(name, config.theme_dark.as_deref(), config.theme_light.as_deref())
         .map_err(|error| UsageError(format!("{error} (mrk --list-themes)")).into())
 }
@@ -184,8 +185,8 @@ fn render(cli: &Cli, environment: &Environment, config: &Config) -> Result<()> {
 
     let layout = Layout {
         source,
-        requested_width: cli.width.or(environment.width).or(config.width),
-        align: cli.align.or(environment.align).or(config.align).unwrap_or_default(),
+        requested_width: flag_or(cli.width, || environment.width())?.or(config.width),
+        align: flag_or(cli.align, || environment.align())?.or(config.align).unwrap_or_default(),
         theme: theme.resolve(capabilities.background),
         jumbo_title: wants_jumbo_title && !is_command,
         capabilities,
@@ -219,7 +220,7 @@ pub fn run() -> Result<()> {
     if cli.list_themes {
         return list_themes(cli.color);
     }
-    render(&cli, &Environment::read()?, &config)
+    render(&cli, &Environment::read(), &config)
 }
 
 #[cfg(test)]

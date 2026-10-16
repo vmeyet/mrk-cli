@@ -37,7 +37,7 @@ pub fn render_sections(source: &str, settings: &Settings) -> Vec<Section> {
 fn groups(source: &str, settings: &Settings) -> Vec<Group> {
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options());
-    let diagrams = mermaid::Allowance::new(raw::diagrams(root));
+    let diagrams = mermaid::Allowance::new(raw::diagrams(root), settings.cell.is_some());
     blocks::groups(root, source, &Context::new(settings, &diagrams))
 }
 

@@ -23,7 +23,7 @@ pub(super) fn flat<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
 pub(super) fn code(block: &NodeCodeBlock, context: &Context) -> Vec<Block> {
     let language = language(block);
     match language.as_deref() {
-        Some(MERMAID) => vec![crate::mermaid::render_in(&block.literal, &context.settings, context.diagrams)],
+        Some(MERMAID) => vec![crate::mermaid::render_in_document(&block.literal, &context.settings, context.diagrams)],
         language => layout::lines(crate::code::render(&block.literal, language, &context.settings)),
     }
 }

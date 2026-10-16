@@ -75,7 +75,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 - **Marker**: what stands before a list item or a footnote: its bullet, number, task glyph or note number.
 - **Line**: spans that fit the width. **Span**: text with one style and an optional link, marked as frame when mrk drew it (a bar, a border, a marker, padding) rather than the input wrote it.
 - **Theme**: a palette plus a syntax theme, one of the `SyntaxTheme` variants that `code` maps onto a two-face theme. **Palette**: the named colours above.
-- **Settings**: width, theme, the image cell size, whether links are clickable, how a jumbo title is drawn and how long a diagram may take, everything a renderer reads.
+- **Settings**: width, theme, the image cell size, whether links are clickable, how a jumbo title is drawn and when diagrams stop being laid out, everything a renderer reads.
 - **Picture**: a PNG with the cell box it occupies and the indent drawn left of each of its rows; a title's picture also carries the text concealed under it.
 - **Jumbo title**: a level-1 heading drawn two rows tall, as a picture or as double-height lines.
 - **Capabilities**: what the terminal can do (colour depth, graphics, double-height lines, cell size, background).

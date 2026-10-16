@@ -249,6 +249,12 @@ fn completions_into_a_closed_pipe_exit_quietly() {
 }
 
 #[test]
+fn a_flag_makes_a_bad_environment_value_irrelevant() {
+    mrk().env("MRK_WIDTH", "abc").env("MRK_ALIGN", "up").args(["--width", "50", "--align", "left"]).write_stdin("# hi").assert().success();
+    mrk().env("MRK_WIDTH", "abc").write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("MRK_WIDTH"));
+}
+
+#[test]
 fn an_environment_variable_set_but_empty_counts_as_unset() {
     let plain = mrk().write_stdin("# hi").assert().success().get_output().stdout.clone();
 

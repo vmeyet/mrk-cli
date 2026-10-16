@@ -15,9 +15,15 @@ const MAX_ELEMENTS: usize = 600;
 const MAX_STATEMENTS: usize = 100;
 /// mermaid-text lays class diagrams out far slower than any other kind: 40 relations took it 2.8 s.
 const MAX_RELATIONS: usize = 32;
-/// The statements a document's diagrams hold together, each counting at most `MAX_STATEMENTS`, before the rest show
-/// as source: the limits above bound one diagram, this bounds how many of them a document lays out.
-pub const MAX_DOCUMENT_STATEMENTS: usize = 4 * MAX_STATEMENTS;
+/// What a document's diagrams may cost together, in milliseconds of layout at the slowest rate measured for what
+/// each one counts; a diagram that does not fit what is left shows as source.
+pub const MAX_DOCUMENT_COST_MS: usize = 12_000;
+/// What any diagram costs at least, its fixed work aside from the layout: at most this many diagrams fit a document.
+const MIN_COST_MS: usize = 5;
+/// The most diagrams a document lays out.
+pub const MAX_DOCUMENT_DIAGRAMS: usize = MAX_DOCUMENT_COST_MS / MIN_COST_MS;
+/// What a picture costs on top of its layout: fitting and drawing it.
+const PICTURE_COST_MS: usize = 20;
 
 /// What a diagram's layout time grows with, counted before an engine lays it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +35,7 @@ pub enum Load {
     Messages,
     /// Nodes, edges, subgraphs, commits and C4 shapes and relations, for the diagrams laid out in rows or rings.
     Elements,
-    /// Statements, one more per arrow chained after the first, as the text engine is given them.
+    /// Edges, and nodes on none, as the text engine is given them: `a & b --> c & d` is four.
     Statements,
     /// Relations of a class diagram, whose members cost mermaid-text little.
     Relations,
@@ -56,9 +62,80 @@ impl Load {
         }
     }
 
-    fn within(self, count: usize) -> Result<(), DiagramError> {
-        if count > self.limit() { Err(DiagramError::OverBudget(self)) } else { Ok(()) }
+    /// The slowest layout measured for that many, in milliseconds: the layered engines slow down per unit as the
+    /// diagram grows (145 links between random nodes took 3.1 s, 51 took 0.27 s), the row-by-row ones do not.
+    fn cost_ms(self, count: usize) -> usize {
+        match self {
+            Self::Links => count * count / 7,
+            Self::Statements => count * count / 8,
+            Self::Relations => count * count * 7 / 4,
+            Self::Messages | Self::Elements => count,
+        }
     }
+
+    fn within(self, count: usize) -> Result<usize, DiagramError> {
+        if count > self.limit() { Err(DiagramError::OverBudget(self)) } else { Ok(self.cost_ms(count)) }
+    }
+}
+
+/// The diagram as mermaid-rs-renderer parses it, refused before any layout when it is too large to read, its
+/// subgraphs would overflow mermaid-text's stack, or it is over its load: layout time grows much faster than the
+/// source, which its 64 KiB cap alone does not bound.
+pub fn picture_graph(source: &str) -> Result<Graph, DiagramError> {
+    let graph = parsed(source)?;
+    picture_cost(&graph)?;
+    Ok(graph)
+}
+
+/// Refuses what mermaid-text would take too long to lay out: counted on mermaid-rs-renderer's graph when it parses the
+/// diagram, else on a scan of the source, since mermaid-text reads syntax mermaid-rs-renderer refuses.
+pub fn admit_text(source: &str) -> Result<(), DiagramError> {
+    admit(source)?;
+    text_cost(source, parsed(source).ok().as_ref()).map(|_| ())
+}
+
+/// What drawing a diagram costs its document: as a picture when pictures are drawn and its count allows one, else as
+/// text; nothing when it is refused before any layout.
+pub fn cost(source: &str, pictures: bool) -> usize {
+    if admit(source).is_err() {
+        return 0;
+    }
+    let graph = parsed(source).ok();
+    let picture = graph.as_ref().filter(|_| pictures).and_then(|graph| picture_cost(graph).ok()).map(|cost| cost + PICTURE_COST_MS);
+    picture.or_else(|| text_cost(source, graph.as_ref()).ok()).map_or(0, |cost| cost.max(MIN_COST_MS))
+}
+
+/// The diagrams of one document its budget lets through, in reading order, each distinct source counted once since
+/// the cache keeps what a repeated one costs: each that fits what is left of the budget.
+pub struct Allowance(HashSet<String>);
+
+impl Allowance {
+    pub fn new(sources: impl IntoIterator<Item = String>, pictures: bool) -> Self {
+        let mut admitted = HashSet::new();
+        let mut left = MAX_DOCUMENT_COST_MS;
+        for source in sources {
+            if admitted.contains(&source) {
+                continue;
+            }
+            let cost = cost(&source, pictures);
+            if cost <= left {
+                left -= cost;
+                admitted.insert(source);
+            }
+        }
+        Self(admitted)
+    }
+
+    pub fn admit(&self, source: &str) -> Result<(), DiagramError> {
+        if self.0.contains(source) { Ok(()) } else { Err(DiagramError::OverDocumentBudget) }
+    }
+}
+
+fn parsed(source: &str) -> Result<Graph, DiagramError> {
+    admit(source)?;
+    let parsed =
+        mermaid_rs_renderer::parse_mermaid_strict(source).map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
+    Ok(parsed.graph)
 }
 
 /// Refuses, for both engines, a block too large to read or whose subgraphs would overflow mermaid-text's stack.
@@ -72,52 +149,19 @@ pub fn admit(source: &str) -> Result<(), DiagramError> {
     Ok(())
 }
 
-/// The diagram as mermaid-rs-renderer parses it, refused before any layout when it is over its load: layout time
-/// grows much faster than the source, which its 64 KiB cap alone does not bound.
-pub fn parse(source: &str) -> Result<Graph, DiagramError> {
-    let graph =
-        mermaid_rs_renderer::parse_mermaid_strict(source).map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?.graph;
-    let (load, count) = picture_load(&graph);
-    load.within(count)?;
-    Ok(graph)
+fn picture_cost(graph: &Graph) -> Result<usize, DiagramError> {
+    let (load, count) = picture_load(graph);
+    load.within(count)
 }
 
-/// Refuses a diagram with more statements than mermaid-text lays out quickly, read off the source without parsing it:
-/// mermaid-text accepts syntax mermaid-rs-renderer's parser refuses.
-pub fn admit_text(source: &str) -> Result<(), DiagramError> {
-    text_load(source).map_or(Ok(()), |(load, count)| load.within(count))
-}
-
-/// The diagrams of one document its budget lets through, in reading order, each distinct source counted once: the
-/// cache keeps what a repeated one costs. From the first diagram over the budget on, the others show as source.
-pub struct Allowance(HashSet<String>);
-
-impl Allowance {
-    pub fn new(sources: impl IntoIterator<Item = String>) -> Self {
-        let mut admitted = HashSet::new();
-        let mut spent = 0;
-        for source in sources {
-            if admitted.contains(&source) {
-                continue;
-            }
-            spent += cost(&source);
-            if spent > MAX_DOCUMENT_STATEMENTS {
-                break;
-            }
-            admitted.insert(source);
-        }
-        Self(admitted)
-    }
-
-    pub fn admit(&self, source: &str) -> Result<(), DiagramError> {
-        if self.0.contains(source) { Ok(()) } else { Err(DiagramError::OverDocumentBudget) }
-    }
-}
-
-/// What a diagram costs its document: its statements, read off the source as the text engine counts them, from one
-/// up to what a diagram may hold, whichever engine draws it.
-fn cost(source: &str) -> usize {
-    statement_count(source).clamp(1, MAX_STATEMENTS)
+/// The kinds mermaid-text draws in one pass, row after row, cost it only their fixed work: 64 KiB of any of them took
+/// it under 30 ms.
+fn text_cost(source: &str, graph: Option<&Graph>) -> Result<usize, DiagramError> {
+    let load = match graph {
+        Some(graph) => graph_text_load(graph),
+        None => scanned_text_load(source),
+    };
+    load.map_or(Ok(MIN_COST_MS), |(load, count)| load.within(count))
 }
 
 fn picture_load(graph: &Graph) -> (Load, usize) {
@@ -134,28 +178,46 @@ fn picture_load(graph: &Graph) -> (Load, usize) {
     }
 }
 
-/// None for the kinds mermaid-text draws in one pass, row after row: 64 KiB of any of them took it under 30 ms.
-fn text_load(source: &str) -> Option<(Load, usize)> {
+fn graph_text_load(graph: &Graph) -> Option<(Load, usize)> {
+    match graph.kind {
+        DiagramKind::Sequence
+        | DiagramKind::Pie
+        | DiagramKind::Gantt
+        | DiagramKind::Timeline
+        | DiagramKind::Journey
+        | DiagramKind::GitGraph
+        | DiagramKind::Mindmap
+        | DiagramKind::Kanban => None,
+        DiagramKind::Class => Some((Load::Relations, graph.edges.len())),
+        _ => {
+            let joined: HashSet<&str> = graph.edges.iter().flat_map(|edge| [edge.from.as_str(), edge.to.as_str()]).collect();
+            let alone = graph.nodes.keys().filter(|node| !joined.contains(node.as_str())).count();
+            Some((Load::Statements, graph.edges.len() + alone + graph.subgraphs.len()))
+        }
+    }
+}
+
+fn scanned_text_load(source: &str) -> Option<(Load, usize)> {
     let header = statements(source).next()?;
     if LINEAR_KINDS.iter().any(|kind| header.starts_with(kind)) {
         None
     } else if header.starts_with("classDiagram") {
-        Some((Load::Relations, statements(source).map(|statement| arrows(statement, &CLASS_ARROWS)).sum()))
+        Some((Load::Relations, statements(source).map(|statement| edges_in(statement, &CLASS_ARROWS)).sum()))
     } else {
-        Some((Load::Statements, statement_count(source)))
+        Some((Load::Statements, statements(source).skip(1).map(|statement| edges_in(statement, &ARROWS).max(1)).sum()))
     }
-}
-
-fn statement_count(source: &str) -> usize {
-    statements(source).map(|statement| arrows(statement, &ARROWS).max(1)).sum()
 }
 
 const LINEAR_KINDS: [&str; 8] = ["sequenceDiagram", "pie", "gantt", "timeline", "journey", "gitGraph", "mindmap", "kanban"];
 const ARROWS: [&str; 3] = ["--", "==", "-."];
 const CLASS_ARROWS: [&str; 2] = ["--", ".."];
+const ARROW_MARK: char = '\u{0}';
 
-fn arrows(statement: &str, kinds: &[&str]) -> usize {
-    kinds.iter().map(|arrow| statement.matches(arrow).count()).sum()
+/// One edge per pair of nodes either side of each arrow: `a & b --> c & d --> e` is four then two.
+fn edges_in(statement: &str, arrows: &[&str]) -> usize {
+    let marked = arrows.iter().fold(statement.to_owned(), |marked, arrow| marked.replace(arrow, &ARROW_MARK.to_string()));
+    let sides: Vec<usize> = marked.split(ARROW_MARK).map(|side| side.split('&').count()).collect();
+    sides.windows(2).map(|pair| pair[0] * pair[1]).sum()
 }
 
 fn statements(source: &str) -> impl Iterator<Item = &str> {
@@ -224,13 +286,16 @@ mod tests {
         format!("graph TD\n{}", (0..count).map(|index| format!("  {}\n", edge(index))).collect::<String>())
     }
 
-    fn load_of(source: &str) -> (Load, usize) {
-        picture_load(&mermaid_rs_renderer::parse_mermaid(source).unwrap().graph)
+    fn chain(count: usize, name: &str) -> String {
+        edges(count, |index| format!("{name}{index} --> {name}{}", index + 1))
     }
 
-    /// A diagram of `count` statements, its header among them.
-    fn of_statements(count: usize, name: &str) -> String {
-        edges(count - 1, |index| format!("{name}{index} --> {name}{}", index + 1))
+    fn graph(source: &str) -> Graph {
+        mermaid_rs_renderer::parse_mermaid(source).unwrap().graph
+    }
+
+    fn load_of(source: &str) -> (Load, usize) {
+        picture_load(&graph(source))
     }
 
     fn admitted(allowance: &Allowance, sources: &[String]) -> Vec<bool> {
@@ -238,44 +303,57 @@ mod tests {
     }
 
     #[test]
-    fn a_diagram_costs_its_statements_from_one_up_to_the_limit_of_one_diagram() {
-        assert_eq!(cost(""), 1);
-        assert_eq!(cost(&of_statements(40, "a")), 40);
-        assert_eq!(cost(&of_statements(MAX_STATEMENTS * 3, "a")), MAX_STATEMENTS);
+    fn a_diagram_costs_what_the_engine_that_draws_it_counts() {
+        let flowchart = chain(40, "a");
+
+        assert_eq!(cost(&flowchart, true), Load::Links.cost_ms(41 + 40) + PICTURE_COST_MS);
+        assert_eq!(cost(&flowchart, false), Load::Statements.cost_ms(40));
+        assert_eq!(cost(&chain(3, "a"), false), MIN_COST_MS);
+        assert_eq!(cost("pie\n  \"a\" : 1", false), MIN_COST_MS);
     }
 
     #[test]
-    fn diagrams_are_let_through_in_reading_order_until_the_budget_is_spent() {
-        let sources = [of_statements(200, "a"), of_statements(MAX_STATEMENTS, "b"), of_statements(150, "c"), of_statements(2, "d")];
-        assert_eq!(sources.iter().map(|source| cost(source)).sum::<usize>(), 3 * MAX_STATEMENTS + 2);
+    fn a_diagram_both_engines_refuse_or_drawn_row_after_row_costs_little() {
+        assert_eq!(cost(&chain(200, "a"), true), 0);
+        assert_eq!(cost(&"%%\n".repeat(MAX_SOURCE_BYTES), true), 0);
+        assert_eq!(cost(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000)), false), MIN_COST_MS);
+    }
 
-        let allowance = Allowance::new(sources.iter().cloned().chain([of_statements(MAX_STATEMENTS, "e"), of_statements(2, "f")]));
+    #[test]
+    fn each_diagram_that_fits_what_is_left_of_the_budget_is_let_through_in_reading_order() {
+        let large = |name: &str| chain(MAX_STATEMENTS - 1, name);
+        let large_cost = cost(&large("a"), false);
+        let fitting = MAX_DOCUMENT_COST_MS / large_cost;
+        let sources: Vec<String> = (0..=fitting).map(|index| large(&format!("d{index}_"))).chain([chain(1, "small")]).collect();
 
-        assert_eq!(admitted(&allowance, &sources), [true, true, true, true]);
-        assert_eq!(admitted(&allowance, &[of_statements(MAX_STATEMENTS, "e"), of_statements(2, "f")]), [false, false]);
-        assert_eq!(allowance.admit(&of_statements(2, "z")), Err(DiagramError::OverDocumentBudget));
+        let allowance = Allowance::new(sources.clone(), false);
+
+        let expected: Vec<bool> = (0..=fitting).map(|index| index < fitting).chain([true]).collect();
+        assert_eq!(admitted(&allowance, &sources), expected);
+        assert_eq!(allowance.admit(&large("z")), Err(DiagramError::OverDocumentBudget));
     }
 
     #[test]
     fn a_repeated_diagram_costs_its_document_once() {
-        let repeated = of_statements(MAX_STATEMENTS, "a");
-        let last = of_statements(MAX_STATEMENTS, "b");
+        let large = chain(MAX_STATEMENTS, "a");
+        let repeats = MAX_DOCUMENT_COST_MS / cost(&large, false) + 1;
+        let last = chain(MAX_STATEMENTS, "b");
 
-        let allowance = Allowance::new(std::iter::repeat_n(repeated.clone(), 10).chain([last.clone()]));
+        let allowance = Allowance::new(std::iter::repeat_n(large.clone(), repeats).chain([last.clone()]), false);
 
-        assert_eq!(admitted(&allowance, &[repeated, last]), [true, true]);
+        assert_eq!(admitted(&allowance, &[large, last]), [true, true]);
     }
 
     #[test]
-    fn a_document_lets_through_at_most_one_diagram_per_statement_of_its_budget() {
-        let allowance = Allowance::new((0..2 * MAX_DOCUMENT_STATEMENTS).map(|index| format!("n{index}")));
+    fn a_document_lets_through_at_most_its_diagram_count() {
+        let allowance = Allowance::new((0..2 * MAX_DOCUMENT_DIAGRAMS).map(|index| format!("pie\n  \"n{index}\" : 1")), false);
 
-        assert_eq!(allowance.0.len(), MAX_DOCUMENT_STATEMENTS);
+        assert_eq!(allowance.0.len(), MAX_DOCUMENT_DIAGRAMS);
     }
 
     #[test]
     fn invalid_source_is_an_error() {
-        assert!(matches!(parse("hello"), Err(DiagramError::Invalid(_))));
+        assert!(matches!(picture_graph("hello"), Err(DiagramError::Invalid(_))));
     }
 
     #[test]
@@ -289,6 +367,7 @@ mod tests {
         assert_eq!(load_of("graph TD\n  a -->|yes| b"), (Load::Links, 2 + 1 + 1));
         assert_eq!(load_of("graph TD\n  subgraph s\n  a --> b\n  end"), (Load::Links, 2 + 1 + 1));
         assert_eq!(load_of("graph TD\n  a --> b\n  b --> a\n  a --> b"), (Load::Links, 2 + 3 + (1 + 2)));
+        assert_eq!(load_of("graph TD\n  a & b --> c & d"), (Load::Links, 4 + 4));
         assert_eq!(load_of("classDiagram\n  A --> B").0, Load::Links);
     }
 
@@ -302,10 +381,8 @@ mod tests {
 
     #[test]
     fn a_diagram_at_its_limit_passes_and_one_more_is_refused() {
-        let chain = |links: usize| edges(links / 2, |index| format!("n{index} --> n{}", index + 1));
-
-        assert!(parse(&chain(MAX_LINKS - 1)).is_ok());
-        assert_eq!(parse(&chain(MAX_LINKS + 2)).unwrap_err(), DiagramError::OverBudget(Load::Links));
+        assert!(picture_graph(&chain(MAX_LINKS / 2 - 1, "n")).is_ok());
+        assert_eq!(picture_graph(&chain(MAX_LINKS / 2 + 1, "n")).unwrap_err(), DiagramError::OverBudget(Load::Links));
     }
 
     #[test]
@@ -313,16 +390,35 @@ mod tests {
         let parallel = edges(30, |_| "a -->|again| b".to_owned());
 
         assert_eq!(load_of(&parallel), (Load::Links, 2 + 30 + 30 + (0..30).sum::<usize>()));
-        assert_eq!(parse(&parallel).unwrap_err(), DiagramError::OverBudget(Load::Links));
+        assert_eq!(picture_graph(&parallel).unwrap_err(), DiagramError::OverBudget(Load::Links));
     }
 
     #[test]
-    fn the_text_engine_counts_statements_and_chained_arrows() {
-        assert_eq!(text_load("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), Some((Load::Statements, 1 + 2 + 1 + 1)));
-        assert_eq!(text_load(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000))), None);
-        assert_eq!(text_load("%% why\nclassDiagram\n  class A {\n    +f() int\n  }\n  A --> B\n  B ..> C"), Some((Load::Relations, 2)));
-        assert_eq!(admit_text(&edges(MAX_STATEMENTS - 1, |index| format!("n{index} --> n{}", index + 1))), Ok(()));
-        assert_eq!(admit_text(&edges(MAX_STATEMENTS, |index| format!("n{index}"))), Err(DiagramError::OverBudget(Load::Statements)));
+    fn the_text_engine_counts_the_parsed_edges_and_lone_nodes() {
+        assert_eq!(graph_text_load(&graph("graph TD\n  a --> b --> c\n  d; e")), Some((Load::Statements, 2 + 2)));
+        assert_eq!(graph_text_load(&graph("graph TD\n  a & b & c --> d & e & f")), Some((Load::Statements, 9)));
+        assert_eq!(graph_text_load(&graph("sequenceDiagram\n  a ->> b: hi")), None);
+        assert_eq!(admit_text(&chain(MAX_STATEMENTS, "n")), Ok(()));
+        assert_eq!(admit_text(&chain(MAX_STATEMENTS + 1, "n")), Err(DiagramError::OverBudget(Load::Statements)));
+    }
+
+    #[test]
+    fn the_scan_for_syntax_mermaid_rs_renderer_refuses_counts_every_fanned_out_edge() {
+        assert_eq!(scanned_text_load("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), Some((Load::Statements, 2 + 1 + 1)));
+        assert_eq!(scanned_text_load("graph TD\n  a & b & c --> d & e --> f"), Some((Load::Statements, 3 * 2 + 2)));
+        assert_eq!(scanned_text_load(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000))), None);
+        assert_eq!(
+            scanned_text_load("%% why\nclassDiagram\n  class A {\n    +f() int\n  }\n  A & C --> B\n  B ..> C"),
+            Some((Load::Relations, 3))
+        );
+    }
+
+    #[test]
+    fn fanned_out_edges_hidden_on_one_line_are_refused_by_both_engines() {
+        let fanned = edges(12, |index| format!("a{index} & b{index} & c{index} --> d{index} & e{index} & f{index}"));
+
+        assert_eq!(picture_graph(&fanned).unwrap_err(), DiagramError::OverBudget(Load::Links));
+        assert_eq!(admit_text(&fanned), Err(DiagramError::OverBudget(Load::Statements)));
     }
 
     #[test]
