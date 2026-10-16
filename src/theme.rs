@@ -149,7 +149,7 @@ fn named_or_default(name: Option<&str>, appearance: Appearance) -> Result<Theme,
 
 fn closest_name(name: &str) -> Option<&'static str> {
     let wanted = name.trim().to_ascii_lowercase();
-    let allowed = (wanted.chars().count() / CHARS_PER_EDIT).min(MAX_SUGGESTION_DISTANCE);
+    let allowed = (wanted.chars().count() / CHARS_PER_EDIT).clamp(1, MAX_SUGGESTION_DISTANCE);
     names()
         .map(|candidate| (edit_distance(&wanted, candidate), candidate))
         .filter(|(distance, _)| *distance <= allowed)
@@ -157,18 +157,25 @@ fn closest_name(name: &str) -> Option<&'static str> {
         .map(|(_, candidate)| candidate)
 }
 
+/// Insertions, deletions, substitutions and swaps of two neighbours, each one edit: a swap is the commonest typo.
 fn edit_distance(left: &str, right: &str) -> usize {
-    let right: Vec<char> = right.chars().collect();
-    let first_row: Vec<usize> = (0..=right.len()).collect();
-    let last_row = left.chars().enumerate().fold(first_row, |previous, (row, left_char)| {
-        right.iter().enumerate().fold(vec![row + 1], |mut current, (column, right_char)| {
-            let substitution = previous[column] + usize::from(left_char != *right_char);
-            let cost = substitution.min(previous[column + 1] + 1).min(current[column] + 1);
-            current.push(cost);
-            current
-        })
-    });
-    last_row[right.len()]
+    let (left, right): (Vec<char>, Vec<char>) = (left.chars().collect(), right.chars().collect());
+    let mut distances = vec![vec![0; right.len() + 1]; left.len() + 1];
+    for (row, distance) in distances.iter_mut().enumerate() {
+        distance[0] = row;
+    }
+    for (column, distance) in distances[0].iter_mut().enumerate() {
+        *distance = column;
+    }
+    for row in 1..=left.len() {
+        for column in 1..=right.len() {
+            let substitution = distances[row - 1][column - 1] + usize::from(left[row - 1] != right[column - 1]);
+            let edit = substitution.min(distances[row - 1][column] + 1).min(distances[row][column - 1] + 1);
+            let is_swap = row > 1 && column > 1 && left[row - 1] == right[column - 2] && left[row - 2] == right[column - 1];
+            distances[row][column] = if is_swap { edit.min(distances[row - 2][column - 2] + 1) } else { edit };
+        }
+    }
+    distances[left.len()][right.len()]
 }
 
 #[cfg(test)]
@@ -303,9 +310,10 @@ mod tests {
     }
 
     #[test]
-    fn a_suggestion_allows_one_edit_per_three_typed_characters() {
+    fn a_suggestion_allows_one_edit_per_three_typed_characters_and_at_least_one() {
         assert_eq!(closest_name("nordd"), Some("nord"));
-        assert_eq!(closest_name("nrod"), None);
+        assert_eq!(closest_name("nrod"), Some("nord"));
+        assert_eq!(closest_name("nrdo"), None);
         assert_eq!(closest_name("bad"), None);
         assert_eq!(closest_name("x"), None);
     }
@@ -321,7 +329,8 @@ mod tests {
     #[test]
     fn edit_distance_counts_edits() {
         assert_eq!(edit_distance("nord", "nord"), 0);
-        assert_eq!(edit_distance("nrod", "nord"), 2);
+        assert_eq!(edit_distance("nrod", "nord"), 1);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
         assert_eq!(edit_distance("", "abc"), 3);
     }
 }

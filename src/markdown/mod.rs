@@ -30,7 +30,7 @@ pub fn render(source: &str, settings: &Settings) -> Document {
 /// A list gives one section per top-level item, nested items staying inside theirs; the footnote definitions are one
 /// last section. No blank line separates or surrounds them: `render` puts one between sections and between loose items.
 pub fn render_sections(source: &str, settings: &Settings) -> Vec<Section> {
-    let sections = groups(source, settings).into_iter().flat_map(|group| group.sections);
+    let sections = groups(source, settings).into_iter().flat_map(Group::sections);
     sections.filter(|section| !layout::is_empty(&section.blocks)).collect()
 }
 
@@ -218,7 +218,7 @@ mod tests {
             styled("---\ntitle: Hello\n---\n"),
             [
                 [Span::new("title: Hello", Style::fg(MRK_DARK.palette.muted))],
-                [Span::new("─".repeat(80), Style::fg(MRK_DARK.palette.subtle))]
+                [Span::new("─".repeat(80), Style::fg(MRK_DARK.palette.subtle)).framed()]
             ]
         );
     }
@@ -234,6 +234,6 @@ mod tests {
     fn a_front_matter_indent_takes_at_most_half_the_width() {
         let source = format!("---\n{}deep: value\n---\n", " ".repeat(100));
 
-        assert_eq!(plain_at(&source, 20).lines().next(), Some("          deep: valu"));
+        assert_eq!(plain_at(&source, 20).lines().next(), Some("          deep:"));
     }
 }

@@ -8,10 +8,10 @@ use crate::text;
 
 pub(super) const MERMAID: &str = "mermaid";
 
-/// An HTML block as muted literal text, never interpreted: cut where a line is full, so its spacing stays.
+/// An HTML block as muted literal text, never interpreted, its spacing kept.
 pub(super) fn html(literal: &str, context: &Context) -> Vec<Line> {
     let muted = Style::fg(context.palette().muted);
-    literal.trim_end_matches('\n').lines().flat_map(|line| text::hard_wrap(&[Span::new(line, muted)], context.width(), &[])).collect()
+    literal.trim_end_matches('\n').lines().flat_map(|line| text::wrap_literal(&[Span::new(line, muted)], context.width(), &[])).collect()
 }
 
 /// A container nested too deep: its bare text, wrapped at the current width.

@@ -14,9 +14,9 @@ pub(super) fn thematic(context: &Context) -> Line {
     let sides = context.width() - text::display_width(CENTRE);
     let left = sides / 2;
     Line::new(vec![
-        Span::new(RULE.repeat(left), border),
-        Span::new(CENTRE, Style::fg(context.palette().muted)),
-        Span::new(RULE.repeat(sides - left), border),
+        Span::new(RULE.repeat(left), border).framed(),
+        Span::new(CENTRE, Style::fg(context.palette().muted)).framed(),
+        Span::new(RULE.repeat(sides - left), border).framed(),
     ])
 }
 
@@ -25,7 +25,7 @@ pub(super) fn full(context: &Context) -> Line {
 }
 
 pub(super) fn short(width: usize, context: &Context) -> Line {
-    Line::new(vec![Span::new(RULE.repeat(width.min(context.width())), Style::fg(context.palette().subtle))])
+    Line::new(vec![Span::new(RULE.repeat(width.min(context.width())), Style::fg(context.palette().subtle)).framed()])
 }
 
 /// The lines between the fences in `muted`, blank ones left out, then a rule.
@@ -36,12 +36,12 @@ pub(super) fn front_matter(source: &str, context: &Context) -> Vec<Line> {
     lines.chain(std::iter::once(full(context))).collect()
 }
 
-/// A front matter line behind its own indent (YAML nests by it), up to half the width; cut where a line is full, so its
-/// spacing stays, it goes on two cells further in.
+/// A front matter line behind its own indent (YAML nests by it), up to half the width, its spacing kept; it goes on
+/// two cells further in.
 fn entry(line: &str, muted: Style, width: usize) -> Vec<Line> {
     let value = line.trim_start();
     let indent_width = text::display_width(&line[..line.len() - value.len()]).min(width / 2);
-    let lines = text::hard_wrap(&[Span::new(value, muted)], width - indent_width, &[Span::plain("  ")]);
+    let lines = text::wrap_literal(&[Span::new(value, muted)], width - indent_width, &[Span::plain("  ").framed()]);
     let indent = layout::blank(indent_width);
     layout::prefix_lines(lines, &indent, &indent)
 }
@@ -68,9 +68,9 @@ mod tests {
     #[test]
     fn thematic_break_is_subtle_around_a_muted_diamond() {
         let palette = MRK_DARK.palette;
-        let border = |cells: usize| Span::new("─".repeat(cells), Style::fg(palette.subtle));
+        let border = |cells: usize| Span::new("─".repeat(cells), Style::fg(palette.subtle)).framed();
 
-        assert_eq!(styled("---"), [[border(38), Span::new(" ◆ ", Style::fg(palette.muted)), border(39)]]);
+        assert_eq!(styled("---"), [[border(38), Span::new(" ◆ ", Style::fg(palette.muted)).framed(), border(39)]]);
     }
 
     #[test]

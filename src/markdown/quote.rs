@@ -31,7 +31,7 @@ pub(super) fn alert<'a>(node: &'a AstNode<'a>, alert: &NodeAlert, context: &Cont
     let titled = |inner: &Context| {
         let title_text = alert.title.as_deref().unwrap_or(alert.alert_type.default_title());
         let title = Span::new(format!("{glyph} {title_text}"), Style::fg(color).bold());
-        let title = text::wrap(&[title], inner.width(), &[Span::plain("  ")]);
+        let title = text::wrap(&[title], inner.width(), &[Span::plain("  ").framed()]);
         let body = super::children(node, &inner.with_style(Style::fg(palette.text)), Spacing::Loose);
         layout::stack([layout::lines(title), body], Spacing::Tight)
     };
@@ -70,7 +70,7 @@ mod tests {
 
         assert_eq!(
             styled("> quoted"),
-            [[Span::new("│ ", Style::fg(palette.subtle)), Span::new("quoted", Style::fg(palette.muted).italic())]]
+            [[Span::new("│ ", Style::fg(palette.subtle)).framed(), Span::new("quoted", Style::fg(palette.muted).italic())]]
         );
     }
 
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn alert_bar_and_title_take_the_alert_colour_and_the_body_stays_text() {
         let palette = MRK_DARK.palette;
-        let bar = Span::new("│ ", Style::fg(palette.warning));
+        let bar = Span::new("│ ", Style::fg(palette.warning)).framed();
 
         assert_eq!(
             styled("> [!WARNING]\n> Careful here."),

@@ -52,7 +52,7 @@ fn marker<'a>(item: &'a AstNode<'a>, list: &NodeList, number: usize, number_widt
         (ListType::Bullet, Some(is_done)) => vec![glyph(is_done)],
         (ListType::Bullet, None) => vec![Span::new(BULLETS[context.list_depth % BULLETS.len()], accent)],
     };
-    Marker { spans, is_done: task == Some(true) }
+    Marker { spans: spans.into_iter().map(Span::framed).collect(), is_done: task == Some(true) }
 }
 
 fn delimiter(delimiter: ListDelimType) -> char {
@@ -63,7 +63,7 @@ fn delimiter(delimiter: ListDelimType) -> char {
 }
 
 fn render_item<'a>(item: &'a AstNode<'a>, marker: &Marker, marker_width: usize, spacing: Spacing, context: &Context) -> Vec<Block> {
-    let padding = Span::plain(" ".repeat(marker_width - text::spans_width(&marker.spans)));
+    let padding = Span::plain(" ".repeat(marker_width - text::spans_width(&marker.spans))).framed();
     let marker_spans: Vec<Span> = marker.spans.iter().cloned().chain([padding]).collect();
     let restyle: fn(Style) -> Style = if marker.is_done { Style::dim } else { std::convert::identity };
     let dimmed = |body: Vec<Block>| if marker.is_done { layout::restyle(body, restyle) } else { body };
@@ -131,20 +131,24 @@ mod tests {
     #[test]
     fn done_task_is_dimmed_behind_a_success_check() {
         let palette = MRK_DARK.palette;
-        let space = Span::plain(" ");
+        let space = Span::plain(" ").framed();
 
         assert_eq!(
             styled("- [x] done"),
-            [[Span::new("✔", Style::fg(palette.success)), space.clone(), Span::new("done", Style::fg(palette.text).dim())]]
+            [[Span::new("✔", Style::fg(palette.success)).framed(), space.clone(), Span::new("done", Style::fg(palette.text).dim())]]
         );
-        assert_eq!(styled("- [ ] open"), [[Span::new("○", Style::fg(palette.muted)), space, Span::new("open", Style::fg(palette.text))]]);
+        assert_eq!(
+            styled("- [ ] open"),
+            [[Span::new("○", Style::fg(palette.muted)).framed(), space, Span::new("open", Style::fg(palette.text))]]
+        );
     }
 
     #[test]
     fn markers_are_accent() {
         let palette = MRK_DARK.palette;
-        let item =
-            |marker: &str| vec![Span::new(marker, Style::fg(palette.accent)), Span::plain(" "), Span::new("a", Style::fg(palette.text))];
+        let item = |marker: &str| {
+            vec![Span::new(marker, Style::fg(palette.accent)).framed(), Span::plain(" ").framed(), Span::new("a", Style::fg(palette.text))]
+        };
 
         assert_eq!(styled("- a"), [item("•")]);
         assert_eq!(styled("3. a"), [item("3.")]);

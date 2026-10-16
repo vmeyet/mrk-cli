@@ -52,11 +52,11 @@ fn inline<'a>(node: &'a AstNode<'a>, base: Style, context: &Context, depth: usiz
         NodeValue::Strikethrough => children(node, base.strike().dim(), context, depth),
         NodeValue::Link(link) => {
             let text = children(node, base.with_fg(palette.link).underline(), context, depth);
-            linked(text, &link.url, base, context)
+            linked(text, &link.url, Target::Link, base, context)
         }
         NodeValue::Image(image) => {
             let text = vec![Span::new(format!("{IMAGE_MARKER}{}", alt(node)), base.with_fg(palette.muted))];
-            linked(text, &image.url, base, context)
+            linked(text, &image.url, Target::Image, base, context)
         }
         NodeValue::FootnoteReference(reference) => {
             vec![Span::new(footnote::marker(reference.ix), base.with_fg(palette.accent))]
@@ -75,22 +75,31 @@ fn alt<'a>(image: &'a AstNode<'a>) -> String {
     if alt.trim().is_empty() { IMAGE_FALLBACK_ALT.to_owned() } else { alt }
 }
 
-fn linked(spans: Vec<Span>, url: &str, base: Style, context: &Context) -> Vec<Span> {
+/// What a URL points at: what is worth printing after the text when it cannot be clicked differs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Link,
+    Image,
+}
+
+fn linked(spans: Vec<Span>, url: &str, target: Target, base: Style, context: &Context) -> Vec<Span> {
     if url.is_empty() {
         return spans;
     }
-    let target = shown_target(&spans, url, base, context);
+    let target = shown_target(&spans, url, target, base, context);
     spans.into_iter().map(|span| span.linked(url)).chain(target).collect()
 }
 
-/// ` <url>` for a link that cannot be clicked, unless its text already reads as the URL: the terminal has no
-/// hyperlinks, or `sanitize::link` refuses the target (a relative path, another scheme).
-fn shown_target(spans: &[Span], url: &str, base: Style, context: &Context) -> Option<Span> {
-    if context.settings.hyperlinks && sanitize::link(url).is_some() {
+/// ` <url>` for a link that cannot be clicked, unless its text already reads as the URL. Without hyperlinks every
+/// target shows; with them, only a link's target that `sanitize::link` refuses (a relative path, another scheme), and
+/// never an image's source or a `#fragment`, which means nothing outside the document.
+fn shown_target(spans: &[Span], url: &str, target: Target, base: Style, context: &Context) -> Option<Span> {
+    let is_unclickable = !context.settings.hyperlinks || (target == Target::Link && sanitize::link(url).is_none());
+    if !is_unclickable || url.starts_with('#') {
         return None;
     }
     let text: String = spans.iter().map(|span| span.text.as_str()).collect();
-    (!reads_as(&text, url)).then(|| Span::new(format!(" <{url}>"), base.with_fg(context.palette().muted)))
+    (!reads_as(text.trim(), url)).then(|| Span::new(format!(" <{url}>"), base.with_fg(context.palette().muted)))
 }
 
 /// Whether `text` is `url`, or the address an autolink made it from: comrak adds `mailto:` to an email and `http://`
@@ -209,7 +218,16 @@ mod tests {
 
     #[test]
     fn a_link_no_terminal_can_click_shows_its_target_even_with_hyperlinks() {
-        assert_eq!(plain_at("see [the guide](docs/guide.md) and ![logo](a.png)", 80), "see the guide <docs/guide.md> and ▣ logo <a.png>\n");
+        assert_eq!(plain_at("see [the guide](docs/guide.md) and ![logo](a.png)", 80), "see the guide <docs/guide.md> and ▣ logo\n");
+    }
+
+    #[test]
+    fn a_fragment_or_a_target_its_code_text_reads_as_is_never_shown() {
+        for hyperlinks in [true, false] {
+            let plain = plain(&render("[Install](#install) and [`AGENTS.md`](AGENTS.md)", &Settings { hyperlinks, ..test_settings() }));
+
+            assert_eq!(plain, "Install and  AGENTS.md\n", "hyperlinks {hyperlinks}");
+        }
     }
 
     #[test]

@@ -26,7 +26,7 @@ pub(super) fn is_empty(group: &[Block]) -> bool {
     group.iter().all(|block| matches!(block, Block::Lines(lines) if lines.is_empty()))
 }
 
-/// Puts `first` before the first line and `rest` before every other. A picture is indented by `rest` on every row;
+/// Puts `first` before the first line and `rest` before every other, as frame. A picture is indented by `rest` on every row;
 /// when it comes first and `first` differs, as a list marker does, `first` gets a line of its own above it.
 /// The blocks sit inside a container, where no line is double height.
 pub(super) fn prefix(blocks: Vec<Block>, first: &[Span], rest: &[Span]) -> Vec<Block> {
@@ -46,7 +46,7 @@ pub(super) fn prefix(blocks: Vec<Block>, first: &[Span], rest: &[Span]) -> Vec<B
 }
 
 fn indent(picture: Picture, prefix: &[Span]) -> Picture {
-    let indent = Line::new(prefix.iter().cloned().chain(picture.indent.spans).collect());
+    let indent = Line::new(prefix.iter().cloned().map(Span::framed).chain(picture.indent.spans).collect());
     Picture { indent, ..picture }
 }
 
@@ -63,7 +63,7 @@ pub(super) fn prefix_lines(lines: Vec<Line>, first: &[Span], rest: &[Span]) -> V
 
 fn prefix_line(line: Line, prefix: &[Span]) -> Line {
     let prefix = if line.spans.is_empty() { trim_end(prefix) } else { prefix.to_vec() };
-    Line::new(prefix.into_iter().chain(line.spans).filter(|span| !span.text.is_empty()).collect())
+    Line::new(prefix.into_iter().map(Span::framed).chain(line.spans).filter(|span| !span.text.is_empty()).collect())
 }
 
 fn trim_end(spans: &[Span]) -> Vec<Span> {
@@ -97,7 +97,7 @@ pub(super) fn lines(lines: Vec<Line>) -> Vec<Block> {
 
 /// Spaces as wide as `width`, the continuation indent under a marker.
 pub(super) fn blank(width: usize) -> Vec<Span> {
-    vec![Span::plain(" ".repeat(width))]
+    vec![Span::plain(" ".repeat(width)).framed()]
 }
 
 #[cfg(test)]

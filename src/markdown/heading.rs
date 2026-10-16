@@ -29,7 +29,7 @@ fn h1<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     let palette = context.palette();
     let spans = inline::spans(node, Style::fg(palette.h1).bold(), context);
     let title = jumbo(&spans, context).unwrap_or_else(|| super::wrapped(&spans, context));
-    let rule = Line::new(vec![Span::new(H1_RULE.repeat(context.width()), Style::fg(palette.subtle))]);
+    let rule = Line::new(vec![Span::new(H1_RULE.repeat(context.width()), Style::fg(palette.subtle)).framed()]);
     title.into_iter().chain(layout::lines(vec![rule])).collect()
 }
 
@@ -81,7 +81,7 @@ mod tests {
         let palette = MRK_DARK.palette;
         let title = |color| Span::new("T", Style::fg(color).bold());
 
-        assert_eq!(styled("## T"), [[Span::new(H2_BAR, Style::fg(palette.h2)), title(palette.h2)]]);
+        assert_eq!(styled("## T"), [[Span::new(H2_BAR, Style::fg(palette.h2)).framed(), title(palette.h2)]]);
         assert_eq!(styled("### T"), [[title(palette.h3)]]);
         assert_eq!(styled("#### T"), [[title(palette.text)]]);
         assert_eq!(styled("##### T"), [[title(palette.text)]]);
@@ -92,7 +92,10 @@ mod tests {
     fn h1_is_followed_by_a_subtle_rule_across_the_width() {
         let palette = MRK_DARK.palette;
 
-        assert_eq!(styled("# T"), [[Span::new("T", Style::fg(palette.h1).bold())], [Span::new("━".repeat(80), Style::fg(palette.subtle))]]);
+        assert_eq!(
+            styled("# T"),
+            [[Span::new("T", Style::fg(palette.h1).bold())], [Span::new("━".repeat(80), Style::fg(palette.subtle)).framed()]]
+        );
     }
 
     #[cfg(feature = "cli")]

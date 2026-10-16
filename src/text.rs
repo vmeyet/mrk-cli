@@ -12,8 +12,8 @@ const TAB_STOP: usize = 4;
 pub const WIDEST_GRAPHEME: usize = 2;
 
 /// Overrides, isolates and the marks (LRM, RLM, ALM) reorder what a line shows; the zero-width space, the word joiner,
-/// the byte order mark and tag characters hide inside a name; the line and paragraph separators break a line the
-/// layout never counted. The joiners stay: emoji sequences and Persian or Indic words need them.
+/// the byte order mark and tag characters hide inside a name. The joiners stay: emoji sequences and Persian or Indic
+/// words need them.
 fn is_invisible_control(character: char) -> bool {
     matches!(
         character,
@@ -25,8 +25,6 @@ fn is_invisible_control(character: char) -> bool {
             | '\u{061c}'
             | '\u{2060}'
             | '\u{feff}'
-            | '\u{2028}'
-            | '\u{2029}'
             | '\u{e0000}'..='\u{e007f}'
     )
 }
@@ -35,6 +33,16 @@ fn is_invisible_control(character: char) -> bool {
 /// above. `sanitize` removes them, so they take no cell.
 pub fn is_forbidden(character: char) -> bool {
     character.is_control() || is_invisible_control(character)
+}
+
+/// What `sanitize` writes for `character`: nothing when it is forbidden, a space for the line and paragraph
+/// separators, which would break a line the layout never counted, else the character itself.
+pub fn printed(character: char) -> Option<char> {
+    match character {
+        _ if is_forbidden(character) => None,
+        '\u{2028}' | '\u{2029}' => Some(' '),
+        _ => Some(character),
+    }
 }
 
 /// `text` with each tab written as the spaces up to the next tab stop, `text` starting `column` cells into its line;
@@ -71,8 +79,11 @@ pub fn display_width(text: &str) -> usize {
     text.graphemes(true).map(grapheme_width).sum()
 }
 
+/// Measured as printed: a tag character that sanitize removes still joins the grapheme before it.
 fn grapheme_width(grapheme: &str) -> usize {
-    if grapheme.chars().any(is_forbidden) { 0 } else { grapheme.width().min(WIDEST_GRAPHEME) }
+    let is_printed_as_written = grapheme.chars().all(|character| printed(character) == Some(character));
+    let width = if is_printed_as_written { grapheme.width() } else { grapheme.chars().filter_map(printed).collect::<String>().width() };
+    width.min(WIDEST_GRAPHEME)
 }
 
 /// The longest start of `text` that fits in `width` cells, and the rest; a grapheme is never split. `text` holds no
@@ -95,8 +106,31 @@ const MIN_SPLIT_CELLS: usize = 4;
 /// space holds its word together and a tab reaches the next tab stop of the line it lands on. `width` is taken as at
 /// least the indent plus `WIDEST_GRAPHEME`, so any grapheme fits a line.
 pub fn wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
-    let tokens = spans.iter().flat_map(span_tokens).fold(Vec::new(), join_words);
+    let tokens = spans.iter().flat_map(|span| span_tokens(span, &span.text, row_tokens));
+    place(tokens, width, indent)
+}
+
+/// `wrap` for literal text (HTML, front matter): it breaks at spaces but keeps every run of spaces inside a line, and
+/// the spaces that open it, and cuts only a word wider than a line. Tabs stop every four columns from the first span.
+pub fn wrap_literal(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
+    let texts = expanded_texts(spans);
+    let tokens = spans.iter().zip(&texts).flat_map(|(span, text)| span_tokens(span, text, literal_row_tokens));
+    place(tokens, width, indent)
+}
+
+fn place<'a>(tokens: impl Iterator<Item = Token<'a>>, width: usize, indent: &'a [Span]) -> Vec<Line> {
+    let tokens = tokens.fold(Vec::new(), join_words);
     tokens.into_iter().fold(LineBuilder::new(width, indent), LineBuilder::place).finish()
+}
+
+/// Each span's text with its tabs expanded, columns counted from the first span.
+fn expanded_texts(spans: &[Span]) -> Vec<Cow<'_, str>> {
+    let texts = spans.iter().scan(0, |column, span| {
+        let text = expand_tabs(&span.text, *column);
+        *column += display_width(&text);
+        Some(text)
+    });
+    texts.collect()
 }
 
 /// Cuts styled spans into lines of at most `width` cells wherever a line is full, never inside a grapheme: for code and
@@ -109,14 +143,7 @@ pub fn hard_wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
     if fits {
         return vec![Line::joined(pieces_of(spans).map(|piece| (piece.text, piece.span)))];
     }
-    let texts: Vec<Cow<str>> = spans
-        .iter()
-        .scan(0, |column, span| {
-            let text = expand_tabs(&span.text, *column);
-            *column += display_width(&text);
-            Some(text)
-        })
-        .collect();
+    let texts = expanded_texts(spans);
     let pieces = spans.iter().zip(&texts).map(|(span, text)| Piece { span, text });
     let rows = cut_rows(pieces, width, width - indent_width);
     let lines = rows.into_iter().enumerate().map(|(index, row)| if index == 0 { row } else { pieces_of(indent).chain(row).collect() });
@@ -183,22 +210,50 @@ fn cut_rows<'a>(pieces: impl IntoIterator<Item = Piece<'a>>, first: usize, rest:
 #[derive(Debug, PartialEq)]
 enum Token<'a> {
     Word(Vec<Piece<'a>>),
-    Space(&'a Span),
+    Space(Piece<'a>),
     Break,
 }
 
-fn span_tokens(span: &Span) -> impl Iterator<Item = Token<'_>> {
-    let rows = span.text.split('\n').enumerate();
+type RowTokens = for<'a> fn(&'a Span, &'a str) -> Vec<Token<'a>>;
+
+/// `text`, the text of `span` as wrapped, in tokens: each `\n` a break, each row cut into tokens by `row_tokens`.
+fn span_tokens<'a>(span: &'a Span, text: &'a str, row_tokens: RowTokens) -> impl Iterator<Item = Token<'a>> {
+    let rows = text.split('\n').enumerate();
     rows.flat_map(move |(index, row)| (index > 0).then_some(Token::Break).into_iter().chain(row_tokens(span, row)))
 }
 
 /// The words and spaces of one row of `span`; on a background the whole row is one word.
-fn row_tokens<'a>(span: &'a Span, row: &'a str) -> impl Iterator<Item = Token<'a>> {
+fn row_tokens<'a>(span: &'a Span, row: &'a str) -> Vec<Token<'a>> {
     let breaks: &[char] = if span.style.bg.is_some() { &[] } else { &[' ', '\t'] };
-    row.split(breaks).enumerate().flat_map(move |(index, word)| {
-        let space = (index > 0).then_some(Token::Space(span));
+    let tokens = row.split(breaks).enumerate().flat_map(move |(index, word)| {
+        let space = (index > 0).then_some(Token::Space(Piece { span, text: SPACE }));
         space.into_iter().chain((!word.is_empty()).then(|| Token::Word(word_pieces(span, word))))
-    })
+    });
+    tokens.collect()
+}
+
+/// The words and whole runs of spaces of one literal row; the spaces opening it join its first word, so they stay.
+fn literal_row_tokens<'a>(span: &'a Span, row: &'a str) -> Vec<Token<'a>> {
+    let runs = space_runs(row).into_iter().enumerate();
+    let token = |(index, text): (usize, &'a str)| {
+        let piece = Piece { span, text };
+        if index > 0 && text.starts_with(' ') { Token::Space(piece) } else { Token::Word(vec![piece]) }
+    };
+    runs.map(token).collect()
+}
+
+/// `row` cut into its runs of spaces and the runs between them.
+fn space_runs(row: &str) -> Vec<&str> {
+    let mut runs = Vec::new();
+    let mut rest = row;
+    while let Some(first) = rest.chars().next() {
+        let is_space = first == ' ';
+        let end = rest.find(|character: char| (character == ' ') != is_space).unwrap_or(rest.len());
+        let (run, tail) = rest.split_at(end);
+        runs.push(run);
+        rest = tail;
+    }
+    runs
 }
 
 /// A tab in a word is a piece of its own: how wide it is depends on the column the word lands on.
@@ -260,7 +315,7 @@ struct LineBuilder<'a> {
     current: Vec<Piece<'a>>,
     used: usize,
     start: usize,
-    space: Option<&'a Span>,
+    space: Option<Piece<'a>>,
 }
 
 impl<'a> LineBuilder<'a> {
@@ -273,13 +328,13 @@ impl<'a> LineBuilder<'a> {
     fn place(self, token: Token<'a>) -> Self {
         match token {
             Token::Break => self.close(),
-            Token::Space(span) => self.hold_space(span),
+            Token::Space(space) => self.hold_space(space),
             Token::Word(word) => self.place_word(word),
         }
     }
 
-    fn hold_space(self, span: &'a Span) -> Self {
-        if self.has_content() { Self { space: Some(span), ..self } } else { self }
+    fn hold_space(self, space: Piece<'a>) -> Self {
+        if self.has_content() { Self { space: Some(space), ..self } } else { self }
     }
 
     fn place_word(self, word: Vec<Piece<'a>>) -> Self {
@@ -298,7 +353,7 @@ impl<'a> LineBuilder<'a> {
         let word = at_column(word, column);
         let used = column + width;
         let Self { mut current, space, .. } = self;
-        current.extend(space.map(|span| Piece { span, text: SPACE }));
+        current.extend(space);
         current.extend(word);
         Self { current, used, space: None, ..self }
     }
@@ -337,7 +392,7 @@ impl<'a> LineBuilder<'a> {
     }
 
     fn space_width(&self) -> usize {
-        if self.space.is_some() { SPACE.len() } else { 0 }
+        self.space.map_or(0, Piece::width)
     }
 
     fn has_content(&self) -> bool {
@@ -442,6 +497,26 @@ mod tests {
         assert_eq!(display_width("a\x1b[31mb\u{9b}\u{202e}c\r\n"), 7);
         assert_eq!(display_width("a\tb"), 5);
         assert_eq!(display_width("abcd\tb"), 9);
+    }
+
+    #[test]
+    fn a_grapheme_is_as_wide_as_what_sanitize_prints_of_it() {
+        let scotland = "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}";
+
+        assert_eq!(display_width("a\u{e0041}bc"), 3);
+        assert_eq!(display_width(scotland), 2);
+        assert_eq!(display_width("a\u{2028}b"), 3);
+    }
+
+    #[test]
+    fn literal_text_keeps_its_runs_of_spaces_and_breaks_at_one() {
+        let lines = wrap_literal(&[Span::plain("  <td>a    b</td> <td>c</td>")], 18, &[]);
+
+        assert_eq!(plain_lines(&lines), ["  <td>a    b</td>", "<td>c</td>"]);
+        assert_eq!(
+            plain_lines(&wrap_literal(&[Span::plain("key:\tvalue averyveryverylongword")], 13, &[])),
+            ["key:    value", "averyveryvery", "longword"]
+        );
     }
 
     #[test]

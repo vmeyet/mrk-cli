@@ -21,7 +21,6 @@ impl Rgb {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub struct Style {
     pub fg: Option<Rgb>,
     pub bg: Option<Rgb>,
@@ -71,11 +70,14 @@ pub struct Span {
     pub text: String,
     pub style: Style,
     pub link: Option<String>,
+    /// Drawn by mrk around the input's text (a bar, a border, a marker, padding), never written by the input: what a
+    /// diff leaves out.
+    pub is_frame: bool,
 }
 
 impl Span {
     pub fn new(text: impl Into<String>, style: Style) -> Self {
-        Self { text: text.into(), style, link: None }
+        Self { text: text.into(), style, link: None, is_frame: false }
     }
 
     pub fn plain(text: impl Into<String>) -> Self {
@@ -84,6 +86,20 @@ impl Span {
 
     pub fn linked(self, target: impl Into<String>) -> Self {
         Self { link: Some(target.into()), ..self }
+    }
+
+    pub fn framed(self) -> Self {
+        Self { is_frame: true, ..self }
+    }
+
+    /// The span's look and role, all but its text: what decides whether two neighbours can be one span.
+    fn looks_like(&self, other: &Span) -> bool {
+        self.style == other.style && self.link == other.link && self.is_frame == other.is_frame
+    }
+
+    /// This span with its look and role but no text, to build a span of the same kind from.
+    fn without_text(&self) -> Self {
+        Self { text: String::new(), style: self.style, link: self.link.clone(), is_frame: self.is_frame }
     }
 }
 
@@ -97,15 +113,20 @@ impl Line {
         Self { spans }
     }
 
-    /// A line of text slices, each styled and linked as its span, neighbours in the same style and link joined into one span.
+    /// A line of text slices, each styled and linked as its span, neighbours that look alike joined into one span.
+    /// Every span and text is allocated at its exact size: documents hold millions of lines, and growth by doubling
+    /// would leave up to half of each spare.
     pub fn joined<'a>(pieces: impl IntoIterator<Item = (&'a str, &'a Span)>) -> Self {
         let pieces: Vec<(&str, &Span)> = pieces.into_iter().collect();
-        let runs = pieces.chunk_by(|(_, left), (_, right)| left.style == right.style && left.link == right.link);
-        let span = |run: &[(&str, &Span)]| {
+        let runs = pieces.chunk_by(|(_, left), (_, right)| left.looks_like(right));
+        let mut spans = Vec::with_capacity(runs.clone().count());
+        spans.extend(runs.map(|run| {
+            let mut text = String::with_capacity(run.iter().map(|(piece, _)| piece.len()).sum());
+            text.extend(run.iter().map(|(piece, _)| *piece));
             let (_, first) = run[0];
-            Span { text: run.iter().map(|(piece, _)| *piece).collect(), style: first.style, link: first.link.clone() }
-        };
-        Self::new(runs.map(span).collect())
+            Span { text, ..first.without_text() }
+        }));
+        Self::new(spans)
     }
 
     pub fn blank() -> Self {
@@ -232,7 +253,7 @@ fn plain_block(block: &Block) -> String {
 fn split_span(span: &Span, first: usize, ranges: &[Range<usize>], restyle: &impl Fn(Style) -> Style) -> Vec<Span> {
     let end = first + span.text.chars().count();
     let touching = ranges[ranges.partition_point(|range| range.end <= first)..].iter().take_while(|range| range.start < end);
-    let piece = |text: &str, style: Style| Span { text: text.to_owned(), style, link: span.link.clone() };
+    let piece = |text: &str, style: Style| Span { text: text.to_owned(), style, ..span.without_text() };
     let mut pieces = Vec::new();
     let (mut at, mut rest) = (first, span.text.as_str());
     for range in touching.map(|range| range.start.max(first)..range.end.min(end)) {
@@ -365,6 +386,7 @@ mod tests {
         let line = Line::joined([("ab", &plain), ("c", &plain), ("d", &red), ("e", &plain)]);
 
         assert_eq!(line.spans, [Span::plain("abc"), Span::new("d", Style::fg(RED)), Span::plain("e")]);
+        assert_eq!((line.spans.capacity(), line.spans[0].text.capacity()), (3, 3));
     }
 
     #[test]
@@ -374,6 +396,7 @@ mod tests {
         let line = Line::joined([("a", &plain), ("b", &linked), ("c", &linked)]);
 
         assert_eq!(line.spans, [Span::plain("a"), Span::plain("bc").linked("https://x.y")]);
+        assert_eq!(Line::joined([("a", &plain), ("b", &plain.clone().framed())]).spans.len(), 2);
     }
 
     #[test]

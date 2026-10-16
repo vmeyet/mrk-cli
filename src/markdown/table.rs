@@ -113,7 +113,7 @@ fn fitted_widths(rows: &[WrappedRow], columns: usize) -> Vec<usize> {
 
 fn rule(edges: &Border, widths: &[usize], border: Style) -> Line {
     let segments: Vec<String> = widths.iter().map(|width| "─".repeat(width + 2)).collect();
-    Line::new(vec![Span::new(format!("{}{}{}", edges.left, segments.join(edges.junction), edges.right), border)])
+    Line::new(vec![Span::new(format!("{}{}{}", edges.left, segments.join(edges.junction), edges.right), border).framed()])
 }
 
 fn row_lines(row: &WrappedRow, widths: &[usize], alignments: &[TableAlignment], border: Style) -> Vec<Line> {
@@ -129,9 +129,9 @@ fn row_line(row: &WrappedRow, index: usize, widths: &[usize], alignments: &[Tabl
         .zip(widths)
         .zip(alignments)
         .map(|((lines, width), alignment)| aligned(lines.get(index).cloned().unwrap_or_default(), *width, *alignment));
-    let separators = std::iter::once("│ ").chain(std::iter::repeat(" │ ")).map(|separator| Span::new(separator, border));
+    let separators = std::iter::once("│ ").chain(std::iter::repeat(" │ ")).map(|separator| Span::new(separator, border).framed());
     let framed = separators.zip(cells).flat_map(|(separator, cell)| std::iter::once(separator).chain(cell));
-    Line::new(framed.chain(std::iter::once(Span::new(" │", border))).collect())
+    Line::new(framed.chain(std::iter::once(Span::new(" │", border).framed())).collect())
 }
 
 fn aligned(line: Line, width: usize, alignment: TableAlignment) -> Vec<Span> {
@@ -141,7 +141,7 @@ fn aligned(line: Line, width: usize, alignment: TableAlignment) -> Vec<Span> {
         TableAlignment::Center => free / 2,
         TableAlignment::Left | TableAlignment::None => 0,
     };
-    let padding = |cells: usize| Span::plain(" ".repeat(cells));
+    let padding = |cells: usize| Span::plain(" ".repeat(cells)).framed();
     std::iter::once(padding(before))
         .chain(line.spans)
         .chain(std::iter::once(padding(free - before)))
@@ -152,11 +152,11 @@ fn aligned(line: Line, width: usize, alignment: TableAlignment) -> Vec<Span> {
 /// One `header: value` line per cell, rows a blank line apart; a table with no body row lists its header names.
 fn records(rows: &[Row], context: &Context) -> Vec<Line> {
     let Some((header, body)) = rows.split_first() else { return Vec::new() };
-    let wrap = |spans: &[Span]| text::wrap(spans, context.width(), &[Span::plain(RECORD_INDENT)]);
+    let wrap = |spans: &[Span]| text::wrap(spans, context.width(), &[Span::plain(RECORD_INDENT).framed()]);
     if body.is_empty() {
         return header.cells.iter().flat_map(|name| wrap(name)).collect();
     }
-    let separator = [Span::new(": ", header_style(context))];
+    let separator = [Span::new(": ", header_style(context)).framed()];
     let record = |row: &Row| -> Vec<Line> {
         header.cells.iter().zip(&row.cells).flat_map(|(name, cell)| wrap(&[name, &separator[..], cell].concat())).collect()
     };
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn header_is_bold_accent_and_borders_subtle() {
         let palette = MRK_DARK.palette;
-        let border = |text: &str| Span::new(text, Style::fg(palette.subtle));
+        let border = |text: &str| Span::new(text, Style::fg(palette.subtle)).framed();
 
         assert_eq!(
             styled("| a |\n|---|\n| b |"),

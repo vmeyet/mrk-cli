@@ -3,24 +3,26 @@
 use std::collections::VecDeque;
 use std::mem::discriminant;
 use std::ops::Range;
-use std::time::{Duration, Instant};
 
-use similar::{Algorithm, DiffOp, DiffTag, capture_diff_slices_deadline};
+use similar::{Algorithm, DiffOp, DiffTag, capture_diff_slices};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::{Block, Line, Settings};
 use crate::markdown::{Section, SectionKind, render_sections};
 
-/// Both diffs can take the product of the two sides' lengths: past this, what is left to compare is marked whole.
-const DEADLINE: Duration = Duration::from_secs(1);
-/// A pair of sections with more words than this, both sides counted, is marked whole without a word diff.
+/// Both diffs take up to the product of the two sides' lengths. Past this many sections, both sides counted, only
+/// the equal sections at the start and the end pair as `Same`.
+const MAX_SECTIONS: usize = 10_000;
+/// A changed pair with more words than this, both sides counted, is marked whole without a word diff.
 const MAX_WORDS: usize = 20_000;
+/// The words one call diffs across all its changed pairs; the pairs past it are marked whole.
+const MAX_DIFFED_WORDS: usize = 50_000;
 
 /// What happened to one section between the old and the new version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SectionChange {
-    /// Same kind and same words on both sides; spacing and frame (bars, borders, marker padding) may differ.
+    /// Same kind and same text on both sides, but for the frame and the width of runs of spaces.
     Same {
         old: Section,
         new: Section,
@@ -30,7 +32,7 @@ pub enum SectionChange {
     /// Same kind, different text: `old_words` / `new_words` are char ranges into each side's plain text
     /// (`lines.iter().map(Line::plain).collect::<String>()` over its `Block::Lines` and `Block::DoubleHeight`), ready for
     /// `document::highlight`. Empty for sections with no words to mark (pictures, Mermaid diagrams, a change of
-    /// spacing in code, front matter or HTML).
+    /// spacing alone).
     Changed {
         old: Section,
         new: Section,
@@ -41,18 +43,14 @@ pub enum SectionChange {
 
 /// Both files rendered with `render_sections(_, settings)` then paired, in reading order.
 pub fn sections(old: &str, new: &str, settings: &Settings) -> Vec<SectionChange> {
-    sections_within(old, new, settings, Instant::now() + DEADLINE)
-}
-
-fn sections_within(old: &str, new: &str, settings: &Settings, deadline: Instant) -> Vec<SectionChange> {
     let old = render_sections(old, settings);
     let new = render_sections(new, settings);
-    let ops = section_ops(&old, &new, deadline);
-    paired(&ops, old, new, deadline)
+    let ops = section_ops(&old, &new);
+    paired(&ops, old, new)
 }
 
-/// What a section is compared by: its kind, its lines, and the pixels of its pictures, since a picture's alt text
-/// only names the kind of diagram. Lines are compared by their words, except where spacing is content.
+/// What a section is compared by: its kind, the input's text of each line, and the pixels of its pictures, since a
+/// picture's alt text only names the kind of diagram.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Key<'a> {
     kind: &'a SectionKind,
@@ -64,25 +62,47 @@ impl<'a> Key<'a> {
     fn of(section: &'a Section) -> Self {
         let pictures =
             section.blocks.iter().filter_map(|block| if let Block::Picture(picture) = block { Some(&picture.png[..]) } else { None });
-        let lines = plain_lines(section);
-        let lines = if keeps_spacing(&section.kind) {
-            lines
-        } else {
-            lines.iter().map(|line| texts(&words(std::slice::from_ref(line))).join(" ")).collect()
-        };
+        let keeps_spacing = keeps_spacing(&section.kind);
+        let lines = lines(section).map(|line| written(line, keeps_spacing)).collect();
         Self { kind: &section.kind, lines, pictures: pictures.collect() }
     }
 }
 
-/// Code, Mermaid source, front matter and HTML show the input's spacing; elsewhere spacing is the layout's.
+/// Code, Mermaid source, front matter and HTML show the input's spacing; elsewhere a run of spaces is the layout's.
 fn keeps_spacing(kind: &SectionKind) -> bool {
     matches!(kind, SectionKind::Code { .. } | SectionKind::Mermaid | SectionKind::FrontMatter | SectionKind::Html)
 }
 
-fn section_ops(old: &[Section], new: &[Section], deadline: Instant) -> Vec<DiffOp> {
+fn lines(section: &Section) -> impl Iterator<Item = &Line> {
+    section.blocks.iter().flat_map(Block::lines)
+}
+
+/// The input's text of a line, each piece of frame a space; runs of spaces made one, unless the spacing is the input's.
+fn written(line: &Line, keeps_spacing: bool) -> String {
+    let text: String = line.spans.iter().map(|span| if span.is_frame { " " } else { span.text.as_str() }).collect();
+    if keeps_spacing { text } else { text.split_whitespace().collect::<Vec<_>>().join(" ") }
+}
+
+fn section_ops(old: &[Section], new: &[Section]) -> Vec<DiffOp> {
     let old_keys: Vec<Key> = old.iter().map(Key::of).collect();
     let new_keys: Vec<Key> = new.iter().map(Key::of).collect();
-    capture_diff_slices_deadline(Algorithm::Patience, &old_keys, &new_keys, Some(deadline))
+    if old_keys.len() + new_keys.len() > MAX_SECTIONS {
+        return ends_only(&old_keys, &new_keys);
+    }
+    capture_diff_slices(Algorithm::Patience, &old_keys, &new_keys)
+}
+
+/// The equal items at the start and at the end, everything between one replaced run.
+fn ends_only<T: PartialEq>(old: &[T], new: &[T]) -> Vec<DiffOp> {
+    let start = old.iter().zip(new).take_while(|(old, new)| old == new).count();
+    let end = old[start..].iter().rev().zip(new[start..].iter().rev()).take_while(|(old, new)| old == new).count();
+    let (old_len, new_len) = (old.len() - start - end, new.len() - start - end);
+    let ops = [
+        DiffOp::Equal { old_index: 0, new_index: 0, len: start },
+        DiffOp::Replace { old_index: start, old_len, new_index: start, new_len },
+        DiffOp::Equal { old_index: start + old_len, new_index: start + new_len, len: end },
+    ];
+    ops.into_iter().filter(|op| op.old_range().len() + op.new_range().len() > 0).collect()
 }
 
 fn is_equal(op: &DiffOp) -> bool {
@@ -90,17 +110,20 @@ fn is_equal(op: &DiffOp) -> bool {
 }
 
 /// Each side's sections taken in the order `ops` cover them, both sides from start to end: an equal run pairs them
-/// one to one, a differing run as `pair` says.
-fn paired(ops: &[DiffOp], old: Vec<Section>, new: Vec<Section>, deadline: Instant) -> Vec<SectionChange> {
+/// one to one, a differing run as `pair` says, the word budget passed from one run to the next.
+fn paired(ops: &[DiffOp], old: Vec<Section>, new: Vec<Section>) -> Vec<SectionChange> {
     let (mut old, mut new) = (old.into_iter(), new.into_iter());
     let mut changes = Vec::new();
+    let mut budget = MAX_DIFFED_WORDS;
     for run in ops.chunk_by(|left, right| is_equal(left) == is_equal(right)) {
         let removed: Vec<Section> = old.by_ref().take(run.iter().map(|op| op.old_range().len()).sum()).collect();
         let added: Vec<Section> = new.by_ref().take(run.iter().map(|op| op.new_range().len()).sum()).collect();
         if run.iter().all(is_equal) {
             changes.extend(removed.into_iter().zip(added).map(|(old, new)| SectionChange::Same { old, new }));
         } else {
-            changes.extend(pair(removed, added, deadline));
+            let (pairs, left) = pair(removed, added, budget);
+            changes.extend(pairs);
+            budget = left;
         }
     }
     changes
@@ -112,45 +135,39 @@ fn pairs_with(old: &SectionKind, new: &SectionKind) -> bool {
 }
 
 /// Pairs each removed section, in order, with the next added section of its kind; added sections it skips stay added.
-fn pair(removed: Vec<Section>, added: Vec<Section>, deadline: Instant) -> Vec<SectionChange> {
+/// Gives back the word budget left.
+fn pair(removed: Vec<Section>, added: Vec<Section>, budget: usize) -> (Vec<SectionChange>, usize) {
     let mut added = VecDeque::from(added);
     let mut changes = Vec::new();
+    let mut budget = budget;
+    // Sections only leave `added`, so a kind with no partner left never finds one: each kind is searched in vain once.
+    let mut kinds_left_alone = Vec::new();
     for old in removed {
-        let Some(skipped) = added.iter().position(|new| pairs_with(&old.kind, &new.kind)) else {
+        let kind = discriminant(&old.kind);
+        let partner = if kinds_left_alone.contains(&kind) { None } else { added.iter().position(|new| pairs_with(&old.kind, &new.kind)) };
+        let Some(skipped) = partner else {
+            kinds_left_alone.push(kind);
             changes.push(SectionChange::Removed(old));
             continue;
         };
         changes.extend(added.drain(..skipped).map(SectionChange::Added));
-        changes.push(match added.pop_front() {
-            Some(new) => changed(old, new, deadline),
-            None => SectionChange::Removed(old),
-        });
+        let Some(new) = added.pop_front() else {
+            changes.push(SectionChange::Removed(old));
+            continue;
+        };
+        let (change, left) = changed(old, new, budget);
+        changes.push(change);
+        budget = left;
     }
     changes.extend(added.into_iter().map(SectionChange::Added));
-    changes
+    (changes, budget)
 }
 
-fn changed(old: Section, new: Section, deadline: Instant) -> SectionChange {
-    let (old_words, new_words) = if old.kind == SectionKind::Mermaid {
-        (Vec::new(), Vec::new())
-    } else {
-        changed_words(&plain_lines(&old), &plain_lines(&new), deadline)
-    };
-    SectionChange::Changed { old, new, old_words, new_words }
-}
-
-fn plain_lines(section: &Section) -> Vec<String> {
-    section.blocks.iter().flat_map(Block::lines).map(Line::plain).collect()
-}
-
-/// Spaces and the bars, borders and continuation signs drawn around text move when it wraps again: diffing them would
-/// pull words out of line, and marking them would light up the frame.
-fn is_frame(character: char) -> bool {
-    matches!(character, '\u{2500}'..='\u{259f}' | '↪')
-}
-
-fn is_word(text: &str) -> bool {
-    text.chars().any(|character| !character.is_whitespace() && !is_frame(character))
+/// The pair with its changed words marked, and the word budget left.
+fn changed(old: Section, new: Section, budget: usize) -> (SectionChange, usize) {
+    let (old_words, new_words, budget) =
+        if old.kind == SectionKind::Mermaid { (Vec::new(), Vec::new(), budget) } else { changed_words(&words(&old), &words(&new), budget) };
+    (SectionChange::Changed { old, new, old_words, new_words }, budget)
 }
 
 /// A word or a punctuation mark of a section's text, the chars it covers in the lines joined, and whether only
@@ -161,38 +178,40 @@ struct Word<'a> {
     joins_previous: bool,
 }
 
-/// Words never span two lines, so a wrapped paragraph's last word on a row stays apart from the next row's first.
-fn words(lines: &[String]) -> Vec<Word<'_>> {
+/// The words of the input's text, frame left out: a frame between two words, or a line end, keeps them apart.
+fn words(section: &Section) -> Vec<Word<'_>> {
     let mut words = Vec::new();
     let mut next = 0;
-    for line in lines {
+    for line in lines(section) {
         let mut joins_previous = false;
-        for text in line.split_word_bounds() {
-            let chars = next..next + text.chars().count();
-            next = chars.end;
-            if is_word(text) {
-                words.push(Word { text, chars, joins_previous });
-                joins_previous = true;
-            } else if !text.chars().all(char::is_whitespace) {
+        for span in &line.spans {
+            if span.is_frame {
+                next += span.text.chars().count();
                 joins_previous = false;
+                continue;
+            }
+            for text in span.text.split_word_bounds() {
+                let chars = next..next + text.chars().count();
+                next = chars.end;
+                if !text.chars().all(char::is_whitespace) {
+                    words.push(Word { text, chars, joins_previous });
+                    joins_previous = true;
+                }
             }
         }
     }
     words
 }
 
-fn changed_words(old: &[String], new: &[String], deadline: Instant) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
-    let old = words(old);
-    let new = words(new);
-    let ops = word_ops(&old, &new, deadline);
-    (marked(&ops, &old, DiffOp::old_range), marked(&ops, &new, DiffOp::new_range))
-}
-
-fn word_ops(old: &[Word], new: &[Word], deadline: Instant) -> Vec<DiffOp> {
-    if old.len() + new.len() > MAX_WORDS {
-        return vec![DiffOp::Replace { old_index: 0, old_len: old.len(), new_index: 0, new_len: new.len() }];
-    }
-    capture_diff_slices_deadline(Algorithm::Myers, &texts(old), &texts(new), Some(deadline))
+/// Each side's ranges, and the word budget left: a pair over `MAX_WORDS` or the budget is marked whole, undiffed.
+fn changed_words(old: &[Word], new: &[Word], budget: usize) -> (Vec<Range<usize>>, Vec<Range<usize>>, usize) {
+    let count = old.len() + new.len();
+    let (ops, budget) = if count > MAX_WORDS || count > budget {
+        (vec![DiffOp::Replace { old_index: 0, old_len: old.len(), new_index: 0, new_len: new.len() }], budget)
+    } else {
+        (capture_diff_slices(Algorithm::Myers, &texts(old), &texts(new)), budget - count)
+    };
+    (marked(&ops, old, DiffOp::old_range), marked(&ops, new, DiffOp::new_range), budget)
 }
 
 fn texts<'a>(words: &[Word<'a>]) -> Vec<&'a str> {
@@ -253,7 +272,7 @@ mod tests {
 
     /// The text each range covers in the section's plain text.
     fn marked_text(section: &Section, ranges: &[Range<usize>]) -> Vec<String> {
-        let text: Vec<char> = plain_lines(section).concat().chars().collect();
+        let text: Vec<char> = lines(section).map(Line::plain).collect::<String>().chars().collect();
         ranges.iter().map(|range| text[range.clone()].iter().collect()).collect()
     }
 
@@ -327,12 +346,48 @@ mod tests {
     }
 
     #[test]
-    fn past_the_deadline_what_differs_is_marked_whole() {
-        let (old, new) = ("a b c d\n", "a x c y\n");
-        let expired = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+    fn spacing_inside_a_line_and_written_box_characters_are_changes() {
+        for (old, new) in [("a+b\n", "a + b\n"), ("f(x)\n", "f (x)\n"), ("a, b\n", "a ,b\n"), ("a \u{2500} b\n", "a b\n")] {
+            assert_eq!(outcomes(&diff(old, new)), ["changed"], "{old:?} -> {new:?}");
+        }
+        assert_eq!(marked_words(&diff("see \u{2502} here\n", "see here\n")).0, ["\u{2502}"]);
+    }
 
-        assert_eq!(marked_words(&diff(old, new)), (texts(&["b", "d"]), texts(&["x", "y"])));
-        assert_eq!(marked_words(&sections_within(old, new, &test_settings(), expired)), (texts(&["b c d"]), texts(&["x c y"])));
+    #[test]
+    fn a_paragraph_rewrapped_with_wider_spaces_is_the_same() {
+        assert_eq!(outcomes(&diff("one  two\nthree\n", "one two three\n")), ["same"]);
+    }
+
+    #[test]
+    fn past_the_section_limit_only_equal_ends_pair_as_same() {
+        let ops = ends_only(&[1, 2, 3, 4], &[1, 9, 8, 4]);
+
+        assert_eq!(
+            ops.iter().map(|op| (op.tag(), op.old_range(), op.new_range())).collect::<Vec<_>>(),
+            [(DiffTag::Equal, 0..1, 0..1), (DiffTag::Replace, 1..3, 1..3), (DiffTag::Equal, 3..4, 3..4)]
+        );
+        assert_eq!(ends_only(&[1, 2], &[1, 2]).len(), 1);
+    }
+
+    #[test]
+    fn pairs_past_the_word_budget_are_marked_whole() {
+        let paragraph = |word: &str| format!("{}\n\n", "word ".repeat(MAX_WORDS / 2 - 1) + word);
+        let old: String = ["a", "b", "c"].map(paragraph).concat();
+        let new: String = ["x", "y", "z"].map(paragraph).concat();
+
+        let changes = diff_at(&old, &new, 1000);
+
+        let marks: Vec<usize> =
+            changes.iter().map(|change| if let SectionChange::Changed { old_words, .. } = change { old_words.len() } else { 0 }).collect();
+        assert_eq!(&marks[..2], [1, 1]);
+        assert!(marks[2] > 1, "{marks:?}");
+    }
+
+    #[test]
+    fn the_same_input_gives_the_same_output() {
+        let new = README.replace("once", "twice") + "\n" + MERMAID;
+
+        assert_eq!(diff(README, &new), diff(README, &new));
     }
 
     #[test]
@@ -391,5 +446,10 @@ mod tests {
         assert!(diff("", README).iter().all(|change| matches!(change, SectionChange::Added(_))));
         assert!(diff(README, "").iter().all(|change| matches!(change, SectionChange::Removed(_))));
         assert_eq!(diff(README, README).len(), 6);
+    }
+
+    #[test]
+    fn an_item_inserted_above_renumbers_the_rest_and_keeps_them_the_same() {
+        assert_eq!(outcomes(&diff("1. a\n2. b\n", "1. new\n2. a\n3. b\n")), ["added", "same", "same"]);
     }
 }

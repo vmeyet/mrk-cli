@@ -46,19 +46,33 @@ pub struct Section {
 }
 
 /// A top-level node's sections and the spacing between them: one section, or one per list item.
-pub(super) struct Group {
-    pub spacing: Spacing,
-    pub sections: Vec<Section>,
+pub(super) enum Group {
+    Sections {
+        spacing: Spacing,
+        sections: Vec<Section>,
+    },
+    /// A node the enabled extensions never put at the top level: drawn as its children, it is no section.
+    Unsectioned(Vec<Block>),
 }
 
 impl Group {
     fn single(section: Section) -> Self {
-        Self { spacing: Spacing::Loose, sections: vec![section] }
+        Self::Sections { spacing: Spacing::Loose, sections: vec![section] }
     }
 
     /// The group as `render` stacks it.
     pub fn stacked(self) -> Vec<Block> {
-        layout::stack(self.sections.into_iter().map(|section| section.blocks), self.spacing)
+        match self {
+            Self::Sections { spacing, sections } => layout::stack(sections.into_iter().map(|section| section.blocks), spacing),
+            Self::Unsectioned(blocks) => blocks,
+        }
+    }
+
+    pub fn sections(self) -> Vec<Section> {
+        match self {
+            Self::Sections { sections, .. } => sections,
+            Self::Unsectioned(_) => Vec::new(),
+        }
     }
 }
 
@@ -73,13 +87,18 @@ fn code_kind(code: &NodeCodeBlock) -> SectionKind {
     }
 }
 
+fn item_kind<'a>(item: &'a AstNode<'a>) -> SectionKind {
+    match &item.data().value {
+        NodeValue::TaskItem(task) => SectionKind::ListItem { task: Some(task.symbol.is_some()) },
+        _ => SectionKind::ListItem { task: None },
+    }
+}
+
 /// `None` for a node the enabled Markdown extensions never put at the top level.
 fn kind<'a>(node: &'a AstNode<'a>) -> Option<SectionKind> {
     let kind = match &node.data().value {
         NodeValue::FrontMatter(_) => SectionKind::FrontMatter,
         NodeValue::Heading(heading) => SectionKind::Heading { level: heading.level },
-        NodeValue::Item(_) => SectionKind::ListItem { task: None },
-        NodeValue::TaskItem(task) => SectionKind::ListItem { task: Some(task.symbol.is_some()) },
         NodeValue::BlockQuote => SectionKind::Quote,
         NodeValue::Alert(_) => SectionKind::Alert,
         NodeValue::CodeBlock(code) => code_kind(code),
@@ -104,20 +123,22 @@ fn last_written_line(first_line: usize, last_line: usize, written: &[bool]) -> u
     (first_line..=last_line).rev().find(is_written).unwrap_or(first_line)
 }
 
-fn section<'a>(node: &'a AstNode<'a>, blocks: Vec<Block>, written: &[bool]) -> Option<Section> {
+fn section<'a>(node: &'a AstNode<'a>, kind: SectionKind, blocks: Vec<Block>, written: &[bool]) -> Section {
     let position = node.data().sourcepos;
     let last_line = last_written_line(position.start.line, position.end.line, written);
-    Some(Section { first_line: position.start.line, last_line, kind: kind(node)?, blocks })
+    Section { first_line: position.start.line, last_line, kind, blocks }
 }
 
 fn group<'a>(node: &'a AstNode<'a>, written: &[bool], context: &Context) -> Group {
-    match &node.data().value {
-        NodeValue::List(list) => {
-            let items = node.children().zip(list::items(node, list, context));
-            let sections = items.filter_map(|(item, blocks)| section(item, blocks, written)).collect();
-            Group { spacing: list::spacing(list), sections }
-        }
-        _ => Group { spacing: Spacing::Loose, sections: section(node, super::block(node, context), written).into_iter().collect() },
+    if let NodeValue::List(list) = &node.data().value {
+        let items = node.children().zip(list::items(node, list, context));
+        let sections = items.map(|(item, blocks)| section(item, item_kind(item), blocks, written)).collect();
+        return Group::Sections { spacing: list::spacing(list), sections };
+    }
+    let blocks = super::block(node, context);
+    match kind(node) {
+        Some(kind) => Group::single(section(node, kind, blocks, written)),
+        None => Group::Unsectioned(blocks),
     }
 }
 
