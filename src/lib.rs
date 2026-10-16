@@ -13,7 +13,6 @@ mod snapshot;
 pub mod terminal;
 pub mod text;
 pub mod theme;
-pub mod version;
 
 /// Runs the Rust snippets of `docs/library.md` as doctests, so the guide compiles against the API it describes.
 #[cfg(doctest)]

@@ -12,7 +12,7 @@ const MAX_SUBGRAPH_DEPTH: usize = 16;
 const MAX_LINKS: usize = 150;
 const MAX_MESSAGES: usize = 400;
 const MAX_ELEMENTS: usize = 600;
-const MAX_STATEMENTS: usize = 100;
+const MAX_EDGES: usize = 100;
 /// mermaid-text lays class diagrams out far slower than any other kind: 40 relations took it 2.8 s.
 const MAX_RELATIONS: usize = 32;
 /// What a document's diagrams may cost together, in milliseconds of layout at the slowest rate measured for what
@@ -35,8 +35,8 @@ pub enum Load {
     Messages,
     /// Nodes, edges, subgraphs, commits and C4 shapes and relations, for the diagrams laid out in rows or rings.
     Elements,
-    /// Edges, and nodes on none, as the text engine is given them: `a & b --> c & d` is four.
-    Statements,
+    /// Edges, nodes on none and subgraphs, as the text engine is given them: `a & b --> c & d` is four.
+    Edges,
     /// Relations of a class diagram, whose members cost mermaid-text little.
     Relations,
 }
@@ -47,7 +47,7 @@ impl Load {
             Self::Links => MAX_LINKS,
             Self::Messages => MAX_MESSAGES,
             Self::Elements => MAX_ELEMENTS,
-            Self::Statements => MAX_STATEMENTS,
+            Self::Edges => MAX_EDGES,
             Self::Relations => MAX_RELATIONS,
         }
     }
@@ -57,7 +57,7 @@ impl Load {
             Self::Links => "links",
             Self::Messages => "messages",
             Self::Elements => "elements",
-            Self::Statements => "statements",
+            Self::Edges => "edges",
             Self::Relations => "relations",
         }
     }
@@ -67,7 +67,7 @@ impl Load {
     fn cost_ms(self, count: usize) -> usize {
         match self {
             Self::Links => count * count / 7,
-            Self::Statements => count * count / 8,
+            Self::Edges => count * count / 8,
             Self::Relations => count * count * 7 / 4,
             Self::Messages | Self::Elements => count,
         }
@@ -192,7 +192,7 @@ fn graph_text_load(graph: &Graph) -> Option<(Load, usize)> {
         _ => {
             let joined: HashSet<&str> = graph.edges.iter().flat_map(|edge| [edge.from.as_str(), edge.to.as_str()]).collect();
             let alone = graph.nodes.keys().filter(|node| !joined.contains(node.as_str())).count();
-            Some((Load::Statements, graph.edges.len() + alone + graph.subgraphs.len()))
+            Some((Load::Edges, graph.edges.len() + alone + graph.subgraphs.len()))
         }
     }
 }
@@ -204,7 +204,7 @@ fn scanned_text_load(source: &str) -> Option<(Load, usize)> {
     } else if header.starts_with("classDiagram") {
         Some((Load::Relations, statements(source).map(|statement| edges_in(statement, &CLASS_ARROWS)).sum()))
     } else {
-        Some((Load::Statements, statements(source).skip(1).map(|statement| edges_in(statement, &ARROWS).max(1)).sum()))
+        Some((Load::Edges, statements(source).skip(1).map(|statement| edges_in(statement, &ARROWS).max(1)).sum()))
     }
 }
 
@@ -307,7 +307,7 @@ mod tests {
         let flowchart = chain(40, "a");
 
         assert_eq!(cost(&flowchart, true), Load::Links.cost_ms(41 + 40) + PICTURE_COST_MS);
-        assert_eq!(cost(&flowchart, false), Load::Statements.cost_ms(40));
+        assert_eq!(cost(&flowchart, false), Load::Edges.cost_ms(40));
         assert_eq!(cost(&chain(3, "a"), false), MIN_COST_MS);
         assert_eq!(cost("pie\n  \"a\" : 1", false), MIN_COST_MS);
     }
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn each_diagram_that_fits_what_is_left_of_the_budget_is_let_through_in_reading_order() {
-        let large = |name: &str| chain(MAX_STATEMENTS - 1, name);
+        let large = |name: &str| chain(MAX_EDGES - 1, name);
         let large_cost = cost(&large("a"), false);
         let fitting = MAX_DOCUMENT_COST_MS / large_cost;
         let sources: Vec<String> = (0..=fitting).map(|index| large(&format!("d{index}_"))).chain([chain(1, "small")]).collect();
@@ -335,9 +335,9 @@ mod tests {
 
     #[test]
     fn a_repeated_diagram_costs_its_document_once() {
-        let large = chain(MAX_STATEMENTS, "a");
+        let large = chain(MAX_EDGES, "a");
         let repeats = MAX_DOCUMENT_COST_MS / cost(&large, false) + 1;
-        let last = chain(MAX_STATEMENTS, "b");
+        let last = chain(MAX_EDGES, "b");
 
         let allowance = Allowance::new(std::iter::repeat_n(large.clone(), repeats).chain([last.clone()]), false);
 
@@ -395,17 +395,17 @@ mod tests {
 
     #[test]
     fn the_text_engine_counts_the_parsed_edges_and_lone_nodes() {
-        assert_eq!(graph_text_load(&graph("graph TD\n  a --> b --> c\n  d; e")), Some((Load::Statements, 2 + 2)));
-        assert_eq!(graph_text_load(&graph("graph TD\n  a & b & c --> d & e & f")), Some((Load::Statements, 9)));
+        assert_eq!(graph_text_load(&graph("graph TD\n  a --> b --> c\n  d; e")), Some((Load::Edges, 2 + 2)));
+        assert_eq!(graph_text_load(&graph("graph TD\n  a & b & c --> d & e & f")), Some((Load::Edges, 9)));
         assert_eq!(graph_text_load(&graph("sequenceDiagram\n  a ->> b: hi")), None);
-        assert_eq!(admit_text(&chain(MAX_STATEMENTS, "n")), Ok(()));
-        assert_eq!(admit_text(&chain(MAX_STATEMENTS + 1, "n")), Err(DiagramError::OverBudget(Load::Statements)));
+        assert_eq!(admit_text(&chain(MAX_EDGES, "n")), Ok(()));
+        assert_eq!(admit_text(&chain(MAX_EDGES + 1, "n")), Err(DiagramError::OverBudget(Load::Edges)));
     }
 
     #[test]
     fn the_scan_for_syntax_mermaid_rs_renderer_refuses_counts_every_fanned_out_edge() {
-        assert_eq!(scanned_text_load("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), Some((Load::Statements, 2 + 1 + 1)));
-        assert_eq!(scanned_text_load("graph TD\n  a & b & c --> d & e --> f"), Some((Load::Statements, 3 * 2 + 2)));
+        assert_eq!(scanned_text_load("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), Some((Load::Edges, 2 + 1 + 1)));
+        assert_eq!(scanned_text_load("graph TD\n  a & b & c --> d & e --> f"), Some((Load::Edges, 3 * 2 + 2)));
         assert_eq!(scanned_text_load(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000))), None);
         assert_eq!(
             scanned_text_load("%% why\nclassDiagram\n  class A {\n    +f() int\n  }\n  A & C --> B\n  B ..> C"),
@@ -418,7 +418,7 @@ mod tests {
         let fanned = edges(12, |index| format!("a{index} & b{index} & c{index} --> d{index} & e{index} & f{index}"));
 
         assert_eq!(picture_graph(&fanned).unwrap_err(), DiagramError::OverBudget(Load::Links));
-        assert_eq!(admit_text(&fanned), Err(DiagramError::OverBudget(Load::Statements)));
+        assert_eq!(admit_text(&fanned), Err(DiagramError::OverBudget(Load::Edges)));
     }
 
     #[test]

@@ -5,46 +5,73 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `--help`, the man page and the reference list the exit codes 128 + signal: 130 or 131 when Ctrl-C or Ctrl-\\ ends `MRK_PAGER`, 130 or 143 when Ctrl-C or `SIGTERM` stops `mrk update`.
+- Library: `Settings` has a `Default`.
+- Library: `Line::printable` and `document::printable` give text safe to print.
+- Library: `Settings::diagram_deadline` gives a document's diagrams a deadline; without it, layout runs on the calling thread with no clock, so the same input gives the same document.
+- Library: `Span::is_frame` marks what mrk draws around the input's text: bars, borders, markers, padding.
+- Library: `mermaid::is_catching` tells a panic hook to leave out a renderer panic mrk catches; the library installs no hook.
+
 ### Changed
 
-- Library: `sanitize` is part of the core, without the `cli` feature, and `Line::printable` gives a line's text safe to print; `theme::Choice::new` fails with a typed `theme::UnknownTheme`.
-- Library: the binary's `cli`, `config` and `update` modules, `theme::test_settings` and `theme::DEFAULT_WIDTH` are no longer public.
 - `--width`, `MRK_WIDTH` and `width` take 20 to 1000 columns; an absurd width exits with 2 instead of panicking.
 - A config file that exists but cannot be read exits with 2, like one that does not parse.
-- `mrk update` through brew reinstalls with `--force`, and fails when the tap has not caught up with the release instead of reporting an update; through cargo it builds in a temporary folder removed afterwards, even when `CARGO_TARGET_DIR` is set.
-- `mrk --version` shows `unknown` rather than another repository's commit when mrk is built from inside it.
-- Mermaid: a document's diagrams share a budget of 12 s of layout, charged at the slowest rate measured for what each one counts, a diagram that does not fit what is left shown as source; a flowchart draws as a picture up to 150 links, as text up to 100 edges, `a & b --> c & d` counting all four. A pager resize lays no picture out again.
-- Library: Mermaid layout runs on the calling thread with no clock, so the same input gives the same document; `Settings::diagram_deadline` opts into a deadline for a document's diagrams, which the binary sets 10 s after each render starts. The library installs no panic hook: `mermaid::is_catching` tells a hook to leave a caught renderer panic out.
-- Library: `mermaid::DiagramError`, `mermaid::Load`, `raster::Svg`, `raster::FONT_FAMILY` and `raster::MAX_SIDE_PX` are no longer public.
 - `MRK_THEME`, `MRK_WIDTH` or `MRK_ALIGN` set but empty counts as unset.
-- `mrk update` through brew runs `brew update` first; through cargo it installs where the running mrk is, ends the whole build and removes its folder on Ctrl-C or `SIGTERM`, exiting 130 or 143, and checks that the `mrk` the PATH finds is the one installed; `HOMEBREW_NO_AUTO_UPDATE` skips `brew update`.
-- Ctrl-C and Ctrl-\\ belong to `MRK_PAGER` while it runs; a pager they end makes mrk exit quietly with 130.
-- Diagram labels in Latin no longer load every system font when no label family is installed; `Arial Bold.ttf` and the like count as their family.
-- Library: `markdown::render_blocks`, `SourceBlock`, `BlockKind`, `diff::blocks` and `BlockChange` are `render_sections`, `Section`, `SectionKind`, `diff::sections` and `SectionChange`; `Settings` has a `Default`, `Span::is_frame` marks what mrk draws around the input's text, and the enums likely to grow are `#[non_exhaustive]`.
-- A theme named in `theme_dark` or `theme_light` must exist even when `theme` wins, and a "did you mean" allows one edit per three typed characters, at least one, a swap of two neighbours counting as one.
+- A theme named in `theme_dark` or `theme_light` must exist even when `theme` wins; "did you mean" allows one edit per three typed characters, a swap of two neighbours counting as one.
+- `mrk --version` shows `unknown` rather than another repository's commit when mrk is built from inside it.
+- Ctrl-C and Ctrl-\\ belong to `MRK_PAGER` while it runs; a pager they end makes mrk exit quietly with 130 or 131.
+- `mrk update` through brew runs `brew update` first (`HOMEBREW_NO_AUTO_UPDATE` skips it), reinstalls with `--force`, and fails when the tap has not caught up with the release.
+- `mrk update` through cargo installs where the running mrk is, builds in a temporary folder removed afterwards, even on Ctrl-C or `SIGTERM`, and checks that the `mrk` the PATH finds is the one installed.
+- Mermaid: a flowchart draws as a picture up to 150 links and as text up to 100 edges, `a & b --> c & d` counting four; over a limit, the source shows with a note naming it.
+- Mermaid: a document's diagrams share 12 s of layout, charged at the slowest rate measured for what each one counts; a diagram that does not fit what is left shows as source.
+- Mermaid: each render gives its diagrams 10 s; a diagram still laying out then shows as source.
+- A pager resize lays no picture out again.
+- Pager pictures through tmux need true colour.
+
+**Breaking** for library users:
+
+- `mrk::terminal::sanitize` is `mrk::sanitize`, part of the core without the `cli` feature.
+- `mrk::cli`, `mrk::config`, `mrk::update` and `mrk::version` are gone, with `theme::test_settings`, `theme::DEFAULT_WIDTH`, `text::TAB`, `text::WIDEST_GRAPHEME` and `text::is_forbidden`.
+- `markdown::render_blocks`, `SourceBlock`, `BlockKind`, `diff::blocks` and `BlockChange` are `render_sections`, `Section`, `SectionKind`, `diff::sections` and `SectionChange`.
+- `theme::Choice::new` fails with a typed `theme::UnknownTheme`.
+- `Settings::diagram_deadline` and `Span::is_frame` are new fields: a struct literal sets them or ends with `..Default::default()`.
+- `mermaid::DiagramError`, `mermaid::Load`, `raster::Svg`, `raster::FONT_FAMILY` and `raster::MAX_SIDE_PX` are no longer public.
+- The enums likely to grow are `#[non_exhaustive]`.
 
 ### Fixed
 
-- A relative link (`[guide](docs/guide.md)`) shows its target after the text even when hyperlinks are on, since no terminal can open it; a `#fragment` never does.
-- HTML blocks and front matter keep their runs of spaces (`name:    mrk`) and still wrap at spaces.
-- A diff marks changed words line by line, never the bars, borders, markers or `↪` mrk draws, keeps a renumbered list item the same, sees a change of spacing inside a line, and is bounded by counts: a pair over 20,000 words, the pairs past 50,000 words per diff, or more than 10,000 sections are compared coarsely.
+- Ordered tasks show their number before `✔` or `○`.
+- `www.` autolinks no longer repeat their target.
+- A link whose text is its target no longer repeats it as ` <target>`.
+- A relative link (`[guide](docs/guide.md)`) shows its target, muted, even when hyperlinks are on, since no terminal can open it; a `#fragment` never does, nor an image when hyperlinks are on.
+- A table with only a header row shows its names when drawn as records, and narrow nesting keeps its markers.
+- Front matter keys are no longer bold, and front matter and HTML blocks keep their runs of spaces (`name:    mrk`), still wrapping at spaces.
 - Widths count a grapheme as printed, so tag characters no longer shrink a table cell.
-- Source lines of `render_sections` are right for files with CR-only line endings.
 - A tab in inline code stops on the column it lands on, and `sanitize::text` places a tab after a removed newline on the joined line.
-
-### Fixed
-
-- The pager gives the terminal back on `SIGTERM`, `SIGHUP`, `SIGINT` or `SIGQUIT` at once, even while it renders a new width, and a signal after `q` is no longer swallowed.
-- Pager pictures through tmux keep ids of their own across panes, and a Sixel picture no longer loses its bottom pixel rows.
+- Terminal queries are skipped when mrk runs in the background, so `mrk file &` no longer stops, and keys typed meanwhile no longer hide the replies.
 - Alt-modified keys and terminal replies that arrive late no longer act as pager keys; alternate scroll is only touched on terminals that restore it.
+- The pager gives the terminal back at once on `SIGTERM`, `SIGHUP`, `SIGINT` or `SIGQUIT`, even while it renders a new width, and a signal after `q` is no longer swallowed.
+- A picture taller than the window is drawn in runs, so it lands under its rows.
+- In the pager, the current search match stays on the same words after a resize.
+- Pager pictures through tmux keep ids of their own across panes, the pager frees only the pictures it sent, and a Sixel picture no longer loses its bottom pixel rows.
 - A panic on any thread while the pager runs is printed, sanitized, once the terminal is back.
+- An error cause over several lines keeps its lines, indented.
+- Diagram labels in Latin no longer load every system font when no label family is installed; `Arial Bold.ttf` and the like count as their family.
+- Library: a diff marks changed words line by line, never the bars, borders, markers or `↪` mrk draws, keeps a renumbered list item the same and sees a change of spacing inside a line.
+- Library: a diff is bounded by counts: a pair over 20,000 words or over what is left of the 50,000 words a diff compares, and a diff over 10,000 sections, are compared coarsely.
+- Library: source lines of `render_sections` are right for files with CR-only line endings.
+- The documentation examples are back, and every relative link and anchor in the documentation is checked.
 
 ### Security
 
+- Diagram fonts are read only from the font directories, and only font files.
 - `mrk update` installs the commit the release tag pointed at when listed, so a tag moved meanwhile cannot change what builds.
 - A `file:` link to another host (`file://host/share`) is no longer clickable, since opening it can send the user's credentials to that host.
 - `sanitize` also removes the word joiner, the byte order mark and tag characters, which hide inside a name, and writes the line and paragraph separators as a space.
 - Panic reports are sanitized like every other stderr line, and `--help` no longer echoes environment values.
+- CI pins every action to a commit, runs with read-only tokens, and builds the static Linux release on every pull request.
 
 ## [0.7.0] - 2026-10-06
 

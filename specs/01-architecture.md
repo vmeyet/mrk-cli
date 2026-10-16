@@ -4,8 +4,8 @@ Package `mrk-cli` (`mrk` is taken on crates.io), library crate `mrk`, binary `mr
 
 ## Features
 
-- `cli` (default): the library's `terminal` module and the binary, whose own `cli`, `config` and `update` modules are no part of the library, with `anyhow`, `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `toml`, `serde`, `shell-words`, `signal-hook` (already in the tree through crossterm), `rustix`, `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
-- Always on, the library core: `document`, `text`, `sanitize`, `theme`, `markdown`, `diff`, `code`, `mermaid`, `raster`, `version`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
+- `cli` (default): the library's `terminal` module and the binary, whose own `cli`, `config`, `update` and `version` modules are no part of the library, with `anyhow`, `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `toml`, `serde`, `shell-words`, `signal-hook` (already in the tree through crossterm), `rustix` (on unix), `tempfile` (`mrk update`'s build folder), `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
+- Always on, the library core: `document`, `text`, `sanitize`, `theme`, `markdown`, `diff`, `code`, `mermaid`, `raster`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
   The core returns typed errors (`theme::UnknownTheme`, `raster::RasterError`); the binary adds its own wording.
 
 ## Pipeline
@@ -31,7 +31,7 @@ main ─▶ cli::run
 build.rs           embeds the git commit as GIT_HASH for version.rs, only when the package is the root of its git checkout (a vendored copy reports `unknown`)
 assets/fonts/      MrkSans.ttf, rebuilt by scripts/last-resort-font, and the DejaVu license it ships under
 src/
-  main.rs          the binary: declares `cli`, `config`, `update`, installs the panic hook, calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
+  main.rs          the binary: declares `cli`, `config`, `update`, `version`, installs the panic hook, calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
   lib.rs           the library's module list; `terminal` behind the `cli` feature
   cli/             clap arguments, precedence flags > env > config, orchestration
     environment.rs MRK_THEME, MRK_WIDTH, MRK_ALIGN, read outside clap so an empty one counts as unset and --help shows no value
@@ -43,7 +43,7 @@ src/
   config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected); the width bounds MIN_WIDTH 20, MAX_WIDTH 1000 and DEFAULT_WIDTH 100
   diff.rs          sections(): two versions of a file rendered with render_sections, paired section by section, changed words as char ranges (similar)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight(); Line::printable() is the text safe to print
-  sanitize.rs      text, lines, link: what may reach a terminal, for the binary and library users alike
+  sanitize.rs      text, lines, link: what may reach a terminal, for the binary and library users alike; the characters removed, which display_width counts as none
   snapshot.rs      tests only: a Document as terminal::ansi writes it, what colour snapshots compare
   text.rs          display_width, cut, wrap (at spaces), hard_wrap (where a line is full, for code and source), expand_tabs
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names, UnknownTheme
@@ -97,13 +97,13 @@ src/
 - `diff::sections(old: &str, new: &str, settings: &Settings) -> Vec<SectionChange>`: both sides through `render_sections`, in reading order, each section of a side exactly once.
   Sections are equal when their kind, their lines (every `Lines` and `DoubleHeight` line, line by line) and their pictures' PNG are. A line is compared by the input's text: its frame spans (`Span::is_frame`: bars, borders, rules, markers, padding, the continuation sign, all that mrk draws) count as one space each, and runs of spaces as one, trimmed, except in code, Mermaid, front matter and HTML, whose spacing is the input's; so a renumbered list stays `Same`, and `a+b` against `a + b` or a box character the input wrote is a change. `similar`'s Patience diff gives `Same`, and in each run of differing sections a removed section pairs with the next added section of the same `SectionKind` variant (a heading's level, a task's state, a fence's language may differ) into `Changed`, the others being `Removed` or `Added`.
   A `Changed` pair carries char ranges of its plain text (`Line::plain` of each line, joined), ready for `document::highlight`: a Myers diff over the words and punctuation outside the frame, each run of changed words one range that never crosses a line end or a frame span; none for Mermaid.
-  The work is bounded by counts, never by the clock, so the same files always give the same answer (`02-security.md` rule 4): past 10,000 sections, both sides counted, only the equal sections at the start and the end pair as `Same`; a pair over 20,000 words, both sides counted, and every pair after 50,000 words diffed in one call, is marked whole, every word of each line.
+  The work is bounded by counts, never by the clock, so the same files always give the same answer (`02-security.md` rule 4): past 10,000 sections, both sides counted, only the equal sections at the start and the end pair as `Same`; a pair over 20,000 words, both sides counted, or over what is left of the 50,000 words one call diffs, is marked whole, every word of each line, and spends nothing, so a smaller pair after it is still diffed.
   It returns ranges, never colours.
 - `document::highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line>`: ranges are char offsets into the lines' plain text joined with no separator, in any order; spans split at range edges and keep their link, text and widths never change. The pager search paints its matches with it.
 - `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells, or `document::MIN_WIDTH` when that is narrower.
   `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `SectionKind::Code`.
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
-  Each engine only sees a diagram within its count of `02-security.md` rule 4; over a count, the note names the limit (`mermaid: over 100 statements, too many to lay out`).
+  Each engine only sees a diagram within its count of `02-security.md` rule 4; over a count, the note names the limit (`mermaid: over 100 edges, too many to lay out`).
   Within a document `markdown` also applies the document's budget of rule 4 (`mermaid: over the 12 s of layout a document's diagrams share`).
   With `settings.diagram_deadline` set (the binary sets it 10 s after a render starts), each engine runs on a thread of its own, a diagram still laying out at that moment says `too slow to lay out` and one not started yet `out of time for the document's diagrams`; without, every diagram lays out on the calling thread.
 - `raster::line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) -> Result<Picture, RasterError>`: the text in bold `font-weight` on a transparent PNG `rows` cells tall and as many whole cells wide as it needs, shrunk to fit `max_cols`; the crate's `raster::Svg` parses and draws mermaid's SVG the same way.

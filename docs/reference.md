@@ -58,11 +58,12 @@ The mouse wheel scrolls on terminals that send it as arrow keys in the alternate
 
 ## Exit status
 
-| Code | Meaning                                                                            |
-| ---: | :--------------------------------------------------------------------------------- |
-|    0 | success                                                                            |
-|    1 | a failure while running, such as a file that cannot be read                        |
-|    2 | a usage mistake: a bad flag, environment value or config file, or an unknown theme |
+|         Code | Meaning                                                                                                                                         |
+| -----------: | :---------------------------------------------------------------------------------------------------------------------------------------------- |
+|            0 | success                                                                                                                                         |
+|            1 | a failure while running, such as a file that cannot be read                                                                                     |
+|            2 | a usage mistake: a bad flag, environment value or config file, or an unknown theme                                                              |
+| 128 + signal | a signal stopped a command mrk ran: `Ctrl-C` (130) or `Ctrl-\` (131) ending `MRK_PAGER`, `Ctrl-C` (130) or `SIGTERM` (143) stopping `mrk update` |
 
 ## Shell completions and man page
 

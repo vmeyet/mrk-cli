@@ -26,7 +26,7 @@ const TERMINAL_MARK: &str = " (your terminal)";
 
 /// Render Markdown beautifully in the terminal.
 #[derive(Parser, Debug)]
-#[command(name = "mrk", version = mrk::version::label(), about, after_long_help = help::text(), args_conflicts_with_subcommands = true)]
+#[command(name = "mrk", version = crate::version::label(), about, after_long_help = help::text(), args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,

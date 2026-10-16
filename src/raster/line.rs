@@ -1,6 +1,6 @@
 use super::{FONT_FAMILY, MAX_SIDE_PX, RasterError, Svg};
 use crate::document::{CellSize, Line, Picture, Rgb};
-use crate::text;
+use crate::sanitize;
 
 /// Font size per pixel of picture height, leaving room for ascenders above and descenders below the baseline.
 const FONT_SIZE_PER_HEIGHT: f32 = 0.75;
@@ -43,7 +43,7 @@ fn svg(text: &str, color: Rgb, font_size: f32, width_px: f32, height_px: u32) ->
 /// copy dropped, controls that XML forbids among them.
 fn escaped(text: &str) -> String {
     text.chars()
-        .filter(|&character| !text::is_forbidden(character))
+        .filter(|&character| !sanitize::is_forbidden(character))
         .map(|character| match character {
             '&' => "&amp;".to_owned(),
             '<' => "&lt;".to_owned(),

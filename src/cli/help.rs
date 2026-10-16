@@ -41,6 +41,10 @@ fn sections() -> [Section; 4] {
                 ("0", "success"),
                 ("1", "a failure while running, such as a file that cannot be read"),
                 ("2", "a usage mistake: a bad flag, environment value or config file, or an unknown theme"),
+                (
+                    "128 + signal",
+                    "a signal stopped a command mrk ran: Ctrl-C (130) or Ctrl-\\ (131) ending MRK_PAGER, Ctrl-C (130) or SIGTERM (143) stopping mrk update",
+                ),
             ]),
         },
     ]
@@ -81,7 +85,8 @@ mod tests {
 
         assert!(text.contains("Pager keys:\nIn the built-in pager (-p):\n"), "{text}");
         assert!(text.contains("  q, Esc, Ctrl-c"), "{text}");
-        assert!(text.contains("  0  success\n  1  a failure"), "{text}");
+        assert!(text.contains("  0             success\n  1             a failure"), "{text}");
+        assert!(text.contains("  128 + signal  a signal stopped"), "{text}");
     }
 
     #[test]
