@@ -11,6 +11,7 @@ fn mrk() -> Command {
     command
         .env_remove("MRK_THEME")
         .env_remove("MRK_WIDTH")
+        .env_remove("MRK_ALIGN")
         .env("XDG_CONFIG_HOME", env!("CARGO_TARGET_TMPDIR"))
         .env("HOME", env!("CARGO_TARGET_TMPDIR"));
     command
@@ -234,6 +235,40 @@ fn a_closed_pipe_exits_quietly() {
 
     assert!(output.status.success(), "{output:?}");
     assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn completions_into_a_closed_pipe_exit_quietly() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_mrk")).args(["--completions", "zsh"]).stdout(writer).output().unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn a_flag_makes_a_bad_environment_value_irrelevant() {
+    mrk().env("MRK_WIDTH", "abc").env("MRK_ALIGN", "up").args(["--width", "50", "--align", "left"]).write_stdin("# hi").assert().success();
+    mrk().env("MRK_WIDTH", "abc").write_stdin("# hi").assert().code(2).stderr(predicate::str::contains("MRK_WIDTH"));
+}
+
+#[test]
+fn an_environment_variable_set_but_empty_counts_as_unset() {
+    let plain = mrk().write_stdin("# hi").assert().success().get_output().stdout.clone();
+
+    mrk().env("MRK_THEME", "").env("MRK_WIDTH", "").env("MRK_ALIGN", "").write_stdin("# hi").assert().success().stdout(plain);
+}
+
+#[test]
+fn the_help_never_shows_an_environment_value() {
+    mrk()
+        .env("MRK_THEME", "a-theme-from-the-environment")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("MRK_THEME").and(predicate::str::contains("a-theme-from-the-environment").not()));
 }
 
 #[test]

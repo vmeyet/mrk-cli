@@ -1,16 +1,23 @@
 use std::io::{self, BufWriter, Write};
+use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use mrk::document::{Document, Settings};
 use mrk::terminal::pager::{self, Rendered, Session};
 use mrk::terminal::{self, Align, Capabilities};
 use mrk::theme::Theme;
+use signal_hook::consts::{SIGINT, SIGQUIT};
 
 use super::UsageError;
+use super::signals::{Held, Interrupted};
 use crate::config::{DEFAULT_WIDTH, MIN_WIDTH};
 
 const SIDE_MARGINS: usize = 4;
+/// How long one render may spend on diagrams, those left showing as source: the budget keeps a document it lets through
+/// under it on this machine, a slower one may reach it (`specs/02-security.md` rule 4).
+const DIAGRAMS_TIME: Duration = Duration::from_secs(10);
 
 /// Where the rendered document goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,6 +70,7 @@ impl Layout {
             cell: capabilities.graphics.map(|graphics| graphics.cell),
             hyperlinks: capabilities.hyperlinks,
             jumbo_title: if self.jumbo_title { terminal::jumbo_title(&capabilities) } else { None },
+            diagram_deadline: Some(Instant::now() + DIAGRAMS_TIME),
         };
 
         let margin = terminal::margin(self.align, &capabilities, settings.width);
@@ -86,13 +94,19 @@ pub fn print(document: &Document, capabilities: &Capabilities, margin: usize) ->
     ignore_broken_pipe(written).context("writing to stdout")
 }
 
+/// Ctrl-C and Ctrl-\\ belong to the pager while it runs, as with git: ending mrk would leave it reading a terminal
+/// the shell takes back. A pager they end ends mrk as quietly.
 fn pipe(words: &[String], layout: &Layout) -> Result<()> {
     let Some((program, arguments)) = words.split_first() else { bail!("MRK_PAGER is empty") };
     let Rendered { document, margin } = layout.render(layout.capabilities.columns);
+    let _held = Held::hold(&[SIGINT, SIGQUIT]).context("holding Ctrl-C for MRK_PAGER")?;
     let mut child =
         Command::new(program).args(arguments).stdin(Stdio::piped()).spawn().with_context(|| format!("starting MRK_PAGER {program}"))?;
     let written = child.stdin.take().map_or(Ok(()), |mut stdin| write_all(&mut stdin, &document, &layout.capabilities, margin));
     let status = child.wait().with_context(|| format!("waiting for MRK_PAGER {program}"))?;
+    if let Some(signal) = status.signal().filter(|signal| [SIGINT, SIGQUIT].contains(signal)) {
+        return Err(Interrupted(signal).into());
+    }
     ignore_broken_pipe(written).context("writing to MRK_PAGER")?;
     if !status.success() {
         bail!("MRK_PAGER {program} failed: {status}");

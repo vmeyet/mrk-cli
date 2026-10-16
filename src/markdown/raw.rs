@@ -1,4 +1,4 @@
-use comrak::nodes::{AstNode, NodeCodeBlock};
+use comrak::nodes::{AstNode, NodeCodeBlock, NodeValue};
 
 use super::context::Context;
 use super::inline;
@@ -23,9 +23,17 @@ pub(super) fn flat<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
 pub(super) fn code(block: &NodeCodeBlock, context: &Context) -> Vec<Block> {
     let language = language(block);
     match language.as_deref() {
-        Some(MERMAID) => vec![crate::mermaid::render(&block.literal, &context.settings)],
+        Some(MERMAID) => vec![crate::mermaid::render_in_document(&block.literal, &context.settings, context.diagrams)],
         language => layout::lines(crate::code::render(&block.literal, language, &context.settings)),
     }
+}
+
+/// The source of every Mermaid block under `root`, in reading order.
+pub(super) fn diagrams<'a>(root: &'a AstNode<'a>) -> impl Iterator<Item = String> + 'a {
+    root.descendants().filter_map(|node| match &node.data().value {
+        NodeValue::CodeBlock(block) if language(block).as_deref() == Some(MERMAID) => Some(block.literal.clone()),
+        _ => None,
+    })
 }
 
 /// The language a fence names, lowercase: the first word of its info string (`rust,ignore`, `{.python}` and

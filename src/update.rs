@@ -1,13 +1,19 @@
 //! `mrk update`: where a newer mrk comes from, and whether the running one is already it.
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use mrk::version;
+use mrk::{sanitize, version};
+use signal_hook::consts::{SIGINT, SIGTERM};
+
+use crate::cli::signals::{self, Held};
 
 /// Where `mrk update` installs from.
 pub const REPO: &str = "https://github.com/vmeyet/mrk-cli";
+
+const BINARY: &str = "mrk";
 
 /// The Homebrew formula `mrk update` upgrades when brew installed the running binary.
 const FORMULA: &str = "vmeyet/tap/mrk";
@@ -73,6 +79,13 @@ struct Tag<'a> {
     is_peeled: bool,
 }
 
+impl Release {
+    /// `0.7.0 (a1b2c3d)`, as `mrk --version` shows it.
+    fn label(&self) -> String {
+        format!("{} ({})", self.version, version::short(&self.commit))
+    }
+}
+
 fn tag(line: &str) -> Option<Tag<'_>> {
     let (id, name) = line.split_once("\trefs/tags/v")?;
     let (name, is_peeled) = name.strip_suffix(PEELED_SUFFIX).map_or((name, false), |name| (name, true));
@@ -129,37 +142,121 @@ fn brew_lists(listing: &str, release: Version) -> bool {
     versions.filter_map(Version::parse).any(|installed| installed == release)
 }
 
-/// `brew upgrade` does nothing for the version already installed, so a forced update reinstalls. The tap's formula
-/// follows a release by a few minutes, so brew can succeed and still install an older version.
-fn install_with_brew(release: Version, force: bool) -> Result<()> {
-    let command = if force { "reinstall" } else { "upgrade" };
-    println!("→ brew {command} {FORMULA}…");
-    let status = Command::new("brew").args([command, FORMULA]).status().with_context(|| format!("running brew {command}"))?;
+fn run_brew(arguments: &[&str]) -> Result<()> {
+    let line = arguments.join(" ");
+    println!("→ brew {line}…");
+    let status = Command::new("brew").args(arguments).status().with_context(|| format!("running brew {line}"))?;
     if !status.success() {
-        bail!("brew {command} failed");
-    }
-    let mut list = Command::new("brew");
-    list.args(["list", "--versions", FORMULA]);
-    let listing = stdout_of(list)?;
-    if !brew_lists(&listing, release) {
-        bail!("brew installed {listing}, not {}: the tap has not caught up yet, try again in a few minutes", release.tag());
+        bail!("brew {line} failed");
     }
     Ok(())
 }
 
-/// Builds the release's commit in a temporary folder removed once done, whatever `CARGO_TARGET_DIR` says.
+/// brew reads the tap as it last fetched it, up to a day old, so it is fetched first unless the user turned that off.
+/// `brew upgrade` does nothing for the version already installed, so a forced update reinstalls. The tap's formula
+/// follows a release once its build is done, so brew can succeed and still install an older version.
+fn install_with_brew(release: Version, force: bool) -> Result<()> {
+    if std::env::var_os("HOMEBREW_NO_AUTO_UPDATE").is_some_and(|value| !value.is_empty()) {
+        println!("→ HOMEBREW_NO_AUTO_UPDATE is set: brew reads the tap as it last fetched it, which may miss the release");
+    } else {
+        run_brew(&["update"])?;
+    }
+    run_brew(&[if force { "reinstall" } else { "upgrade" }, FORMULA])?;
+    let mut list = Command::new("brew");
+    list.args(["list", "--versions", FORMULA]);
+    let listing = stdout_of(list)?;
+    if !brew_lists(&listing, release) {
+        bail!("brew installed {listing}, not {}: the tap's formula has not caught up with the release yet, try again later", release.tag());
+    }
+    Ok(())
+}
+
+/// Builds the release's commit in a temporary folder, whatever `CARGO_TARGET_DIR` says, removed once done, also when
+/// Ctrl-C or `SIGTERM` stops the build; installs it where the running mrk is, then checks what was installed and
+/// which `mrk` the `PATH` finds.
 fn install_with_cargo(release: &Release) -> Result<()> {
-    println!("→ installing mrk {} ({}) from {REPO}…", release.version.tag(), version::short(&release.commit));
+    println!("→ installing mrk {} from {REPO}…", release.label());
+    let root = install_root().context("finding where to install mrk")?;
+    let held = Held::hold(&[SIGINT, SIGTERM]).context("holding Ctrl-C during the build")?;
     let build = tempfile::Builder::new().prefix("mrk-update-").tempdir().context("creating a build folder")?;
-    let status = Command::new("cargo")
-        .args(["install", "--git", REPO, "--rev", &release.commit, "--force", "--locked", "--target-dir"])
-        .arg(build.path())
-        .status()
-        .context("running cargo install")?;
+    let mut cargo = Command::new("cargo");
+    cargo
+        .args(["install", "--git", REPO, "--rev", &release.commit, "--force", "--locked", "--root"])
+        .arg(&root)
+        .arg("--target-dir")
+        .arg(build.path());
+    let mut cargo = signals::spawn_alone(&mut cargo).context("running cargo install")?;
+    let status = match signals::wait_ending(&mut cargo, &held).context("waiting for cargo install")? {
+        Ok(status) => status,
+        Err(interrupted) => {
+            println!("→ stopped: nothing was installed, the build folder is removed");
+            return Err(interrupted.into());
+        }
+    };
     if !status.success() {
         bail!("cargo install failed");
     }
+    check_cargo_install(release, &root.join("bin").join(BINARY))
+}
+
+/// The folder whose `bin` holds the running mrk, so the update replaces it; else where cargo installs by default.
+fn install_root() -> Option<PathBuf> {
+    let running = std::env::current_exe().and_then(std::fs::canonicalize).ok();
+    running
+        .as_deref()
+        .and_then(root_of)
+        .or_else(|| cargo_root(std::env::var_os("CARGO_INSTALL_ROOT"), std::env::var_os("CARGO_HOME"), std::env::home_dir()))
+}
+
+/// `…/bin/mrk` is installed under `…`.
+fn root_of(binary: &Path) -> Option<PathBuf> {
+    let folder = binary.parent()?;
+    (folder.file_name()? == "bin").then(|| folder.parent().map(Path::to_path_buf)).flatten()
+}
+
+/// What the running mrk now reports must be the release, and it must be the `mrk` a shell runs.
+fn check_cargo_install(release: &Release, installed: &Path) -> Result<()> {
+    let mut ask = Command::new(installed);
+    ask.arg("--version");
+    let label = stdout_of(ask)?;
+    if !reports(&label, release) {
+        bail!("{} reports {label}, not {}", sanitize::text(&installed.display().to_string()), release.label());
+    }
+    match on_path(&std::env::var_os("PATH").unwrap_or_default()) {
+        Some(found) if is_same_file(&found, installed) => {}
+        Some(found) => {
+            println!(
+                "! `mrk` runs {}, not the one installed: put {} first in PATH",
+                sanitize::text(&found.display().to_string()),
+                parent(installed)
+            );
+        }
+        None => println!("! {} is not in PATH", parent(installed)),
+    }
     Ok(())
+}
+
+/// Where `cargo install` puts binaries by default: `$CARGO_INSTALL_ROOT`, else `$CARGO_HOME`, else `~/.cargo`.
+fn cargo_root(install_root: Option<OsString>, cargo_home: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+    install_root.or(cargo_home).map(PathBuf::from).or_else(|| home.map(|home| home.join(".cargo")))
+}
+
+/// The first `mrk` among the `PATH` folders, as a shell would run it.
+fn on_path(path: &OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path).map(|folder| folder.join(BINARY)).find(|candidate| candidate.is_file())
+}
+
+fn is_same_file(one: &Path, other: &Path) -> bool {
+    matches!((std::fs::canonicalize(one), std::fs::canonicalize(other)), (Ok(one), Ok(other)) if one == other)
+}
+
+fn parent(binary: &Path) -> String {
+    sanitize::text(&binary.parent().unwrap_or(binary).display().to_string())
+}
+
+/// `mrk --version` prints `mrk 0.7.0 (a1b2c3d)`, the commit being the one built.
+fn reports(label: &str, release: &Release) -> bool {
+    label == format!("{BINARY} {}", release.label())
 }
 
 /// Installs through brew when brew installed mrk, otherwise builds the release with cargo.
@@ -284,5 +381,47 @@ mod tests {
     fn a_repo_without_release_tags_has_no_newest_release() {
         assert_eq!(newest_release(""), None);
         assert_eq!(newest_release(&format!("{COMMIT}\trefs/tags/nightly")), None);
+    }
+
+    #[test]
+    fn cargo_installs_under_its_install_root_then_its_home_then_dot_cargo() {
+        let home = Some(PathBuf::from("/Users/nina"));
+
+        assert_eq!(cargo_root(Some("/opt/root".into()), Some("/opt/cargo".into()), home.clone()), Some(PathBuf::from("/opt/root")));
+        assert_eq!(cargo_root(None, Some("/opt/cargo".into()), home.clone()), Some(PathBuf::from("/opt/cargo")));
+        assert_eq!(cargo_root(None, None, home), Some(PathBuf::from("/Users/nina/.cargo")));
+        assert_eq!(cargo_root(None, None, None), None);
+    }
+
+    #[test]
+    fn the_update_installs_where_the_running_binary_is() {
+        assert_eq!(root_of(Path::new("/Users/nina/tools/bin/mrk")), Some(PathBuf::from("/Users/nina/tools")));
+        assert_eq!(root_of(Path::new("/Users/nina/target/release/mrk")), None);
+    }
+
+    #[test]
+    fn the_first_mrk_in_path_is_the_one_a_shell_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let folders = ["empty", "first", "second"].map(|name| root.path().join(name));
+        for folder in &folders {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        for folder in &folders[1..] {
+            std::fs::write(folder.join(BINARY), b"").unwrap();
+        }
+
+        let path = std::env::join_paths(&folders).unwrap();
+
+        assert_eq!(on_path(&path), Some(folders[1].join(BINARY)));
+        assert_eq!(on_path(&std::env::join_paths(&folders[..1]).unwrap()), None);
+    }
+
+    #[test]
+    fn the_installed_binary_must_report_the_release_and_its_commit() {
+        let installing = release("0.7.0", COMMIT);
+
+        assert!(reports("mrk 0.7.0 (2222222)", &installing));
+        assert!(!reports("mrk 0.7.0 (unknown)", &installing));
+        assert!(!reports("mrk 0.6.0 (2222222)", &installing));
     }
 }

@@ -13,6 +13,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A config file that exists but cannot be read exits with 2, like one that does not parse.
 - `mrk update` through brew reinstalls with `--force`, and fails when the tap has not caught up with the release instead of reporting an update; through cargo it builds in a temporary folder removed afterwards, even when `CARGO_TARGET_DIR` is set.
 - `mrk --version` shows `unknown` rather than another repository's commit when mrk is built from inside it.
+- Mermaid: a document's diagrams share a budget of 12 s of layout, charged at the slowest rate measured for what each one counts, a diagram that does not fit what is left shown as source; a flowchart draws as a picture up to 150 links, as text up to 100 edges, `a & b --> c & d` counting all four. A pager resize lays no picture out again.
+- Library: Mermaid layout runs on the calling thread with no clock, so the same input gives the same document; `Settings::diagram_deadline` opts into a deadline for a document's diagrams, which the binary sets 10 s after each render starts. The library installs no panic hook: `mermaid::is_catching` tells a hook to leave a caught renderer panic out.
+- Library: `mermaid::DiagramError`, `mermaid::Load`, `raster::Svg`, `raster::FONT_FAMILY` and `raster::MAX_SIDE_PX` are no longer public.
+- `MRK_THEME`, `MRK_WIDTH` or `MRK_ALIGN` set but empty counts as unset.
+- `mrk update` through brew runs `brew update` first; through cargo it installs where the running mrk is, ends the whole build and removes its folder on Ctrl-C or `SIGTERM`, exiting 130 or 143, and checks that the `mrk` the PATH finds is the one installed; `HOMEBREW_NO_AUTO_UPDATE` skips `brew update`.
+- Ctrl-C and Ctrl-\\ belong to `MRK_PAGER` while it runs; a pager they end makes mrk exit quietly with 130.
+- Diagram labels in Latin no longer load every system font when no label family is installed; `Arial Bold.ttf` and the like count as their family.
 - Library: `markdown::render_blocks`, `SourceBlock`, `BlockKind`, `diff::blocks` and `BlockChange` are `render_sections`, `Section`, `SectionKind`, `diff::sections` and `SectionChange`; `Settings` has a `Default`, `Span::is_frame` marks what mrk draws around the input's text, and the enums likely to grow are `#[non_exhaustive]`.
 - A theme named in `theme_dark` or `theme_light` must exist even when `theme` wins, and a "did you mean" allows one edit per three typed characters, at least one, a swap of two neighbours counting as one.
 
@@ -37,6 +44,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `mrk update` installs the commit the release tag pointed at when listed, so a tag moved meanwhile cannot change what builds.
 - A `file:` link to another host (`file://host/share`) is no longer clickable, since opening it can send the user's credentials to that host.
 - `sanitize` also removes the word joiner, the byte order mark and tag characters, which hide inside a name, and writes the line and paragraph separators as a space.
+- Panic reports are sanitized like every other stderr line, and `--help` no longer echoes environment values.
 
 ## [0.7.0] - 2026-10-06
 

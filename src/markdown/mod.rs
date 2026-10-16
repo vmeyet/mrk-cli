@@ -18,7 +18,7 @@ pub use self::blocks::{Section, SectionKind};
 use self::context::Context;
 use self::layout::Spacing;
 use crate::document::{Block, Document, Settings, Span, Style};
-use crate::text;
+use crate::{mermaid, text};
 
 /// Renders GitHub-flavoured Markdown into a document at `settings.width`; images and links are never fetched.
 pub fn render(source: &str, settings: &Settings) -> Document {
@@ -37,7 +37,8 @@ pub fn render_sections(source: &str, settings: &Settings) -> Vec<Section> {
 fn groups(source: &str, settings: &Settings) -> Vec<Group> {
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options());
-    blocks::groups(root, source, &Context::new(settings))
+    let diagrams = mermaid::Allowance::new(raw::diagrams(root), settings.cell.is_some());
+    blocks::groups(root, source, &Context::new(settings, &diagrams))
 }
 
 fn options() -> Options<'static> {

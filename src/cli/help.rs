@@ -19,7 +19,7 @@ fn sections() -> [Section; 4] {
             title: "Settings",
             intro: "Flags win over the environment, the environment over the config file.",
             rows: rows(&[
-                ("MRK_THEME, MRK_WIDTH, MRK_ALIGN", "the same as --theme, --width and --align"),
+                ("MRK_THEME, MRK_WIDTH, MRK_ALIGN", "the same as --theme, --width and --align; set but empty, as unset"),
                 ("MRK_PAGER", "the command -p pipes into instead of the built-in pager, diagrams as text; it does not turn paging on"),
                 ("NO_COLOR", "no colour while --color is auto"),
             ]),

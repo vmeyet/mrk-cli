@@ -15,7 +15,7 @@ pub enum Appearance {
     Light,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Palette {
     pub text: Rgb,
     pub muted: Rgb,

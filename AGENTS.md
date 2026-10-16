@@ -58,7 +58,7 @@ cargo run -- tests/fixtures/showcase.md
 - Beyond the file named, stdin and its config, mrk only reads font files, read-only, from the font directories; mermaid-rs-renderer also loads the system fonts and reads and writes a font copy under `$XDG_CACHE_HOME/mmdr`, `~/.cache/mmdr` by default (`specs/02-security.md` rule 3).
 - What a dependency reads, writes and runs is what mrk does: check it before a spec claims "never".
 - Work is bounded before a dependency is called: an engine whose time grows faster than its input gets a structural limit measured on its worst case, plus a deadline, both written in the spec; measure realistic inputs too, so the limit refuses nothing a person writes.
-- A panic a renderer may raise is wrapped in `mermaid::catch::caught`, so its report never reaches the default hook.
+- A panic a renderer may raise is wrapped in `mermaid::catch::caught`, so the binary's panic hook leaves its report out (`mermaid::is_catching`); the library installs no hook.
 - No file is written relative to the current directory; temporary files go to the platform temp folder and are removed.
 
 ## Terminal state

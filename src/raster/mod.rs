@@ -8,11 +8,11 @@ use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::fontdb::Database;
 use resvg::usvg::{ImageHrefResolver, Options, Tree};
 
-pub use self::fonts::FONT_FAMILY;
+pub(crate) use self::fonts::FONT_FAMILY;
 pub use self::line::line;
 
 /// Pixels per side a picture may reach (`specs/02-security.md` rule 4).
-pub const MAX_SIDE_PX: u32 = 4096;
+pub(crate) const MAX_SIDE_PX: u32 = 4096;
 
 /// Why an SVG did not become a PNG.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub enum RasterError {
 }
 
 /// An SVG parsed with every external resource refused, its fonts picked for the text it shows.
-pub struct Svg(Tree);
+pub(crate) struct Svg(Tree);
 
 impl Svg {
     pub fn parse(svg: &str) -> Result<Self, RasterError> {
