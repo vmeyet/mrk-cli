@@ -46,12 +46,12 @@ enum Step {
     Changed,
 }
 
-/// What a block is compared by: its kind, its text, and the pixels of its pictures, since a picture's alt text only
-/// names the kind of diagram.
+/// What a block is compared by: its kind, its lines of text, and the pixels of its pictures, since a picture's alt
+/// text only names the kind of diagram.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Key<'a> {
     kind: &'a BlockKind,
-    text: String,
+    lines: Vec<String>,
     pictures: Vec<&'a [u8]>,
 }
 
@@ -59,7 +59,7 @@ impl<'a> Key<'a> {
     fn of(block: &'a SourceBlock) -> Self {
         let pictures =
             block.blocks.iter().filter_map(|part| if let Block::Picture(picture) = part { Some(&picture.png[..]) } else { None });
-        Self { kind: &block.kind, text: plain_lines(block).concat(), pictures: pictures.collect() }
+        Self { kind: &block.kind, lines: plain_lines(block), pictures: pictures.collect() }
     }
 }
 
@@ -123,7 +123,7 @@ fn follow(steps: &[Step], old: Vec<SourceBlock>, new: Vec<SourceBlock>) -> Vec<B
 
 fn changed(old: SourceBlock, new: SourceBlock) -> BlockChange {
     let (old_words, new_words) =
-        if old.kind == BlockKind::Mermaid { Default::default() } else { words(&plain_lines(&old), &plain_lines(&new)) };
+        if old.kind == BlockKind::Mermaid { (Vec::new(), Vec::new()) } else { words(&plain_lines(&old), &plain_lines(&new)) };
     BlockChange::Changed { old, new, old_words, new_words }
 }
 
@@ -272,6 +272,11 @@ mod tests {
                 "cell {cell:?}: {changes:#?}"
             );
         }
+    }
+
+    #[test]
+    fn a_line_break_added_inside_a_paragraph_is_a_change() {
+        assert_eq!(steps_of(&diff("onetwo\n", "one\\\ntwo\n")), [Step::Changed]);
     }
 
     #[test]
