@@ -139,6 +139,6 @@ mod tests {
     fn a_picture_title_without_a_cell_size_is_a_normal_heading() {
         let settings = jumbo(JumboTitle::Picture, None);
 
-        assert_eq!(plain(&render(TITLE, &settings)), plain(&render(TITLE, &Settings { jumbo_title: None, ..settings.clone() })));
+        assert_eq!(plain(&render(TITLE, &settings)), plain(&render(TITLE, &Settings { jumbo_title: None, ..settings })));
     }
 }

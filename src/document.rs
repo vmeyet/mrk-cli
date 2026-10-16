@@ -153,7 +153,7 @@ pub enum JumboTitle {
     DoubleHeight,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub width: usize,
     pub theme: Theme,

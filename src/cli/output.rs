@@ -59,7 +59,7 @@ impl Layout {
         let capabilities = Capabilities { columns, ..self.capabilities };
         let settings = Settings {
             width: width(self.requested_width, columns),
-            theme: self.theme.clone(),
+            theme: self.theme,
             cell: capabilities.graphics.map(|graphics| graphics.cell),
             hyperlinks: capabilities.hyperlinks,
             jumbo_title: if self.jumbo_title { terminal::jumbo_title(&capabilities) } else { None },

@@ -7,7 +7,7 @@ const MAX_NESTING: usize = 32;
 const MIN_NESTED_WIDTH: usize = 12;
 
 /// Where a block is being rendered: the settings at the current width, the paragraph style, and how deep it sits.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct Context {
     pub settings: Settings,
     pub text: Style,
@@ -17,7 +17,7 @@ pub(super) struct Context {
 
 impl Context {
     pub fn new(settings: &Settings) -> Self {
-        Self { settings: settings.clone(), text: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0 }
+        Self { settings: *settings, text: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0 }
     }
 
     pub fn palette(&self) -> &Palette {
@@ -35,7 +35,7 @@ impl Context {
         if is_too_deep {
             return None;
         }
-        Some(Self { settings: Settings { width, ..self.settings.clone() }, nesting: self.nesting + 1, ..self.clone() })
+        Some(Self { settings: Settings { width, ..self.settings }, nesting: self.nesting + 1, ..*self })
     }
 
     pub fn with_text(self, text: Style) -> Self {
