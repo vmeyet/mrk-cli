@@ -2,31 +2,27 @@ use std::sync::LazyLock;
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, FontStyle, Style as SyntaxStyle};
-use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
-use super::language;
+use super::language::{self, SYNTAXES};
 use crate::document::{Rgb, Span, Style};
 use crate::theme::{SyntaxTheme, Theme};
 
-static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 static THEMES: LazyLock<EmbeddedLazyThemeSet> = LazyLock::new(two_face::theme::extra);
 
-/// One entry per source line, highlighted as it is taken so a long block is never held twice: no line ending, no
-/// background. A language without a syntax gives plain text in the palette's `text`, and so does a line that fails.
-pub fn highlight<'a>(code: &'a str, language: Option<&str>, theme: &Theme) -> Box<dyn Iterator<Item = Vec<Span>> + 'a> {
+/// One entry per source line, highlighted as the panel takes it: no line ending, no background. A language without a
+/// syntax gives plain text in the palette's `text`, and so does a line that fails.
+pub fn highlight<'a>(code: &'a str, language: Option<&str>, theme: &Theme) -> impl Iterator<Item = Vec<Span>> + 'a {
     let (text, surface) = (theme.palette.text, theme.palette.surface);
-    match language.and_then(|language| language::find(language, &SYNTAXES)) {
-        Some(syntax) => {
-            let mut highlighter = HighlightLines::new(syntax, THEMES.get(embedded(theme.syntax)));
-            Box::new(LinesWithEndings::from(code).map(move |line| match highlighter.highlight_line(line, &SYNTAXES) {
-                Ok(regions) => spans(&regions, surface),
-                Err(_) => plain(line, text),
-            }))
+    let syntax = language.and_then(language::find);
+    let mut highlighter = syntax.map(|syntax| HighlightLines::new(syntax, THEMES.get(embedded(theme.syntax))));
+    LinesWithEndings::from(code).map(move |line| {
+        match highlighter.as_mut().map(|highlighter| highlighter.highlight_line(line, &SYNTAXES)) {
+            Some(Ok(regions)) => spans(&regions, surface),
+            Some(Err(_)) | None => plain(line, text),
         }
-        None => Box::new(code.lines().map(move |line| plain(line, text))),
-    }
+    })
 }
 
 fn embedded(theme: SyntaxTheme) -> EmbeddedThemeName {

@@ -3,6 +3,7 @@ use comrak::nodes::{AstNode, NodeValue};
 use super::context::Context;
 use super::footnote;
 use crate::document::{Span, Style};
+use crate::sanitize;
 use crate::theme::Palette;
 
 /// Inline nesting deeper than this renders as its bare text: bounded recursion on hostile input.
@@ -82,9 +83,10 @@ fn linked(spans: Vec<Span>, url: &str, base: Style, context: &Context) -> Vec<Sp
     spans.into_iter().map(|span| span.linked(url)).chain(target).collect()
 }
 
-/// ` <url>` for a link that cannot be clicked, unless its text already reads as the URL.
+/// ` <url>` for a link that cannot be clicked, unless its text already reads as the URL: the terminal has no
+/// hyperlinks, or `sanitize::link` refuses the target (a relative path, another scheme).
 fn shown_target(spans: &[Span], url: &str, base: Style, context: &Context) -> Option<Span> {
-    if context.settings.hyperlinks {
+    if context.settings.hyperlinks && sanitize::link(url).is_some() {
         return None;
     }
     let text: String = spans.iter().map(|span| span.text.as_str()).collect();
@@ -100,9 +102,9 @@ fn reads_as(text: &str, url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::document::{Settings, Span, Style, plain};
+    use crate::document::{Settings, Span, Style, plain, test_settings};
     use crate::markdown::{plain_at, render, styled};
-    use crate::theme::{MRK_DARK, test_settings};
+    use crate::theme::MRK_DARK;
 
     fn without_hyperlinks(source: &str, width: usize) -> String {
         plain(&render(source, &Settings { width, hyperlinks: false, ..test_settings() }))
@@ -195,12 +197,19 @@ mod tests {
 
     #[test]
     fn image_is_muted_alt_text_linked_to_its_source() {
-        assert_eq!(styled("![a cat](cat.png)"), [[Span::new("▣ a cat", Style::fg(MRK_DARK.palette.muted)).linked("cat.png")]]);
+        let muted = Style::fg(MRK_DARK.palette.muted);
+
+        assert_eq!(styled("![a cat](https://x.y/cat.png)"), [[Span::new("▣ a cat", muted).linked("https://x.y/cat.png")]]);
     }
 
     #[test]
     fn image_without_alt_still_shows() {
-        assert_eq!(plain_at("![](cat.png)", 80), "▣ image\n");
+        assert_eq!(plain_at("![](https://x.y/cat.png)", 80), "▣ image\n");
+    }
+
+    #[test]
+    fn a_link_no_terminal_can_click_shows_its_target_even_with_hyperlinks() {
+        assert_eq!(plain_at("see [the guide](docs/guide.md) and ![logo](a.png)", 80), "see the guide <docs/guide.md> and ▣ logo <a.png>\n");
     }
 
     #[test]

@@ -1,4 +1,8 @@
+use std::sync::LazyLock;
+
 use syntect::parsing::{SyntaxReference, SyntaxSet};
+
+pub(super) static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 
 const PLAIN: &[&str] = &["text", "txt", "plain", "plaintext", "none"];
 
@@ -22,21 +26,22 @@ const ALIASES: &[(&str, &str)] = &[
     ("hcl", "terraform"),
 ];
 
-/// The syntax a fence language names, by token, extension or alias, in any case; `None` for plain text and unknown names.
-pub fn find<'a>(language: &str, syntaxes: &'a SyntaxSet) -> Option<&'a SyntaxReference> {
+/// The syntax a fence language names, by token, extension or alias, in any case; `None` for plain text, which never
+/// loads `SYNTAXES`, and unknown names.
+pub fn find(language: &str) -> Option<&'static SyntaxReference> {
     if PLAIN.iter().any(|plain| plain.eq_ignore_ascii_case(language)) {
         return None;
     }
     let token = ALIASES.iter().find(|(alias, _)| alias.eq_ignore_ascii_case(language)).map_or(language, |(_, target)| target);
-    syntaxes.find_syntax_by_token(token)
+    SYNTAXES.find_syntax_by_token(token)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn syntax_name(language: &str) -> Option<String> {
-        find(language, &two_face::syntax::extra_newlines()).map(|syntax| syntax.name.clone())
+    fn syntax_name(language: &str) -> Option<&'static str> {
+        find(language).map(|syntax| syntax.name.as_str())
     }
 
     #[test]
@@ -66,7 +71,7 @@ mod tests {
         ];
 
         for (language, name) in expected {
-            assert_eq!(syntax_name(language).as_deref(), Some(name), "{language}");
+            assert_eq!(syntax_name(language), Some(name), "{language}");
         }
     }
 

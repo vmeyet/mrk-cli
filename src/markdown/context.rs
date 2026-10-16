@@ -10,7 +10,7 @@ const MAX_NESTING: usize = 32;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Context {
     pub settings: Settings,
-    pub text: Style,
+    pub style: Style,
     pub nesting: usize,
     pub list_depth: usize,
 }
@@ -29,7 +29,7 @@ impl Context {
     /// The context of the whole document, at least `MIN_WIDTH` wide.
     pub fn new(settings: &Settings) -> Self {
         let settings = Settings { width: settings.width.max(MIN_WIDTH), ..*settings };
-        Self { settings, text: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0 }
+        Self { settings, style: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0 }
     }
 
     pub fn palette(&self) -> &Palette {
@@ -52,8 +52,8 @@ impl Context {
         }
     }
 
-    pub fn with_text(self, text: Style) -> Self {
-        Self { text, ..self }
+    pub fn with_style(self, style: Style) -> Self {
+        Self { style, ..self }
     }
 
     pub fn in_list(self) -> Self {

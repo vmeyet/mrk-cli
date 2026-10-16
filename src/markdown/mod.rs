@@ -13,8 +13,8 @@ mod table;
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{Arena, Options, parse_document};
 
-use self::blocks::Section;
-pub use self::blocks::{BlockKind, SourceBlock};
+use self::blocks::Group;
+pub use self::blocks::{Section, SectionKind};
 use self::context::Context;
 use self::layout::Spacing;
 use crate::document::{Block, Document, Settings, Span, Style};
@@ -22,22 +22,22 @@ use crate::text;
 
 /// Renders GitHub-flavoured Markdown into a document at `settings.width`; images and links are never fetched.
 pub fn render(source: &str, settings: &Settings) -> Document {
-    let blocks = layout::stack(sections(source, settings).into_iter().map(Section::stacked), Spacing::Loose);
+    let blocks = layout::stack(groups(source, settings).into_iter().map(Group::stacked), Spacing::Loose);
     Document { blocks }
 }
 
-/// The document's top-level blocks, each with the source lines it came from, for a consumer that diffs or pairs blocks.
-/// A list gives one block per top-level item, nested items staying inside theirs; the footnote definitions are one
-/// last block. No blank line separates or surrounds them: `render` puts one between blocks and between loose items.
-pub fn render_blocks(source: &str, settings: &Settings) -> Vec<SourceBlock> {
-    let blocks = sections(source, settings).into_iter().flat_map(|section| section.blocks);
-    blocks.filter(|block| !layout::is_empty(&block.blocks)).collect()
+/// The document's top-level sections, each with the source lines it came from, for a consumer that diffs or pairs them.
+/// A list gives one section per top-level item, nested items staying inside theirs; the footnote definitions are one
+/// last section. No blank line separates or surrounds them: `render` puts one between sections and between loose items.
+pub fn render_sections(source: &str, settings: &Settings) -> Vec<Section> {
+    let sections = groups(source, settings).into_iter().flat_map(|group| group.sections);
+    sections.filter(|section| !layout::is_empty(&section.blocks)).collect()
 }
 
-fn sections(source: &str, settings: &Settings) -> Vec<Section> {
+fn groups(source: &str, settings: &Settings) -> Vec<Group> {
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options());
-    blocks::sections(root, source, &Context::new(settings))
+    blocks::groups(root, source, &Context::new(settings))
 }
 
 fn options() -> Options<'static> {
@@ -57,29 +57,37 @@ fn children<'a>(node: &'a AstNode<'a>, context: &Context, spacing: Spacing) -> V
     layout::stack(node.children().map(|child| block(child, context)), spacing)
 }
 
-/// A container's blocks at its own width, with no room left to indent them: `lead` (a list marker) opens its first
-/// paragraph, or stands on a line of its own above anything else.
-/// `restyle` changes the blocks, never the lead.
-fn unindented<'a>(node: &'a AstNode<'a>, lead: &[Span], context: &Context, spacing: Spacing, restyle: fn(Style) -> Style) -> Vec<Block> {
+/// A container's blocks at its own width, with no room left to indent them: `marker` opens its first paragraph, or
+/// stands on a line of its own above anything else.
+/// `restyle` changes the blocks, never the marker.
+fn unindented<'a>(node: &'a AstNode<'a>, marker: &[Span], context: &Context, spacing: Spacing, restyle: fn(Style) -> Style) -> Vec<Block> {
     let opening = node.first_child().filter(|child| matches!(child.data().value, NodeValue::Paragraph));
     let rest = node.children().skip(usize::from(opening.is_some())).map(|child| block(child, context));
     let rest = layout::restyle(layout::stack(rest, spacing), restyle);
     match opening {
-        Some(paragraph) => {
-            let text = inline::spans(paragraph, context.text, context).into_iter().map(|span| Span { style: restyle(span.style), ..span });
-            let led: Vec<Span> = lead.iter().cloned().chain(text).collect();
-            layout::stack([layout::lines(text::wrap(&led, context.width(), &[])), rest], spacing)
-        }
-        None => layout::stack([layout::lines(text::wrap(lead, context.width(), &[])), rest], Spacing::Tight),
+        Some(paragraph) => layout::stack([marked_paragraph(paragraph, marker, context, restyle), rest], spacing),
+        None => layout::stack([wrapped(marker, context), rest], Spacing::Tight),
     }
+}
+
+/// A paragraph behind `marker`, restyled as `restyle` says while the marker keeps its own style.
+fn marked_paragraph<'a>(paragraph: &'a AstNode<'a>, marker: &[Span], context: &Context, restyle: fn(Style) -> Style) -> Vec<Block> {
+    let text = inline::spans(paragraph, context.style, context).into_iter().map(|span| Span { style: restyle(span.style), ..span });
+    let spans: Vec<Span> = marker.iter().cloned().chain(text).collect();
+    wrapped(&spans, context)
+}
+
+/// `spans` wrapped at the context's width, as a paragraph is.
+fn wrapped(spans: &[Span], context: &Context) -> Vec<Block> {
+    layout::lines(text::wrap(spans, context.width(), &[]))
 }
 
 fn block<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     match &node.data().value {
-        NodeValue::Paragraph => layout::lines(text::wrap(&inline::spans(node, context.text, context), context.width(), &[])),
+        NodeValue::Paragraph => wrapped(&inline::spans(node, context.style, context), context),
         NodeValue::Heading(heading) => heading::render(node, heading.level, context),
         NodeValue::List(list) => list::render(node, list, context),
-        NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => quote::render(node, context),
+        NodeValue::BlockQuote => quote::render(node, context),
         NodeValue::Alert(alert) => quote::alert(node, alert, context),
         NodeValue::CodeBlock(code) => raw::code(code, context),
         NodeValue::HtmlBlock(html) => layout::lines(raw::html(&html.literal, context)),
@@ -92,27 +100,27 @@ fn block<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
 
 #[cfg(test)]
 fn plain_at(source: &str, width: usize) -> String {
-    crate::document::plain(&render(source, &Settings { width, ..crate::theme::test_settings() }))
+    crate::document::plain(&render(source, &Settings { width, ..crate::document::test_settings() }))
 }
 
 /// `plain_at` 40 columns wide on a terminal that draws pictures.
 #[cfg(test)]
 fn plain_with_pictures(source: &str) -> String {
     let cell = Some(crate::document::CellSize { width_px: 10, height_px: 22 });
-    crate::document::plain(&render(source, &Settings { width: 40, cell, ..crate::theme::test_settings() }))
+    crate::document::plain(&render(source, &Settings { width: 40, cell, ..crate::document::test_settings() }))
 }
 
 /// The spans of every line at 80 columns, pictures left out.
 #[cfg(test)]
 fn styled(source: &str) -> Vec<Vec<Span>> {
-    let document = render(source, &crate::theme::test_settings());
+    let document = render(source, &crate::document::test_settings());
     document.blocks.iter().flat_map(Block::lines).map(|line| line.spans.clone()).collect()
 }
 
-/// `document::ansi` of the source at `width` columns.
+/// `snapshot::ansi` of the source at `width` columns.
 #[cfg(all(test, feature = "cli"))]
 fn ansi_at(source: &str, width: usize) -> String {
-    crate::document::ansi(&render(source, &Settings { width, ..crate::theme::test_settings() }))
+    crate::snapshot::ansi(&render(source, &Settings { width, ..crate::document::test_settings() }))
 }
 
 #[cfg(test)]
@@ -130,7 +138,7 @@ mod tests {
     const EVERYTHING: &str = "# A heading long enough to wrap at twenty columns\n\n## Second level with a verylongunbreakableword\n\nText with `a long inline code span` and a [link](https://example.com/a/very/long/path) and ![an image](i.png).\n\n- item\n  - nested item with more words\n    1. ordered deeper\n       > quoted inside a list, long enough to wrap\n\n> [!CAUTION]\n> An alert with a long body that wraps.\n\n| a | b | c |\n|---|:-:|--:|\n| one cell with many words | two | three |\n\n<div class=\"x\">html block that is long enough to wrap around</div>\n\n---\n\nNote[^n].\n\n[^n]: A footnote that is long enough to wrap.\n";
 
     fn lines(source: &str, width: usize) -> Vec<Line> {
-        let settings = Settings { width, ..crate::theme::test_settings() };
+        let settings = Settings { width, ..crate::document::test_settings() };
         render(source, &settings).blocks.iter().flat_map(Block::lines).cloned().collect()
     }
 
@@ -174,7 +182,7 @@ mod tests {
 
     #[test]
     fn empty_source_is_an_empty_document() {
-        assert_eq!(render("", &crate::theme::test_settings()), Document::default());
+        assert_eq!(render("", &crate::document::test_settings()), Document::default());
     }
 
     #[test]
@@ -226,6 +234,6 @@ mod tests {
     fn a_front_matter_indent_takes_at_most_half_the_width() {
         let source = format!("---\n{}deep: value\n---\n", " ".repeat(100));
 
-        assert_eq!(plain_at(&source, 20).lines().next(), Some("          deep:"));
+        assert_eq!(plain_at(&source, 20).lines().next(), Some("          deep: valu"));
     }
 }

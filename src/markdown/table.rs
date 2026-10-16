@@ -23,7 +23,6 @@ struct WrappedRow {
     is_header: bool,
 }
 
-/// Box-drawing corners and junctions for one horizontal border.
 struct Border {
     left: &'static str,
     junction: &'static str,
@@ -53,7 +52,7 @@ fn rows<'a>(node: &'a AstNode<'a>, columns: usize, context: &Context) -> Vec<Row
     node.children()
         .map(|row| {
             let is_header = matches!(row.data().value, NodeValue::TableRow(true));
-            let style = if is_header { header } else { context.text };
+            let style = if is_header { header } else { context.style };
             let cells = row.children().map(|cell| inline::spans(cell, style, context)).chain(std::iter::repeat_with(Vec::new));
             Row { cells: cells.take(columns).collect(), is_header }
         })
@@ -118,21 +117,21 @@ fn rule(edges: &Border, widths: &[usize], border: Style) -> Line {
 }
 
 fn row_lines(row: &WrappedRow, widths: &[usize], alignments: &[TableAlignment], border: Style) -> Vec<Line> {
-    let wrapped = &row.cells;
-    let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
-    (0..height)
-        .map(|index| {
-            let cells = wrapped.iter().zip(widths).zip(alignments).map(|((lines, width), alignment)| {
-                let line = lines.get(index).cloned().unwrap_or_default();
-                aligned(line, *width, *alignment)
-            });
-            let joined = cells.enumerate().flat_map(|(column, cell)| {
-                let separator = if column == 0 { "│ " } else { " │ " };
-                std::iter::once(Span::new(separator, border)).chain(cell)
-            });
-            Line::new(joined.chain(std::iter::once(Span::new(" │", border))).collect())
-        })
-        .collect()
+    let height = row.cells.iter().map(Vec::len).max().unwrap_or(1);
+    (0..height).map(|index| row_line(row, index, widths, alignments, border)).collect()
+}
+
+/// Line `index` of every cell of the row, between the borders; a cell with fewer lines is blank there.
+fn row_line(row: &WrappedRow, index: usize, widths: &[usize], alignments: &[TableAlignment], border: Style) -> Line {
+    let cells = row
+        .cells
+        .iter()
+        .zip(widths)
+        .zip(alignments)
+        .map(|((lines, width), alignment)| aligned(lines.get(index).cloned().unwrap_or_default(), *width, *alignment));
+    let separators = std::iter::once("│ ").chain(std::iter::repeat(" │ ")).map(|separator| Span::new(separator, border));
+    let framed = separators.zip(cells).flat_map(|(separator, cell)| std::iter::once(separator).chain(cell));
+    Line::new(framed.chain(std::iter::once(Span::new(" │", border))).collect())
 }
 
 fn aligned(line: Line, width: usize, alignment: TableAlignment) -> Vec<Span> {

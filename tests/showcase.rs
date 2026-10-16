@@ -2,13 +2,12 @@
 
 use mrk::document::{Block, CellSize, Settings, plain};
 use mrk::markdown;
-use mrk::theme::MRK_DARK;
 
 const SHOWCASE: &str = include_str!("fixtures/showcase.md");
 const CELL: CellSize = CellSize { width_px: 10, height_px: 22 };
 
 fn test_settings() -> Settings {
-    Settings { width: 80, theme: MRK_DARK, cell: None, hyperlinks: true, jumbo_title: None }
+    Settings { hyperlinks: true, ..Settings::default() }
 }
 
 fn widest_line(settings: &Settings) -> usize {

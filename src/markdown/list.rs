@@ -64,21 +64,21 @@ fn delimiter(delimiter: ListDelimType) -> char {
 
 fn render_item<'a>(item: &'a AstNode<'a>, marker: &Marker, marker_width: usize, spacing: Spacing, context: &Context) -> Vec<Block> {
     let padding = Span::plain(" ".repeat(marker_width - text::spans_width(&marker.spans)));
-    let lead: Vec<Span> = marker.spans.iter().cloned().chain([padding]).collect();
+    let marker_spans: Vec<Span> = marker.spans.iter().cloned().chain([padding]).collect();
     let restyle: fn(Style) -> Style = if marker.is_done { Style::dim } else { std::convert::identity };
     let dimmed = |body: Vec<Block>| if marker.is_done { layout::restyle(body, restyle) } else { body };
     match context.nested(marker_width) {
-        Nested::Indented(inner) => layout::marked(dimmed(super::children(item, &inner.in_list(), spacing)), &lead, marker_width),
-        Nested::Unindented(inner) => super::unindented(item, &lead, &inner.in_list(), spacing, restyle),
+        Nested::Indented(inner) => layout::marked(dimmed(super::children(item, &inner.in_list(), spacing)), &marker_spans, marker_width),
+        Nested::Unindented(inner) => super::unindented(item, &marker_spans, &inner.in_list(), spacing, restyle),
         Nested::TooDeep => super::raw::flat(item, context),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::document::{Block, Line, Settings, Span, Style};
+    use crate::document::{Block, Line, Settings, Span, Style, test_settings};
     use crate::markdown::{plain_at, plain_with_pictures, render, styled};
-    use crate::theme::{MRK_DARK, test_settings};
+    use crate::theme::MRK_DARK;
 
     #[test]
     fn bullets_change_glyph_with_depth() {

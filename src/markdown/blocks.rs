@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use comrak::nodes::{AstNode, NodeCodeBlock, NodeValue};
 
 use super::context::Context;
@@ -5,9 +7,10 @@ use super::layout::{self, Spacing};
 use super::{footnote, list, raw};
 use crate::document::Block;
 
-/// What a source block is in the Markdown, so a consumer can pair and label blocks without parsing again.
+/// What a section is in the Markdown, so a consumer can pair and label sections without parsing again.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BlockKind {
+#[non_exhaustive]
+pub enum SectionKind {
     FrontMatter,
     Heading {
         level: u8,
@@ -27,36 +30,35 @@ pub enum BlockKind {
     Rule,
     Html,
     Footnotes,
-    /// A top-level node none of the enabled Markdown extensions produce, rendered as its children.
-    Other,
 }
 
-/// One top-level block of the document, rendered as `render` draws it, with the source lines it came from.
+/// One top-level section of the document, its blocks as `render` draws them, with the source lines it came from.
 ///
 /// `blocks` holds no blank line before or after the content; it is more than one `Block` only when a
 /// container (a list item, a quote) holds a picture. Lines are 1-based and inclusive.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourceBlock {
+#[non_exhaustive]
+pub struct Section {
     pub first_line: usize,
     pub last_line: usize,
-    pub kind: BlockKind,
+    pub kind: SectionKind,
     pub blocks: Vec<Block>,
 }
 
-/// A top-level node's source blocks and the spacing between them: one block, or one per list item.
-pub(super) struct Section {
+/// A top-level node's sections and the spacing between them: one section, or one per list item.
+pub(super) struct Group {
     pub spacing: Spacing,
-    pub blocks: Vec<SourceBlock>,
+    pub sections: Vec<Section>,
 }
 
-impl Section {
-    fn single(block: SourceBlock) -> Self {
-        Self { spacing: Spacing::Loose, blocks: vec![block] }
+impl Group {
+    fn single(section: Section) -> Self {
+        Self { spacing: Spacing::Loose, sections: vec![section] }
     }
 
-    /// The section as `render` stacks it.
+    /// The group as `render` stacks it.
     pub fn stacked(self) -> Vec<Block> {
-        layout::stack(self.blocks.into_iter().map(|block| block.blocks), self.spacing)
+        layout::stack(self.sections.into_iter().map(|section| section.blocks), self.spacing)
     }
 }
 
@@ -64,77 +66,84 @@ fn is_footnote_definition<'a>(node: &'a AstNode<'a>) -> bool {
     matches!(node.data().value, NodeValue::FootnoteDefinition(_))
 }
 
-fn code_kind(code: &NodeCodeBlock) -> BlockKind {
+fn code_kind(code: &NodeCodeBlock) -> SectionKind {
     match raw::language(code) {
-        Some(language) if language == raw::MERMAID => BlockKind::Mermaid,
-        language => BlockKind::Code { language },
+        Some(language) if language == raw::MERMAID => SectionKind::Mermaid,
+        language => SectionKind::Code { language },
     }
 }
 
-fn kind<'a>(node: &'a AstNode<'a>) -> BlockKind {
-    match &node.data().value {
-        NodeValue::FrontMatter(_) => BlockKind::FrontMatter,
-        NodeValue::Heading(heading) => BlockKind::Heading { level: heading.level },
-        NodeValue::Item(_) => BlockKind::ListItem { task: None },
-        NodeValue::TaskItem(task) => BlockKind::ListItem { task: Some(task.symbol.is_some()) },
-        NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => BlockKind::Quote,
-        NodeValue::Alert(_) => BlockKind::Alert,
+/// `None` for a node the enabled Markdown extensions never put at the top level.
+fn kind<'a>(node: &'a AstNode<'a>) -> Option<SectionKind> {
+    let kind = match &node.data().value {
+        NodeValue::FrontMatter(_) => SectionKind::FrontMatter,
+        NodeValue::Heading(heading) => SectionKind::Heading { level: heading.level },
+        NodeValue::Item(_) => SectionKind::ListItem { task: None },
+        NodeValue::TaskItem(task) => SectionKind::ListItem { task: Some(task.symbol.is_some()) },
+        NodeValue::BlockQuote => SectionKind::Quote,
+        NodeValue::Alert(_) => SectionKind::Alert,
         NodeValue::CodeBlock(code) => code_kind(code),
-        NodeValue::HtmlBlock(_) => BlockKind::Html,
-        NodeValue::ThematicBreak => BlockKind::Rule,
-        NodeValue::Table(_) => BlockKind::Table,
-        NodeValue::Paragraph => BlockKind::Paragraph,
-        _ => BlockKind::Other,
-    }
+        NodeValue::HtmlBlock(_) => SectionKind::Html,
+        NodeValue::ThematicBreak => SectionKind::Rule,
+        NodeValue::Table(_) => SectionKind::Table,
+        NodeValue::Paragraph => SectionKind::Paragraph,
+        _ => return None,
+    };
+    Some(kind)
 }
 
-/// comrak ends an item that closes its list on the blank line after it; a block ends on its last written line.
-fn last_written_line(first_line: usize, last_line: usize, source_lines: &[&str]) -> usize {
-    let is_written = |line: &usize| source_lines.get(line - 1).is_some_and(|text| !text.trim().is_empty());
+/// Whether each source line holds more than spaces, lines ending where comrak ends them: at `\n`, `\r\n` or a lone `\r`.
+fn written_lines(source: &str) -> Vec<bool> {
+    let source = if source.contains('\r') { Cow::Owned(source.replace("\r\n", "\n")) } else { Cow::Borrowed(source) };
+    source.split(['\n', '\r']).map(|line| !line.trim().is_empty()).collect()
+}
+
+/// comrak ends an item that closes its list on the blank line after it; a section ends on its last written line.
+fn last_written_line(first_line: usize, last_line: usize, written: &[bool]) -> usize {
+    let is_written = |line: &usize| written.get(line - 1).copied().unwrap_or(false);
     (first_line..=last_line).rev().find(is_written).unwrap_or(first_line)
 }
 
-fn source_block<'a>(node: &'a AstNode<'a>, blocks: Vec<Block>, source_lines: &[&str]) -> SourceBlock {
+fn section<'a>(node: &'a AstNode<'a>, blocks: Vec<Block>, written: &[bool]) -> Option<Section> {
     let position = node.data().sourcepos;
-    let last_line = last_written_line(position.start.line, position.end.line, source_lines);
-    SourceBlock { first_line: position.start.line, last_line, kind: kind(node), blocks }
+    let last_line = last_written_line(position.start.line, position.end.line, written);
+    Some(Section { first_line: position.start.line, last_line, kind: kind(node)?, blocks })
 }
 
-fn section<'a>(node: &'a AstNode<'a>, source_lines: &[&str], context: &Context) -> Section {
+fn group<'a>(node: &'a AstNode<'a>, written: &[bool], context: &Context) -> Group {
     match &node.data().value {
         NodeValue::List(list) => {
             let items = node.children().zip(list::items(node, list, context));
-            let blocks = items.map(|(item, blocks)| source_block(item, blocks, source_lines)).collect();
-            Section { spacing: list::spacing(list), blocks }
+            let sections = items.filter_map(|(item, blocks)| section(item, blocks, written)).collect();
+            Group { spacing: list::spacing(list), sections }
         }
-        _ => Section::single(source_block(node, super::block(node, context), source_lines)),
+        _ => Group { spacing: Spacing::Loose, sections: section(node, super::block(node, context), written).into_iter().collect() },
     }
 }
 
 /// The notes section spans from the first line of the earliest definition to the last line of the latest,
 /// lines between definitions included: comrak reorders the notes, so no single definition's lines would do.
-fn footnotes<'a>(definitions: &[&'a AstNode<'a>], source_lines: &[&str], context: &Context) -> Option<Section> {
+fn footnotes<'a>(definitions: &[&'a AstNode<'a>], written: &[bool], context: &Context) -> Option<Group> {
     let first_line = definitions.iter().map(|definition| definition.data().sourcepos.start.line).min()?;
     let last_line = definitions.iter().map(|definition| definition.data().sourcepos.end.line).max()?;
-    let last_line = last_written_line(first_line, last_line, source_lines);
+    let last_line = last_written_line(first_line, last_line, written);
     let blocks = footnote::section(definitions, context);
-    Some(Section::single(SourceBlock { first_line, last_line, kind: BlockKind::Footnotes, blocks }))
+    Some(Group::single(Section { first_line, last_line, kind: SectionKind::Footnotes, blocks }))
 }
 
-/// Every top-level section in reading order, the footnote definitions gathered into one section at the end.
-pub(super) fn sections<'a>(root: &'a AstNode<'a>, source: &str, context: &Context) -> Vec<Section> {
-    let source_lines: Vec<&str> = source.lines().collect();
+/// Every top-level group in reading order, the footnote definitions gathered into one group at the end.
+pub(super) fn groups<'a>(root: &'a AstNode<'a>, source: &str, context: &Context) -> Vec<Group> {
+    let written = written_lines(source);
     let (notes, body): (Vec<&AstNode>, Vec<&AstNode>) = root.children().partition(|node| is_footnote_definition(node));
-    let body = body.into_iter().map(|node| section(node, &source_lines, context));
-    body.chain(footnotes(&notes, &source_lines, context)).collect()
+    let body = body.into_iter().map(|node| group(node, &written, context));
+    body.chain(footnotes(&notes, &written, context)).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{CellSize, Line, Settings};
-    use crate::markdown::{render, render_blocks};
-    use crate::theme::test_settings;
+    use crate::document::{CellSize, Line, Settings, test_settings};
+    use crate::markdown::{render, render_sections};
 
     const SHOWCASE: &str = include_str!("../../tests/fixtures/showcase.md");
     const CELL: CellSize = CellSize { width_px: 10, height_px: 22 };
@@ -153,16 +162,16 @@ mod tests {
             .collect()
     }
 
-    fn outline(source: &str) -> Vec<(usize, usize, BlockKind)> {
-        render_blocks(source, &test_settings()).into_iter().map(|block| (block.first_line, block.last_line, block.kind)).collect()
+    fn outline(source: &str) -> Vec<(usize, usize, SectionKind)> {
+        render_sections(source, &test_settings()).into_iter().map(|section| (section.first_line, section.last_line, section.kind)).collect()
     }
 
     #[test]
-    fn blocks_hold_what_render_draws_less_the_spacing() {
+    fn sections_hold_what_render_draws_less_the_spacing() {
         for width in [20, 40, 80, 100] {
             for cell in [None, Some(CELL)] {
                 let settings = Settings { width, cell, ..test_settings() };
-                let blocks: Vec<Block> = render_blocks(SHOWCASE, &settings).into_iter().flat_map(|block| block.blocks).collect();
+                let blocks: Vec<Block> = render_sections(SHOWCASE, &settings).into_iter().flat_map(|section| section.blocks).collect();
 
                 assert_eq!(content(blocks), content(render(SHOWCASE, &settings).blocks), "width {width}, cell {cell:?}");
             }
@@ -170,61 +179,84 @@ mod tests {
     }
 
     #[test]
-    fn no_block_starts_or_ends_with_a_blank_line() {
+    fn no_section_starts_or_ends_with_a_blank_line() {
         let is_blank_edge =
             |block: &Block, edge: fn(&[Line]) -> Option<&Line>| matches!(block, Block::Lines(lines) if edge(lines) == Some(&Line::blank()));
-        for block in render_blocks(EVERY_KIND, &test_settings()).into_iter().chain(render_blocks(SHOWCASE, &test_settings())) {
-            assert!(!block.blocks.first().is_some_and(|first| is_blank_edge(first, <[Line]>::first)), "{:?}", block.kind);
-            assert!(!block.blocks.last().is_some_and(|last| is_blank_edge(last, <[Line]>::last)), "{:?}", block.kind);
+        for section in render_sections(EVERY_KIND, &test_settings()).into_iter().chain(render_sections(SHOWCASE, &test_settings())) {
+            assert!(!section.blocks.first().is_some_and(|first| is_blank_edge(first, <[Line]>::first)), "{:?}", section.kind);
+            assert!(!section.blocks.last().is_some_and(|last| is_blank_edge(last, <[Line]>::last)), "{:?}", section.kind);
         }
     }
 
     #[test]
-    fn each_block_points_at_its_source_lines() {
+    fn each_section_points_at_its_source_lines() {
         assert_eq!(
             outline(EVERY_KIND),
             [
-                (1, 3, BlockKind::FrontMatter),
-                (5, 5, BlockKind::Heading { level: 1 }),
-                (7, 8, BlockKind::Paragraph),
-                (10, 11, BlockKind::ListItem { task: None }),
-                (12, 12, BlockKind::ListItem { task: Some(true) }),
-                (14, 16, BlockKind::Code { language: Some("rust".to_owned()) }),
-                (18, 20, BlockKind::Table),
-                (22, 25, BlockKind::Mermaid),
-                (27, 28, BlockKind::Alert),
-                (30, 30, BlockKind::Paragraph),
-                (32, 32, BlockKind::Footnotes),
+                (1, 3, SectionKind::FrontMatter),
+                (5, 5, SectionKind::Heading { level: 1 }),
+                (7, 8, SectionKind::Paragraph),
+                (10, 11, SectionKind::ListItem { task: None }),
+                (12, 12, SectionKind::ListItem { task: Some(true) }),
+                (14, 16, SectionKind::Code { language: Some("rust".to_owned()) }),
+                (18, 20, SectionKind::Table),
+                (22, 25, SectionKind::Mermaid),
+                (27, 28, SectionKind::Alert),
+                (30, 30, SectionKind::Paragraph),
+                (32, 32, SectionKind::Footnotes),
             ]
         );
+    }
+
+    #[test]
+    fn lines_end_where_comrak_ends_them_whatever_the_line_ending() {
+        for ending in ["\n", "\r\n", "\r"] {
+            let source = ["- one", "  more", "", "- two", "", "", "text"].join(ending) + ending;
+
+            assert_eq!(
+                outline(&source),
+                [
+                    (1, 2, SectionKind::ListItem { task: None }),
+                    (4, 4, SectionKind::ListItem { task: None }),
+                    (7, 7, SectionKind::Paragraph)
+                ],
+                "{ending:?}"
+            );
+        }
     }
 
     #[test]
     fn the_notes_span_every_definition_in_source_order() {
         let source = "b[^b] a[^a]\n\n[^a]: A.\n\ntext\n\n[^b]: B.\n";
 
-        assert_eq!(outline(source).last(), Some(&(3, 7, BlockKind::Footnotes)));
+        assert_eq!(outline(source).last(), Some(&(3, 7, SectionKind::Footnotes)));
     }
 
     #[test]
     fn a_list_splits_into_its_items_and_other_containers_stay_whole() {
-        let kinds: Vec<BlockKind> =
+        let kinds: Vec<SectionKind> =
             outline("1. one\n2. two\n\n> quote\n>\n> more\n\n---\n\n<div>x</div>\n").into_iter().map(|(.., kind)| kind).collect();
 
         assert_eq!(
             kinds,
-            [BlockKind::ListItem { task: None }, BlockKind::ListItem { task: None }, BlockKind::Quote, BlockKind::Rule, BlockKind::Html]
+            [
+                SectionKind::ListItem { task: None },
+                SectionKind::ListItem { task: None },
+                SectionKind::Quote,
+                SectionKind::Rule,
+                SectionKind::Html
+            ]
         );
     }
 
     #[test]
     fn a_fence_without_language_is_code_without_one() {
-        assert_eq!(outline("```\nx\n```\n"), [(1, 3, BlockKind::Code { language: None })]);
+        assert_eq!(outline("```\nx\n```\n"), [(1, 3, SectionKind::Code { language: None })]);
     }
 
     #[test]
     fn a_fence_names_its_language_by_its_first_word_lowercased() {
-        let kinds: Vec<BlockKind> = ["Rust,ignore", "{.mermaid}", "Mermaid", "mermaid,ignore"]
+        let kinds: Vec<SectionKind> = ["Rust,ignore", "{.mermaid}", "Mermaid", "mermaid,ignore"]
             .iter()
             .flat_map(|info| outline(&format!("```{info}\ngraph TD\n```\n")))
             .map(|(.., kind)| kind)
@@ -232,17 +264,17 @@ mod tests {
 
         assert_eq!(
             kinds,
-            [BlockKind::Code { language: Some("rust".to_owned()) }, BlockKind::Mermaid, BlockKind::Mermaid, BlockKind::Mermaid]
+            [SectionKind::Code { language: Some("rust".to_owned()) }, SectionKind::Mermaid, SectionKind::Mermaid, SectionKind::Mermaid]
         );
     }
 
     #[test]
-    fn a_mermaid_block_is_its_picture_when_the_terminal_can_draw() {
+    fn a_mermaid_section_is_its_picture_when_the_terminal_can_draw() {
         let settings = Settings { cell: Some(CELL), ..test_settings() };
-        let blocks = render_blocks("```mermaid\ngraph TD\n  A --> B\n```\n", &settings);
+        let sections = render_sections("```mermaid\ngraph TD\n  A --> B\n```\n", &settings);
 
         assert!(
-            matches!(blocks[..], [SourceBlock { kind: BlockKind::Mermaid, blocks: ref inner, .. }] if matches!(inner[..], [Block::Picture(_)]))
+            matches!(sections[..], [Section { kind: SectionKind::Mermaid, ref blocks, .. }] if matches!(blocks[..], [Block::Picture(_)]))
         );
     }
 }

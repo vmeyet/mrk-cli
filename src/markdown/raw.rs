@@ -8,15 +8,15 @@ use crate::text;
 
 pub(super) const MERMAID: &str = "mermaid";
 
-/// An HTML block as muted literal text, never interpreted.
+/// An HTML block as muted literal text, never interpreted: cut where a line is full, so its spacing stays.
 pub(super) fn html(literal: &str, context: &Context) -> Vec<Line> {
     let muted = Style::fg(context.palette().muted);
-    literal.trim_end_matches('\n').lines().flat_map(|line| text::wrap(&[Span::new(line, muted)], context.width(), &[])).collect()
+    literal.trim_end_matches('\n').lines().flat_map(|line| text::hard_wrap(&[Span::new(line, muted)], context.width(), &[])).collect()
 }
 
 /// A container nested too deep: its bare text, wrapped at the current width.
 pub(super) fn flat<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
-    layout::lines(text::wrap(&[Span::new(inline::text(node), context.text)], context.width(), &[]))
+    super::wrapped(&[Span::new(inline::text(node), context.style)], context)
 }
 
 /// A fenced or indented code block: a Mermaid diagram or a code panel, both at the current width.
@@ -52,6 +52,12 @@ mod tests {
         assert_eq!(language("{.python}").as_deref(), Some("python"));
         assert_eq!(language("Mermaid").as_deref(), Some("mermaid"));
         assert_eq!(language("   "), None);
+    }
+
+    #[test]
+    fn an_html_block_keeps_its_spacing_and_cuts_where_a_line_is_full() {
+        assert_eq!(plain_at("<pre>a    b</pre>\n", 40), "<pre>a    b</pre>\n");
+        assert_eq!(plain_at("<pre>a    bcdefgh</pre>\n", 10), "<pre>a\nbcdefgh</p\nre>\n");
     }
 
     #[test]

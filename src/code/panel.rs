@@ -8,7 +8,7 @@ const ELLIPSIS: &str = "…";
 
 /// The highlighted rows framed on `surface`: a padded top row carrying the label, the rows hard-wrapped to fit, each
 /// continuation opening with a marker, and a padded bottom row.
-/// `rows` are taken one at a time, each freed once framed: a block of millions of rows is never held twice.
+/// `rows` are taken one at a time, each freed once framed, so a block never holds all its spans and all its lines at once.
 pub fn panel(rows: impl Iterator<Item = Vec<Span>>, label: Option<&str>, width: usize, palette: &Palette) -> Vec<Line> {
     let content_width = width.saturating_sub(2 * display_width(PADDING));
     let continuation = [Span::new(CONTINUATION, Style::fg(palette.subtle))];

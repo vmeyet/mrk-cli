@@ -13,11 +13,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A config file that exists but cannot be read exits with 2, like one that does not parse.
 - `mrk update` through brew reinstalls with `--force`, and fails when the tap has not caught up with the release instead of reporting an update; through cargo it builds in a temporary folder removed afterwards, even when `CARGO_TARGET_DIR` is set.
 - `mrk --version` shows `unknown` rather than another repository's commit when mrk is built from inside it.
+- Library: `markdown::render_blocks`, `SourceBlock`, `BlockKind`, `diff::blocks` and `BlockChange` are `render_sections`, `Section`, `SectionKind`, `diff::sections` and `SectionChange`; `Settings` has a `Default`, and the enums likely to grow are `#[non_exhaustive]`.
+- A theme named in `theme_dark` or `theme_light` must exist even when `theme` wins, and a "did you mean" allows one edit per three typed characters, rounded down.
+
+### Fixed
+
+- A relative link or image (`[guide](docs/guide.md)`) shows its target after the text even when hyperlinks are on, since no terminal can open it.
+- HTML blocks and front matter keep their spacing (`name:    mrk`).
+- A diff marks changed words line by line, never the quote bars, borders or `↪` between them, keeps a renumbered list item the same, and is bounded: a section over 20,000 words, or a diff still running after a second, is marked whole.
+- Source lines of `render_sections` are right for files with CR-only line endings.
+- A tab in inline code stops on the column it lands on, and `sanitize::text` places a tab after a removed newline on the joined line.
 
 ### Security
 
 - `mrk update` installs the commit the release tag pointed at when listed, so a tag moved meanwhile cannot change what builds.
 - A `file:` link to another host (`file://host/share`) is no longer clickable, since opening it can send the user's credentials to that host.
+- `sanitize` also removes the word joiner, the byte order mark, the line and paragraph separators and tag characters, which hide inside a name.
 
 ## [0.7.0] - 2026-10-06
 

@@ -21,6 +21,7 @@ impl Rgb {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Style {
     pub fg: Option<Rgb>,
     pub bg: Option<Rgb>,
@@ -97,18 +98,14 @@ impl Line {
     }
 
     /// A line of text slices, each styled and linked as its span, neighbours in the same style and link joined into one span.
-    /// Every span and text is allocated at its exact size: documents hold millions of lines.
     pub fn joined<'a>(pieces: impl IntoIterator<Item = (&'a str, &'a Span)>) -> Self {
         let pieces: Vec<(&str, &Span)> = pieces.into_iter().collect();
         let runs = pieces.chunk_by(|(_, left), (_, right)| left.style == right.style && left.link == right.link);
-        let mut spans = Vec::with_capacity(runs.clone().count());
-        spans.extend(runs.map(|run| {
-            let mut text = String::with_capacity(run.iter().map(|(piece, _)| piece.len()).sum());
-            text.extend(run.iter().map(|(piece, _)| *piece));
-            let (_, span) = run[0];
-            Span { text, style: span.style, link: span.link.clone() }
-        }));
-        Self::new(spans)
+        let span = |run: &[(&str, &Span)]| {
+            let (_, first) = run[0];
+            Span { text: run.iter().map(|(piece, _)| *piece).collect(), style: first.style, link: first.link.clone() }
+        };
+        Self::new(runs.map(span).collect())
     }
 
     pub fn blank() -> Self {
@@ -145,6 +142,7 @@ pub struct Picture {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Block {
     Lines(Vec<Line>),
     Picture(Picture),
@@ -197,6 +195,19 @@ pub struct Settings {
     pub jumbo_title: Option<JumboTitle>,
 }
 
+/// 80 columns of `mrk-dark` text: no pictures, links not clickable (their target printed after them), no jumbo title.
+impl Default for Settings {
+    fn default() -> Self {
+        Self { width: 80, theme: crate::theme::MRK_DARK, cell: None, hyperlinks: false, jumbo_title: None }
+    }
+}
+
+/// The settings unit tests render with: the defaults, links clickable.
+#[cfg(test)]
+pub(crate) fn test_settings() -> Settings {
+    Settings { hyperlinks: true, ..Settings::default() }
+}
+
 /// The document as bare text, one `[picture: alt cols×rows]` line per picture and each double-height line twice:
 /// what snapshot tests compare. It keeps the input's escape sequences, so never print it; print `printable` instead.
 pub fn plain(document: &Document) -> String {
@@ -206,23 +217,6 @@ pub fn plain(document: &Document) -> String {
 /// `plain` safe to write to a terminal: through [`sanitize::lines`].
 pub fn printable(document: &Document) -> String {
     sanitize::lines(&plain(document))
-}
-
-/// The document as `terminal::write` prints it in truecolor with hyperlinks, `␛` for ESC: what colour snapshot tests compare.
-#[cfg(all(test, feature = "cli"))]
-pub(crate) fn ansi(document: &Document) -> String {
-    use crate::terminal::{Capabilities, ColorDepth};
-    let capabilities = Capabilities {
-        color: ColorDepth::TrueColor,
-        hyperlinks: true,
-        graphics: None,
-        double_height: false,
-        background: None,
-        columns: 80,
-        rows: 24,
-        is_terminal: true,
-    };
-    crate::terminal::ansi(document, &capabilities, 0).replace('\x1b', "␛")
 }
 
 fn plain_block(block: &Block) -> String {
@@ -254,7 +248,6 @@ fn split_span(span: &Span, first: usize, ranges: &[Range<usize>], restyle: &impl
     pieces
 }
 
-/// The first `count` chars of `text`, and the rest.
 fn split_chars(text: &str, count: usize) -> (&str, &str) {
     text.split_at(text.char_indices().nth(count).map_or(text.len(), |(index, _)| index))
 }
@@ -372,7 +365,15 @@ mod tests {
         let line = Line::joined([("ab", &plain), ("c", &plain), ("d", &red), ("e", &plain)]);
 
         assert_eq!(line.spans, [Span::plain("abc"), Span::new("d", Style::fg(RED)), Span::plain("e")]);
-        assert_eq!((line.spans.capacity(), line.spans[0].text.capacity()), (3, 3));
+    }
+
+    #[test]
+    fn joined_keeps_neighbours_with_different_links_apart() {
+        let (plain, linked) = (Span::plain("a"), Span::plain("b").linked("https://x.y"));
+
+        let line = Line::joined([("a", &plain), ("b", &linked), ("c", &linked)]);
+
+        assert_eq!(line.spans, [Span::plain("a"), Span::plain("bc").linked("https://x.y")]);
     }
 
     #[test]

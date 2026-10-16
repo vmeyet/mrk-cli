@@ -11,16 +11,30 @@ const TAB_STOP: usize = 4;
 /// Terminals draw a grapheme in one or two cells, so a row this wide always has room for the next one.
 pub const WIDEST_GRAPHEME: usize = 2;
 
-/// Overrides, isolates and the marks (LRM, RLM, ALM) reorder what a line shows; the zero-width space hides a break
-/// inside a name. The joiners stay: emoji sequences and Persian or Indic words need them.
-fn is_bidi_control(character: char) -> bool {
-    matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
+/// Overrides, isolates and the marks (LRM, RLM, ALM) reorder what a line shows; the zero-width space, the word joiner,
+/// the byte order mark and tag characters hide inside a name; the line and paragraph separators break a line the
+/// layout never counted. The joiners stay: emoji sequences and Persian or Indic words need them.
+fn is_invisible_control(character: char) -> bool {
+    matches!(
+        character,
+        '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{200b}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{061c}'
+            | '\u{2060}'
+            | '\u{feff}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{e0000}'..='\u{e007f}'
+    )
 }
 
-/// The characters a terminal could interpret or that disguise text: C0 and C1 controls, DEL, bidi controls and marks,
-/// the zero-width space. `sanitize` removes them, so they take no cell.
+/// The characters a terminal could interpret or that disguise text: C0 and C1 controls, DEL and the invisible controls
+/// above. `sanitize` removes them, so they take no cell.
 pub fn is_forbidden(character: char) -> bool {
-    character.is_control() || is_bidi_control(character)
+    character.is_control() || is_invisible_control(character)
 }
 
 /// `text` with each tab written as the spaces up to the next tab stop, `text` starting `column` cells into its line;
@@ -33,7 +47,7 @@ pub fn expand_tabs(text: &str, column: usize) -> Cow<'_, str> {
     let mut column = column;
     for (index, part) in text.split('\t').enumerate() {
         if index > 0 {
-            let spaces = TAB_STOP - column % TAB_STOP;
+            let spaces = tab_width(column);
             expanded.extend(std::iter::repeat_n(' ', spaces));
             column += spaces;
         }
@@ -57,16 +71,12 @@ pub fn display_width(text: &str) -> usize {
     text.graphemes(true).map(grapheme_width).sum()
 }
 
-/// A tab counts as a whole tab stop: only `cut` meets one, in text no line builder expanded.
 fn grapheme_width(grapheme: &str) -> usize {
-    match grapheme {
-        "\t" => TAB_STOP,
-        _ if grapheme.chars().any(is_forbidden) => 0,
-        _ => grapheme.width().min(WIDEST_GRAPHEME),
-    }
+    if grapheme.chars().any(is_forbidden) { 0 } else { grapheme.width().min(WIDEST_GRAPHEME) }
 }
 
-/// The longest start of `text` that fits in `width` cells, and the rest; a grapheme is never split.
+/// The longest start of `text` that fits in `width` cells, and the rest; a grapheme is never split. `text` holds no
+/// tab: `expand_tabs` first.
 pub fn cut(text: &str, width: usize) -> (&str, &str) {
     let mut used = 0;
     let end = text.grapheme_indices(true).find_map(|(index, grapheme)| {
@@ -82,14 +92,10 @@ const MIN_SPLIT_CELLS: usize = 4;
 /// Breaks styled spans into lines of at most `width` cells, at spaces when it can, mid-word when a word is wider than the line.
 /// Every line after the first starts with `indent` (hanging indent for list items and quotes).
 /// A `\n` forces a break and never reaches a line, a tab breaks like a space; on a background (inline code padding) a
-/// space holds its word together and a tab is expanded. `width` is taken as at least the indent plus `WIDEST_GRAPHEME`,
-/// so any grapheme fits a line.
+/// space holds its word together and a tab reaches the next tab stop of the line it lands on. `width` is taken as at
+/// least the indent plus `WIDEST_GRAPHEME`, so any grapheme fits a line.
 pub fn wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
-    let texts: Vec<Cow<str>> = spans
-        .iter()
-        .map(|span| if span.style.bg.is_some() { expand_tabs(&span.text, 0) } else { Cow::Borrowed(span.text.as_str()) })
-        .collect();
-    let tokens = spans.iter().zip(&texts).flat_map(|(span, text)| span_tokens(span, text)).fold(Vec::new(), join_words);
+    let tokens = spans.iter().flat_map(span_tokens).fold(Vec::new(), join_words);
     tokens.into_iter().fold(LineBuilder::new(width, indent), LineBuilder::place).finish()
 }
 
@@ -181,8 +187,8 @@ enum Token<'a> {
     Break,
 }
 
-fn span_tokens<'a>(span: &'a Span, text: &'a str) -> impl Iterator<Item = Token<'a>> {
-    let rows = text.split('\n').enumerate();
+fn span_tokens(span: &Span) -> impl Iterator<Item = Token<'_>> {
+    let rows = span.text.split('\n').enumerate();
     rows.flat_map(move |(index, row)| (index > 0).then_some(Token::Break).into_iter().chain(row_tokens(span, row)))
 }
 
@@ -191,8 +197,43 @@ fn row_tokens<'a>(span: &'a Span, row: &'a str) -> impl Iterator<Item = Token<'a
     let breaks: &[char] = if span.style.bg.is_some() { &[] } else { &[' ', '\t'] };
     row.split(breaks).enumerate().flat_map(move |(index, word)| {
         let space = (index > 0).then_some(Token::Space(span));
-        space.into_iter().chain((!word.is_empty()).then(|| Token::Word(vec![Piece { span, text: word }])))
+        space.into_iter().chain((!word.is_empty()).then(|| Token::Word(word_pieces(span, word))))
     })
+}
+
+/// A tab in a word is a piece of its own: how wide it is depends on the column the word lands on.
+fn word_pieces<'a>(span: &'a Span, word: &'a str) -> Vec<Piece<'a>> {
+    let parts = word
+        .split('\t')
+        .enumerate()
+        .flat_map(|(index, text)| (index > 0).then_some(TAB).into_iter().chain((!text.is_empty()).then_some(text)));
+    parts.map(|text| Piece { span, text }).collect()
+}
+
+const TAB: &str = "\t";
+const TAB_SPACES: &str = "    ";
+const _: () = assert!(TAB_SPACES.len() == TAB_STOP);
+
+fn tab_width(column: usize) -> usize {
+    TAB_STOP - column % TAB_STOP
+}
+
+/// The cells `word` takes when it starts at `column`.
+fn width_at(word: &[Piece], column: usize) -> usize {
+    word.iter().fold(0, |width, piece| width + if piece.text == TAB { tab_width(column + width) } else { piece.width() })
+}
+
+/// `word` as it lands at `column`, each tab written as the spaces up to the next tab stop.
+fn at_column(word: Vec<Piece<'_>>, column: usize) -> Vec<Piece<'_>> {
+    if !word.iter().any(|piece| piece.text == TAB) {
+        return word;
+    }
+    let placed = word.into_iter().scan(column, |column, piece| {
+        let text = if piece.text == TAB { &TAB_SPACES[..tab_width(*column)] } else { piece.text };
+        *column += display_width(text);
+        Some(Piece { text, ..piece })
+    });
+    placed.collect()
 }
 
 /// Words that touch wrap as one, whatever their styles.
@@ -242,17 +283,20 @@ impl<'a> LineBuilder<'a> {
     }
 
     fn place_word(self, word: Vec<Piece<'a>>) -> Self {
-        let word_width = pieces_width(&word);
-        let fits_here = self.used + self.space_width() + word_width <= self.width;
-        match (fits_here, word_width <= self.room()) {
-            (true, _) => self.push_spaced(word, word_width),
-            (false, true) if self.has_content() => self.close().push_spaced(word, word_width),
-            _ => self.split_word(word),
+        let column = self.column();
+        let width = width_at(&word, column);
+        if column + width <= self.width {
+            return self.push_spaced(word, width);
         }
+        let width = width_at(&word, self.indent_width);
+        if self.has_content() && width <= self.room() { self.close().push_spaced(word, width) } else { self.split_word(word) }
     }
 
-    fn push_spaced(self, word: Vec<Piece<'a>>, word_width: usize) -> Self {
-        let used = self.used + self.space_width() + word_width;
+    /// `word`, `width` cells wide where it lands, after the space held before it.
+    fn push_spaced(self, word: Vec<Piece<'a>>, width: usize) -> Self {
+        let column = self.column();
+        let word = at_column(word, column);
+        let used = column + width;
         let Self { mut current, space, .. } = self;
         current.extend(space.map(|span| Piece { span, text: SPACE }));
         current.extend(word);
@@ -262,13 +306,19 @@ impl<'a> LineBuilder<'a> {
     /// A word wider than a line, cut wherever a line is full; it starts on this line when enough of it is left.
     fn split_word(self, word: Vec<Piece<'a>>) -> Self {
         let builder = if self.has_content() && self.free() < MIN_SPLIT_CELLS { self.close() } else { self };
+        let word = at_column(word, builder.column());
         let mut rows = cut_rows(word, builder.free(), builder.room()).into_iter();
+        let first = rows.next().unwrap_or_default();
         let push_row = |builder: Self, row: Vec<Piece<'a>>| {
             let width = pieces_width(&row);
             builder.push_spaced(row, width)
         };
-        let first = rows.next().unwrap_or_default();
         rows.fold(push_row(builder, first), |builder, row| push_row(builder.close(), row))
+    }
+
+    /// Where the next word starts: after the line so far and the space held before the word.
+    fn column(&self) -> usize {
+        self.used + self.space_width()
     }
 
     fn close(self) -> Self {
@@ -283,7 +333,7 @@ impl<'a> LineBuilder<'a> {
     }
 
     fn free(&self) -> usize {
-        self.width.saturating_sub(self.used + self.space_width())
+        self.width.saturating_sub(self.column())
     }
 
     fn space_width(&self) -> usize {
@@ -438,6 +488,14 @@ mod tests {
         assert_eq!(plain_lines(&wrap(&[Span::plain("one\ttwo")], 6, &[])), ["one", "two"]);
         assert_eq!(plain_lines(&wrap(&[Span::new("\tx", code)], 20, &[])), ["    x"]);
         assert_eq!(plain_lines(&hard_wrap(&[Span::plain("\tabc")], 6, &[])), ["    ab", "c"]);
+    }
+
+    #[test]
+    fn a_tab_on_a_background_stops_at_the_column_of_the_line_it_lands_on() {
+        let code = Style::default().on(Rgb(0, 0, 0));
+
+        assert_eq!(plain_lines(&wrap(&[Span::plain("ab "), Span::new("\tx", code)], 20, &[])), ["ab  x"]);
+        assert_eq!(plain_lines(&wrap(&[Span::plain("abcdef "), Span::new("\tx", code)], 8, &[Span::plain(" ")])), ["abcdef", "    x"]);
     }
 
     #[test]

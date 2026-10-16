@@ -23,10 +23,10 @@ pub(super) fn section<'a>(definitions: &[&'a AstNode<'a>], context: &Context) ->
 }
 
 fn note<'a>(definition: &'a AstNode<'a>, marker: &str, marker_width: usize, context: &Context) -> Vec<Block> {
-    let lead = [Span::new(format!("{marker:<marker_width$}"), Style::fg(context.palette().accent))];
+    let marker_spans = [Span::new(format!("{marker:<marker_width$}"), Style::fg(context.palette().accent))];
     match context.nested(marker_width) {
-        Nested::Indented(inner) => layout::marked(super::children(definition, &inner, Spacing::Loose), &lead, marker_width),
-        Nested::Unindented(inner) => super::unindented(definition, &lead, &inner, Spacing::Loose, std::convert::identity),
+        Nested::Indented(inner) => layout::marked(super::children(definition, &inner, Spacing::Loose), &marker_spans, marker_width),
+        Nested::Unindented(inner) => super::unindented(definition, &marker_spans, &inner, Spacing::Loose, std::convert::identity),
         Nested::TooDeep => super::raw::flat(definition, context),
     }
 }

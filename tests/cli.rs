@@ -171,18 +171,48 @@ fn piped_links_print_their_target() {
     mrk().write_stdin("[docs](https://example.com)").assert().success().stdout(predicate::str::contains("docs <https://example.com>"));
 }
 
-#[test]
-fn hostile_input_never_reaches_the_terminal() {
-    let hostile = "# \x1b]0;title\x07 \x1b]52;c;AAAA\x07\n\n\x1b[2J text \u{9b}31m [x](javascript:alert(1))\n\n```\n\x1b[31m\n```\n";
+/// An OSC title, an OSC 52 clipboard write, a CSI erase and a C1 CSI, in every block kind; link targets and alt text
+/// carry theirs as character references, the only way Markdown lets a control into them.
+fn hostile_document() -> String {
+    let payload = "\x1b]0;title\x07\x1b]52;c;AAAA\x07\x1b[2J\u{9b}31m";
+    let referenced = "&#27;&#93;52;c;AAAA&#7;&#155;31m";
+    [
+        format!("---\ntitle: {payload}\n---"),
+        format!("# {payload}"),
+        format!("text {payload} [link](https://x.y/{referenced}) [relative]({referenced}) [x](javascript:alert(1))"),
+        format!("![alt {referenced}](https://x.y/a.png)"),
+        format!("- {payload}\n  1. [ ] {payload}"),
+        format!("> {payload}"),
+        format!("> [!WARNING]\n> {payload}"),
+        format!("| {payload} | b |\n|---|---|\n| {payload} | `{payload}` |"),
+        format!("```rust\n{payload}\n```"),
+        format!("```mermaid\ngraph TD\n  A[{payload}] --> B\n```"),
+        format!("<div>{payload}</div>"),
+        format!("note[^n]\n\n[^n]: {payload}"),
+    ]
+    .join("\n\n")
+}
 
-    mrk().args(["--color", "always"]).write_stdin(hostile).assert().success().stdout(
+#[test]
+fn hostile_input_in_any_block_never_reaches_a_coloured_terminal() {
+    mrk().args(["--color", "always"]).write_stdin(hostile_document()).assert().success().stdout(
         predicate::str::contains("\x1b]0;")
             .not()
             .and(predicate::str::contains("\x1b]52").not())
             .and(predicate::str::contains("\x1b[2J").not())
-            .and(predicate::str::contains("javascript").not())
+            .and(predicate::str::contains("\x1b]8;;javascript").not())
+            .and(predicate::str::contains('\x07').not())
             .and(predicate::str::contains('\u{9b}').not()),
     );
+}
+
+#[test]
+fn hostile_input_in_any_block_or_link_target_never_reaches_a_pipe() {
+    let output = mrk().write_stdin(hostile_document()).assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(output).unwrap();
+
+    assert!(!text.chars().any(|character| character.is_control() && character != '\n'), "{text:?}");
+    assert!(text.contains("link <https://x.y/]52;c;AAAA31m>") && text.contains("<]52;c;AAAA31m>"), "{text}");
 }
 
 #[test]

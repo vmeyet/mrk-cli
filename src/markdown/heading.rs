@@ -22,13 +22,13 @@ pub(super) fn render<'a>(node: &'a AstNode<'a>, level: u8, context: &Context) ->
 }
 
 fn plain<'a>(node: &'a AstNode<'a>, style: Style, context: &Context) -> Vec<Block> {
-    layout::lines(text::wrap(&inline::spans(node, style, context), context.width(), &[]))
+    super::wrapped(&inline::spans(node, style, context), context)
 }
 
 fn h1<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
     let palette = context.palette();
     let spans = inline::spans(node, Style::fg(palette.h1).bold(), context);
-    let title = jumbo(&spans, context).unwrap_or_else(|| layout::lines(text::wrap(&spans, context.width(), &[])));
+    let title = jumbo(&spans, context).unwrap_or_else(|| super::wrapped(&spans, context));
     let rule = Line::new(vec![Span::new(H1_RULE.repeat(context.width()), Style::fg(palette.subtle))]);
     title.into_iter().chain(layout::lines(vec![rule])).collect()
 }
@@ -62,9 +62,9 @@ fn h2<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Line> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{CellSize, Settings, plain};
+    use crate::document::{CellSize, Settings, plain, test_settings};
     use crate::markdown::{plain_at, render, styled};
-    use crate::theme::{MRK_DARK, test_settings};
+    use crate::theme::MRK_DARK;
 
     #[test]
     fn levels_one_to_six() {
