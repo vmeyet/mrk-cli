@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use mrk::{sanitize, version};
+use mrk::sanitize;
 use signal_hook::consts::{SIGINT, SIGTERM};
 
 use crate::cli::signals::{self, Held};
+use crate::version;
 
 /// Where `mrk update` installs from.
 pub const REPO: &str = "https://github.com/vmeyet/mrk-cli";

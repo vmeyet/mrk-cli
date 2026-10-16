@@ -15,7 +15,7 @@ use crate::markdown::{Section, SectionKind, render_sections};
 const MAX_SECTIONS: usize = 10_000;
 /// A changed pair with more words than this, both sides counted, is marked whole without a word diff.
 const MAX_WORDS: usize = 20_000;
-/// The words one call diffs across all its changed pairs; the pairs past it are marked whole.
+/// The words one call diffs across all its changed pairs; a pair that does not fit what is left is marked whole.
 const MAX_DIFFED_WORDS: usize = 50_000;
 
 /// What happened to one section between the old and the new version.
@@ -370,17 +370,19 @@ mod tests {
     }
 
     #[test]
-    fn pairs_past_the_word_budget_are_marked_whole() {
+    fn a_pair_over_what_is_left_of_the_word_budget_is_marked_whole_and_a_smaller_one_after_it_diffed() {
         let paragraph = |word: &str| format!("{}\n\n", "word ".repeat(MAX_WORDS / 2 - 1) + word);
-        let old: String = ["a", "b", "c"].map(paragraph).concat();
-        let new: String = ["x", "y", "z"].map(paragraph).concat();
+        let old = ["a", "b", "c"].map(paragraph).concat() + "short a";
+        let new = ["x", "y", "z"].map(paragraph).concat() + "short x";
 
         let changes = diff_at(&old, &new, 1000);
 
         let marks: Vec<usize> =
             changes.iter().map(|change| if let SectionChange::Changed { old_words, .. } = change { old_words.len() } else { 0 }).collect();
-        assert_eq!(&marks[..2], [1, 1]);
+        assert_eq!(marks[..2], [1, 1]);
         assert!(marks[2] > 1, "{marks:?}");
+        let SectionChange::Changed { old_words, .. } = &changes[3] else { panic!("a changed short paragraph") };
+        assert_eq!(old_words.first(), Some(&(6..7)), "{old_words:?}");
     }
 
     #[test]

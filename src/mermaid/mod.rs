@@ -251,8 +251,8 @@ mod tests {
     #[test]
     fn diagrams_too_costly_to_lay_out_are_refused_before_either_engine() {
         let costly = [
-            (tangled(100, 500), "mermaid: over 100 statements, too many to lay out"),
-            (tangled(1000, 3500), "mermaid: over 100 statements, too many to lay out"),
+            (tangled(100, 500), "mermaid: over 100 edges, too many to lay out"),
+            (tangled(1000, 3500), "mermaid: over 100 edges, too many to lay out"),
             (format!("classDiagram\n{}", "  A --> B\n".repeat(40)), "mermaid: over 32 relations, too many to lay out"),
         ];
 

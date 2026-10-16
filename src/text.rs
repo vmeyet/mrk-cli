@@ -4,46 +4,13 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::document::{Line, Span};
+use crate::sanitize::printed;
 
 /// A tab moves to the next column that is a multiple of this.
 const TAB_STOP: usize = 4;
 
 /// Terminals draw a grapheme in one or two cells, so a row this wide always has room for the next one.
-pub const WIDEST_GRAPHEME: usize = 2;
-
-/// Overrides, isolates and the marks (LRM, RLM, ALM) reorder what a line shows; the zero-width space, the word joiner,
-/// the byte order mark and tag characters hide inside a name. The joiners stay: emoji sequences and Persian or Indic
-/// words need them.
-fn is_invisible_control(character: char) -> bool {
-    matches!(
-        character,
-        '\u{202a}'..='\u{202e}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{200b}'
-            | '\u{200e}'
-            | '\u{200f}'
-            | '\u{061c}'
-            | '\u{2060}'
-            | '\u{feff}'
-            | '\u{e0000}'..='\u{e007f}'
-    )
-}
-
-/// The characters a terminal could interpret or that disguise text: C0 and C1 controls, DEL and the invisible controls
-/// above. `sanitize` removes them, so they take no cell.
-pub fn is_forbidden(character: char) -> bool {
-    character.is_control() || is_invisible_control(character)
-}
-
-/// What `sanitize` writes for `character`: nothing when it is forbidden, a space for the line and paragraph
-/// separators, which would break a line the layout never counted, else the character itself.
-pub fn printed(character: char) -> Option<char> {
-    match character {
-        _ if is_forbidden(character) => None,
-        '\u{2028}' | '\u{2029}' => Some(' '),
-        _ => Some(character),
-    }
-}
+const WIDEST_GRAPHEME: usize = 2;
 
 /// `text` with each tab written as the spaces up to the next tab stop, `text` starting `column` cells into its line;
 /// a newline starts a line again. Borrowed when there is no tab.
@@ -300,7 +267,7 @@ fn join_words<'a>(mut tokens: Vec<Token<'a>>, token: Token<'a>) -> Vec<Token<'a>
     tokens
 }
 
-pub fn spans_width(spans: &[Span]) -> usize {
+pub(crate) fn spans_width(spans: &[Span]) -> usize {
     spans.iter().map(|span| display_width(&span.text)).sum()
 }
 

@@ -1,9 +1,7 @@
 use std::sync::LazyLock;
 
-/// The commit this binary was built from, or [`UNKNOWN`] when built without git history.
-pub const COMMIT: &str = env!("GIT_HASH");
-
-pub const UNKNOWN: &str = "unknown";
+/// The commit this binary was built from, or `unknown` when built without git history (`build.rs`).
+const COMMIT: &str = env!("GIT_HASH");
 
 /// `0.1.0 (a1b2c3d)`, as shown by `mrk --version`.
 pub fn label() -> &'static str {
@@ -27,6 +25,6 @@ mod tests {
 
     #[test]
     fn short_leaves_an_unknown_commit_readable() {
-        assert_eq!(short(UNKNOWN), UNKNOWN);
+        assert_eq!(short("unknown"), "unknown");
     }
 }

@@ -1,5 +1,5 @@
 //! Text and links made safe to write to a terminal, which interprets the escape sequences an untrusted input can carry.
-use crate::text::{expand_tabs, printed};
+use crate::text::expand_tabs;
 
 const MAX_LINK_BYTES: usize = 2048;
 const WEB_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
@@ -24,6 +24,40 @@ fn clean(raw: &str, keeps_newlines: bool) -> String {
     let mut kept = String::with_capacity(raw.len());
     kept.extend(raw.chars().filter_map(|character| if is_kept_as_written(character) { Some(character) } else { printed(character) }));
     if kept.contains('\t') { expand_tabs(&kept, 0).into_owned() } else { kept }
+}
+
+/// Overrides, isolates and the marks (LRM, RLM, ALM) reorder what a line shows; the zero-width space, the word joiner,
+/// the byte order mark and tag characters hide inside a name. The joiners stay: emoji sequences and Persian or Indic
+/// words need them.
+fn is_invisible_control(character: char) -> bool {
+    matches!(
+        character,
+        '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{200b}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{061c}'
+            | '\u{2060}'
+            | '\u{feff}'
+            | '\u{e0000}'..='\u{e007f}'
+    )
+}
+
+/// The characters a terminal could interpret or that disguise text: C0 and C1 controls, DEL and the invisible controls
+/// above. `sanitize` removes them, so they take no cell.
+pub(crate) fn is_forbidden(character: char) -> bool {
+    character.is_control() || is_invisible_control(character)
+}
+
+/// What `sanitize` writes for `character`: nothing when it is forbidden, a space for the line and paragraph
+/// separators, which would break a line the layout never counted, else the character itself.
+pub(crate) fn printed(character: char) -> Option<char> {
+    match character {
+        _ if is_forbidden(character) => None,
+        '\u{2028}' | '\u{2029}' => Some(' '),
+        _ => Some(character),
+    }
 }
 
 fn percent_encode(raw: &str) -> String {

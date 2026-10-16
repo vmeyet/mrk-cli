@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod update;
+mod version;
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
