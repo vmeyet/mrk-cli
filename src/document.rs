@@ -219,18 +219,22 @@ fn plain_block(block: &Block) -> String {
 
 /// `span` cut where it goes in or out of a range, the pieces inside restyled; `first` is the offset of its first char.
 /// A span no range edge falls inside comes back whole.
-fn split_span(span: &Span, first: usize, ranges: &[Range<usize>], restyle: &impl Fn(Style) -> Style) -> Vec<Span> {
-    let is_inside = |offset: usize| ranges.iter().any(|range| range.contains(&offset));
-    let mut pieces: Vec<(bool, String)> = Vec::new();
-    for (offset, character) in span.text.chars().enumerate() {
-        let inside = is_inside(first + offset);
-        match pieces.last_mut() {
-            Some((last, text)) if *last == inside => text.push(character),
-            _ => pieces.push((inside, character.to_string())),
-        }
-    }
-    let style = |inside: bool| if inside { restyle(span.style) } else { span.style };
-    pieces.into_iter().map(|(inside, text)| Span { text, style: style(inside), link: span.link.clone() }).collect()
+fn split_span<'a>(
+    span: &'a Span,
+    first: usize,
+    ranges: &'a [Range<usize>],
+    restyle: &'a impl Fn(Style) -> Style,
+) -> impl Iterator<Item = Span> + 'a {
+    let end = first + span.text.chars().count();
+    let is_inside = move |offset: usize| ranges.iter().any(|range| range.contains(&offset));
+    let edges = ranges.iter().flat_map(|range| [range.start, range.end]);
+    let cuts = edges.filter(move |&edge| first < edge && edge < end && is_inside(edge - 1) != is_inside(edge));
+    cuts.chain([end]).scan((first, span.text.as_str()), move |(from, rest), to| {
+        let (text, tail) = rest.split_at(rest.char_indices().nth(to - *from).map_or(rest.len(), |(index, _)| index));
+        let style = if is_inside(*from) { restyle(span.style) } else { span.style };
+        (*from, *rest) = (to, tail);
+        Some(Span { text: text.to_owned(), style, link: span.link.clone() })
+    })
 }
 
 /// The char offset in `plain` text at which each span starts, spans and lines taken in order with nothing between them.
@@ -244,9 +248,11 @@ fn span_offsets(lines: &[Line]) -> impl Iterator<Item = usize> {
 
 /// Restyles the text inside `ranges`, for a search match or a word-level diff; text, widths and links never change.
 ///
-/// Ranges are char offsets into the lines' plain text joined with no separator:
-/// `lines.iter().map(Line::plain).collect::<String>()`. A span is split where a range starts or ends inside it.
+/// Ranges are char offsets into the lines' plain text joined with no separator,
+/// `lines.iter().map(Line::plain).collect::<String>()`, in order and not overlapping. A span is split where a range
+/// starts or ends inside it.
 pub fn highlight(lines: &[Line], ranges: &[Range<usize>], restyle: impl Fn(Style) -> Style) -> Vec<Line> {
+    debug_assert!(ranges.windows(2).all(|pair| pair[0].end <= pair[1].start), "ranges out of order: {ranges:?}");
     let mut offsets = span_offsets(lines);
     lines
         .iter()
@@ -358,6 +364,18 @@ mod tests {
         assert_eq!(lit[0].spans, [Span::plain("one "), Span::new("two", Style::default().bold())]);
         assert_eq!(lit[1].spans, [Span::new("th", Style::default().bold()), Span::plain("ree")]);
         assert_eq!(lit.iter().map(Line::width).collect::<Vec<_>>(), [7, 5]);
+    }
+
+    #[test]
+    fn neighbouring_ranges_restyle_as_one_piece_and_a_range_over_a_whole_span_keeps_it_whole() {
+        let line = Line::new(vec![Span::plain("abcd"), Span::plain("ef")]);
+
+        let lit = highlight(&[line], &[1..2, 2..3, 4..6], Style::bold);
+
+        assert_eq!(
+            lit[0].spans,
+            [Span::plain("a"), Span::new("bc", Style::default().bold()), Span::plain("d"), Span::new("ef", Style::default().bold())]
+        );
     }
 
     #[test]
