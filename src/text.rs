@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::document::{Line, Span};
 
 /// What a tab becomes on screen.
-pub const TAB: &str = "    ";
+const TAB: &str = "    ";
 
 /// Terminals draw a grapheme in one or two cells, so a row this wide always has room for the next one.
 pub const WIDEST_GRAPHEME: usize = 2;
