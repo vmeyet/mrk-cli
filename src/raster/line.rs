@@ -22,12 +22,12 @@ pub fn line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) 
 /// The text at the size that fills the height, or smaller when that would be wider than `max_width_px`.
 fn fitted(text: &str, color: Rgb, height_px: u32, max_width_px: f32) -> Result<Svg, RasterError> {
     let font_size = height_px as f32 * FONT_SIZE_PER_HEIGHT;
-    let natural = Svg::parse(&svg(text, color, font_size, max_width_px, height_px), text)?;
+    let natural = Svg::parse(&svg(text, color, font_size, max_width_px, height_px))?;
     let width = natural.ink_right();
     if width <= max_width_px {
         return Ok(natural);
     }
-    Svg::parse(&svg(text, color, font_size * max_width_px / width, max_width_px, height_px), text)
+    Svg::parse(&svg(text, color, font_size * max_width_px / width, max_width_px, height_px))
 }
 
 fn svg(text: &str, color: Rgb, font_size: f32, width_px: f32, height_px: u32) -> String {

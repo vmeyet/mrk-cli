@@ -51,6 +51,9 @@ src/
     blocks.rs      SourceBlock, BlockKind: the top-level sections both render and render_blocks are built from
   code/            syntect + two-face: highlight a fenced block into a surface panel
   mermaid/         mermaid-rs-renderer SVG ─▶ raster PNG ─▶ Picture; mermaid-text fallback
+    budget.rs      the size, subgraph and layout limits guarding both engines, checked on the parsed diagram
+    cache.rs       the last 32 diagrams parsed and laid out, by source and palette
+    catch.rs       renderer panics caught, their reports kept off stderr
   raster/          resvg and its fonts: an SVG ─▶ PNG, a line of text ─▶ Picture (a jumbo title); no other module sees resvg
   terminal/        detect, write (ANSI + OSC 8 + kitty graphics or Sixel) through sanitize, colour downgrade
     sixel.rs       PNG ─▶ at most 256 colours ─▶ Sixel bands; pure, no dependency beyond `png`
@@ -88,6 +91,7 @@ src/
 - `code::render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line>` returns the whole panel, every line exactly `settings.width` cells, or `document::MIN_WIDTH` when that is narrower.
   `language` is a language name: `markdown` reads it once from the fence info string, the first word lowercased (`Rust,ignore` and `{.rust}` give `rust`), and the same word picks Mermaid and fills `BlockKind::Code`.
 - `mermaid::render(source: &str, settings: &Settings) -> Block`: `Block::Picture` when `settings.cell` is `Some` and the diagram renders, otherwise `Block::Lines` (box-drawing text, or the source in a code panel when even that fails, with a one-line muted note).
+  Both engines only see a diagram within the budget of `02-security.md` rule 4; over it, the note names the limit (`mermaid: over 30 links, too many to lay out`).
 - `raster::line(text: &str, color: Rgb, cell: CellSize, rows: u16, max_cols: usize) -> Result<Picture, RasterError>`: the text in bold `font-weight` on a transparent PNG `rows` cells tall and as many whole cells wide as it needs, shrunk to fit `max_cols`; `raster::Svg` parses and draws mermaid's SVG the same way.
 - `settings.jumbo_title` (from `terminal::jumbo_title(&Capabilities)`, set only when `--jumbo-title` or `jumbo_title = true` asks): `Picture` turns each line of a top-level H1, wrapped at half the width, into a two-row `Block::Picture` with `concealed_text`, or the plain H1 when `cell` is `None` or a line fails to draw; `DoubleHeight` makes them one `Block::DoubleHeight`. Only a top-level H1 grows: inside a container (`context.nesting > 0`) it stays one row beside the bars.
 - `terminal::pager::run(session: &Session, render: impl Fn(u16) -> Rendered)`: `render` lays the source out for a window that many columns wide and returns the Document and its margin.
@@ -108,9 +112,11 @@ src/
 ## Performance
 
 - syntect's syntax and theme sets load lazily, once, on the first code block (`std::sync::LazyLock`).
-- The mermaid engine loads lazily on the first diagram, the font database on the first diagram or title picture; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; the whole system set loads only when those fallbacks miss a glyph.
+- The mermaid engine loads lazily on the first diagram, the font database on the first diagram or title picture; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; every font file in the font directories (`02-security.md` rule 3) loads only when those fallbacks miss a glyph.
+  What a label needs is read off the text between the SVG's tags, never the diagram source, so a comment in another script loads nothing more.
   Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.
   Renamed, it never shadows a system family the SVG lists.
+- A diagram's parsed SVG is kept by source and palette (`mermaid/cache.rs`, the last 32): a pager resize renders the document again, and a diagram is only fitted and rasterised again, never parsed or laid out again (the showcase flowchart: 40 ms, then 12 ms); mermaid-text lays out for the width, so it runs again.
 - Terminal queries (kitty graphics support, the cell size, background colour) share one round trip ended by a DA1 request, with a 100 ms timeout, and only run when stdout is a tty, mrk is the terminal's foreground job (a background job would be stopped by `SIGTTOU`) and the answer is not already known from the environment.
   The replies are read until the DA1 reply or the timeout, skipping keys typed meanwhile; raw mode ends with `TCSAFLUSH`, which discards the input still unread, so the shell or the pager never reads a reply that arrived during the round as keys.
   Known limit: a reply arriving after the timeout (a slow link such as SSH, or the terminal outside tmux) reaches the shell or the pager as input.

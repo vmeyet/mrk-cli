@@ -36,7 +36,7 @@ dirs = { version = "7.0", optional = true }
 mermaid-rs-renderer = { version = "0.3", default-features = false }
 mermaid-text = "0.57"
 png = { version = "0.18", optional = true }
-resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+resvg = { version = "0.48", default-features = false, features = ["text", "memmap-fonts"] }
 roff = { version = "1.1", optional = true }
 shell-words = { version = "1.1", optional = true }
 signal-hook = { version = "0.3", optional = true }

@@ -28,6 +28,7 @@ const FALLBACK_STEMS: [&str; 15] = [
     "notosansthai",
 ];
 const MAX_DIRECTORY_DEPTH: usize = 4;
+const FONT_EXTENSIONS: [&str; 4] = ["ttf", "otf", "ttc", "otc"];
 /// Above Latin Extended and IPA, labels need the scripts only the fallback or full system set covers.
 const LAST_LATIN_CODE_POINT: u32 = 0x02ff;
 /// The family of `LAST_RESORT_FONT`, renamed from DejaVu Sans so it never shadows a system font the SVG lists.
@@ -40,16 +41,32 @@ static FALLBACK_FONTS: LazyLock<Arc<Database>> =
     LazyLock::new(|| Arc::new(with_last_resort(fonts_named(&[FAMILY_STEMS.as_slice(), &FALLBACK_STEMS].concat()))));
 static SYSTEM_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(with_last_resort(system_fonts())));
 
-/// The fonts a diagram needs: the label families alone, the listed fallbacks when they cover every glyph, or the whole system set.
+#[derive(Debug, PartialEq, Eq)]
+enum FontSet {
+    Label,
+    Fallback,
+    System,
+}
+
+/// The fonts a diagram needs: the label families alone, the listed fallbacks when they cover every glyph, or every font.
 pub fn for_text(text: &str) -> Arc<Database> {
-    let fonts = if is_latin(text) {
-        &LABEL_FONTS
-    } else if covers(&FALLBACK_FONTS, text) {
-        &FALLBACK_FONTS
-    } else {
-        &SYSTEM_FONTS
+    let fonts = match font_set(text, || &FALLBACK_FONTS) {
+        FontSet::Label => &LABEL_FONTS,
+        FontSet::Fallback => &FALLBACK_FONTS,
+        FontSet::System => &SYSTEM_FONTS,
     };
     Arc::clone(fonts)
+}
+
+/// `fallback` is only called, and its fonts only loaded, when the text goes beyond Latin.
+fn font_set<'a>(text: &str, fallback: impl FnOnce() -> &'a Database) -> FontSet {
+    if is_latin(text) {
+        FontSet::Label
+    } else if covers(fallback(), text) {
+        FontSet::Fallback
+    } else {
+        FontSet::System
+    }
 }
 
 fn is_latin(text: &str) -> bool {
@@ -75,10 +92,9 @@ fn glyphs_among(database: &Database, face: ID, characters: &BTreeSet<char>) -> V
         .unwrap_or_default()
 }
 
+/// Every font file in the font directories, read the same way as the named ones so mrk reads nothing else.
 fn system_fonts() -> Database {
-    let mut database = Database::new();
-    database.load_system_fonts();
-    database
+    fonts_where(|_| true)
 }
 
 fn label_fonts() -> Database {
@@ -94,11 +110,15 @@ fn with_last_resort(mut database: Database) -> Database {
 }
 
 fn fonts_named(stems: &[&str]) -> Database {
+    fonts_where(|path| stems.contains(&family_stem(path).as_str()))
+}
+
+fn fonts_where(keep: impl Fn(&Path) -> bool) -> Database {
     let mut database = Database::new();
     font_directories()
         .iter()
         .flat_map(|directory| font_files(directory, MAX_DIRECTORY_DEPTH))
-        .filter(|path| stems.contains(&family_stem(path).as_str()))
+        .filter(|path| is_font_file(path) && keep(path))
         .for_each(|path| {
             let _ = database.load_font_file(path);
         });
@@ -122,6 +142,12 @@ fn font_files(directory: &Path, depth: usize) -> Vec<PathBuf> {
             _ => Vec::new(),
         })
         .collect()
+}
+
+fn is_font_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| FONT_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
 }
 
 /// `NotoSansArabic[wdth,wght].ttf` and `InterVariable.ttf` name the same families as their static files.
@@ -205,6 +231,24 @@ mod tests {
     }
 
     #[test]
+    fn only_text_beyond_latin_asks_for_the_fallbacks_and_their_misses_for_every_font() {
+        let fallback = with_last_resort(Database::new());
+
+        assert_eq!(font_set("Café", || unreachable!("fallbacks loaded for Latin")), FontSet::Label);
+        assert_eq!(font_set("Start → End", || &fallback), FontSet::Fallback);
+        assert_eq!(font_set("開始", || &fallback), FontSet::System);
+    }
+
+    #[test]
+    fn only_font_files_are_read() {
+        assert!(is_font_file(Path::new("/usr/share/fonts/DejaVuSans.ttf")));
+        assert!(is_font_file(Path::new("/System/Library/Fonts/Hiragino Sans GB.TTC")));
+        assert!(!is_font_file(Path::new("/usr/share/fonts/fonts.dir")));
+        assert!(!is_font_file(Path::new("/Library/Fonts/README")));
+    }
+
+    #[test]
+    #[ignore = "needs CJK and Arabic fonts installed; run with --ignored on a desktop system"]
     fn text_beyond_latin_finds_a_face_for_every_glyph() {
         assert!(covers(&for_text("開始 → مرحبا"), "開始 → مرحبا"));
     }

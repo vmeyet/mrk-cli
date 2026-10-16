@@ -1,11 +1,9 @@
-use std::collections::HashSet;
-use std::panic::{self, AssertUnwindSafe};
-
 use mermaid_text::RenderOptions;
 
 use super::DiagramError;
+use super::catch::caught;
 use crate::document::{Line, Rgb, Span, Style};
-use crate::text::display_width;
+use crate::text::{TAB, display_width};
 use crate::theme::Palette;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -15,14 +13,8 @@ enum Glyph {
     Label,
 }
 
-/// Deeper subgraphs never fit a terminal, and mermaid-text's layout time grows steeply with depth.
-const MAX_SUBGRAPH_DEPTH: usize = 16;
-
 /// The diagram as box-drawing text no wider than `width`: frames in `muted`, arrows in `accent`, labels in `text`.
 pub fn render(source: &str, width: usize, palette: &Palette) -> Result<Vec<Line>, DiagramError> {
-    if !has_safe_subgraphs(source) {
-        return Err(DiagramError::UnsafeSubgraphs);
-    }
     let drawing = draw(source, width)?;
     let lines: Vec<&str> = drawing.trim_end().lines().collect();
     if lines.is_empty() {
@@ -37,41 +29,9 @@ pub fn render(source: &str, width: usize, palette: &Palette) -> Result<Vec<Line>
 
 fn draw(source: &str, width: usize) -> Result<String, DiagramError> {
     let options = RenderOptions { max_width: Some(width), max_width_strict: true, ..RenderOptions::default() };
-    let drawn = panic::catch_unwind(AssertUnwindSafe(|| mermaid_text::render_with_options(source, &options)));
-    match drawn {
-        Ok(Ok(drawing)) => Ok(drawing.replace('\t', "    ")),
-        Ok(Err(error)) => Err(DiagramError::Invalid(error.to_string())),
-        Err(_) => Err(DiagramError::Crashed),
-    }
-}
-
-/// mermaid-text recurses without end on a subgraph that reuses an id, and a stack overflow aborts past `catch_unwind`.
-/// Statements are split the way mermaid-text splits them: on newlines and semicolons.
-fn has_safe_subgraphs(source: &str) -> bool {
-    let mut ids = HashSet::new();
-    let mut depth = 0_usize;
-    for statement in source.split(['\n', ';']) {
-        match statement.split_whitespace().next() {
-            Some("subgraph") => {
-                depth += 1;
-                if depth > MAX_SUBGRAPH_DEPTH || !ids.insert(subgraph_id(statement)) {
-                    return false;
-                }
-            }
-            Some("end") => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    true
-}
-
-/// `subgraph id`, `subgraph id [label]`, or `subgraph [label]` where the label stands for the id.
-fn subgraph_id(statement: &str) -> &str {
-    let header = statement.trim().trim_start_matches("subgraph").trim();
-    match header.split_once('[') {
-        Some((id, _)) if !id.trim().is_empty() => id.trim(),
-        Some((_, label)) => label.split_once(']').map_or(label, |(inside, _)| inside).trim(),
-        None => header,
+    match caught(|| mermaid_text::render_with_options(source, &options))? {
+        Ok(drawing) => Ok(drawing.replace('\t', TAB)),
+        Err(error) => Err(DiagramError::Invalid(error.to_string())),
     }
 }
 
@@ -147,32 +107,6 @@ mod tests {
         let lines = render("sequenceDiagram\n  Alice->>Bob: Hello", 80, &MRK_DARK.palette).unwrap();
 
         assert!(lines.iter().any(|line| line.plain().contains("Alice")));
-    }
-
-    #[test]
-    fn a_reused_subgraph_id_is_refused_before_drawing() {
-        let sources = [
-            "graph TD\n subgraph a\n subgraph a\n end\n end",
-            "graph TD; subgraph a; subgraph a; end; end",
-            "graph TD\n subgraph a [One]\n end\n subgraph b\n subgraph a[Two]\n end\n end",
-            "graph TD\n subgraph [Same]\n subgraph [Same]\n end\n end",
-            "graph TD\n subgraph\n subgraph\n end\n end",
-        ];
-
-        for source in sources {
-            assert_eq!(render(source, 80, &MRK_DARK.palette), Err(DiagramError::UnsafeSubgraphs), "{source:?}");
-        }
-    }
-
-    #[test]
-    fn subgraphs_nested_too_deep_are_refused() {
-        let nested = |depth: usize| {
-            let opening: String = (0..depth).map(|level| format!(" subgraph s{level}\n")).collect();
-            format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(depth))
-        };
-
-        assert!(has_safe_subgraphs(&nested(MAX_SUBGRAPH_DEPTH)));
-        assert_eq!(render(&nested(MAX_SUBGRAPH_DEPTH + 1), 80, &MRK_DARK.palette), Err(DiagramError::UnsafeSubgraphs));
     }
 
     #[test]

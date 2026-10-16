@@ -1,3 +1,6 @@
+mod budget;
+mod cache;
+mod catch;
 mod frame;
 mod kind;
 mod source;
@@ -6,17 +9,16 @@ mod text;
 
 use std::fmt;
 
+pub use self::budget::Load;
 use crate::document::{Block, CellSize, Line, Picture, Settings};
 use crate::raster::{RasterError, Svg};
-
-/// Mermaid blocks above this size are shown as source (`specs/02-security.md` rule 4).
-const MAX_SOURCE_BYTES: usize = 64 * 1024;
 
 /// Why a diagram is not drawn; the source fallback shows it in its note.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiagramError {
     Oversized,
     UnsafeSubgraphs,
+    OverBudget(Load),
     Invalid(String),
     Crashed,
     Empty,
@@ -29,8 +31,9 @@ pub enum DiagramError {
 impl fmt::Display for DiagramError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Oversized => write!(formatter, "diagram over 64 KiB"),
+            Self::Oversized => write!(formatter, "diagram over {} KiB", budget::MAX_SOURCE_BYTES / 1024),
             Self::UnsafeSubgraphs => write!(formatter, "subgraph id reused or nested too deep"),
+            Self::OverBudget(load) => write!(formatter, "over {} {}, too many to lay out", load.limit(), load.unit()),
             Self::Invalid(message) => write!(formatter, "{message}"),
             Self::Crashed => write!(formatter, "the diagram renderer crashed"),
             Self::Empty => write!(formatter, "nothing to draw"),
@@ -54,18 +57,19 @@ impl From<RasterError> for DiagramError {
 
 /// A ```mermaid block: a picture when `settings.cell` is set and the diagram renders, text otherwise.
 pub fn render(source: &str, settings: &Settings) -> Block {
-    if source.len() > MAX_SOURCE_BYTES {
-        return as_source(source, &DiagramError::Oversized, settings);
-    }
+    drawn(source, settings).unwrap_or_else(|error| as_source(source, &error, settings))
+}
 
+fn drawn(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
     match settings.cell.and_then(|cell| picture(source, cell, settings).ok()) {
-        Some(picture) => Block::Picture(picture),
-        None => as_text(source, settings).unwrap_or_else(|error| as_source(source, &error, settings)),
+        Some(picture) => Ok(Block::Picture(picture)),
+        None => as_text(source, settings),
     }
 }
 
 fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture, DiagramError> {
-    let drawing = Svg::parse(&svg::render(source, &settings.theme.palette)?, source)?;
+    let palette = &settings.theme.palette;
+    let drawing = cache::drawing(source, palette, || Ok(Svg::parse(&svg::render(&budget::parse(source)?, palette)?)?))?;
     let (width, height) = drawing.size();
     let frame = frame::fit(width, height, svg::FONT_SIZE_PX, cell, settings.width).ok_or(DiagramError::TooLarge)?;
     let png = drawing.draw(frame.scale, frame.width_px, frame.height_px)?;
@@ -74,6 +78,7 @@ fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture,
 }
 
 fn as_text(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
+    budget::parse(source)?;
     text::render(source, settings.width, &settings.theme.palette).map(Block::Lines)
 }
 
@@ -84,6 +89,8 @@ fn as_source(source: &str, error: &DiagramError, settings: &Settings) -> Block {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::time::{Duration, Instant};
 
     use super::*;
     use crate::document::Line;
@@ -157,11 +164,41 @@ mod tests {
     }
 
     #[test]
-    fn a_subgraph_inside_itself_is_shown_as_source() {
-        let lines = lines(render("graph TD\n subgraph a\n subgraph a\n end\n end", &test_settings()));
+    fn a_subgraph_inside_itself_is_shown_as_source_by_both_engines() {
+        for settings in [test_settings(), with_cell()] {
+            let lines = lines(render("graph TD\n subgraph a\n subgraph a\n end\n end", &settings));
 
-        assert_eq!(lines[0].plain(), "mermaid: subgraph id reused or nested too deep");
-        assert_eq!(lines[1].plain(), "graph TD");
+            assert_eq!(lines[0].plain(), "mermaid: subgraph id reused or nested too deep");
+            assert_eq!(lines[1].plain(), "graph TD");
+        }
+    }
+
+    /// Edges between pseudo-random nodes, the shape that took the engines longest to lay out.
+    fn tangled(nodes: usize, edges: usize) -> String {
+        let edge = |index: usize| format!("  n{} --> n{}\n", index * 7919 % nodes, index * 104_729 % nodes);
+        format!("graph TD\n{}", (0..edges).map(edge).collect::<String>())
+    }
+
+    #[test]
+    fn diagrams_too_costly_to_lay_out_are_refused_at_once() {
+        let costly = [
+            (tangled(100, 500), "mermaid: over 30 links, too many to lay out"),
+            (tangled(1000, 3500), "mermaid: over 30 links, too many to lay out"),
+            (format!("classDiagram\n{}", "  A --> B\n".repeat(40)), "mermaid: over 30 links, too many to lay out"),
+            (format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000)), "mermaid: over 200 messages, too many to lay out"),
+            (format!("gitGraph\n{}", "  commit\n".repeat(3000)), "mermaid: over 300 elements, too many to lay out"),
+        ];
+
+        for (source, note) in &costly {
+            assert!(source.len() <= budget::MAX_SOURCE_BYTES, "{note}: {} bytes", source.len());
+            for settings in [test_settings(), with_cell()] {
+                let started = Instant::now();
+                let lines = lines(render(source, &settings));
+
+                assert!(started.elapsed() < Duration::from_secs(1), "{note}: {:?}", started.elapsed());
+                assert_eq!(lines[0].plain(), *note);
+            }
+        }
     }
 
     #[test]

@@ -27,9 +27,8 @@ pub enum RasterError {
 pub struct Svg(Tree);
 
 impl Svg {
-    /// `text` is every character the SVG may draw, so fonts covering it get loaded.
-    pub fn parse(svg: &str, text: &str) -> Result<Self, RasterError> {
-        parse_with(svg, fonts::for_text(text)).map(Self)
+    pub fn parse(svg: &str) -> Result<Self, RasterError> {
+        parse_with(svg, fonts::for_text(&character_data(svg))).map(Self)
     }
 
     /// Width and height in SVG units.
@@ -52,6 +51,12 @@ impl Svg {
         resvg::render(&self.0, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
         pixmap.encode_png().map_err(|error| RasterError::PngEncoding(error.to_string()))
     }
+}
+
+/// The text between the tags of an SVG: every character it can draw, plus markup that is ASCII, so the fonts loaded
+/// follow the labels and never a comment of the diagram source.
+fn character_data(svg: &str) -> String {
+    svg.split('<').filter_map(|piece| piece.split_once('>')).map(|(_, text)| text).collect()
 }
 
 /// An SVG parsed with every external resource refused: fonts come only from `fonts`.
@@ -147,6 +152,13 @@ mod tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode(RED_SVG);
 
         assert!(is_refused(&format!("data:image/svg+xml;base64,{encoded}")));
+    }
+
+    #[test]
+    fn fonts_follow_the_text_drawn_not_the_markup() {
+        let svg = r#"<svg font-family="開"><style>text { fill: red; }</style><text>Start</text><title>終了</title></svg>"#;
+
+        assert_eq!(character_data(svg), "text { fill: red; }Start終了");
     }
 
     #[test]

@@ -1,23 +1,18 @@
-use std::panic::{self, AssertUnwindSafe};
-
-use mermaid_rs_renderer::{LayoutConfig, RenderOptions, Theme};
+use mermaid_rs_renderer::{Graph, LayoutConfig, Theme};
 
 use super::DiagramError;
+use super::catch::caught;
 use crate::document::Rgb;
 use crate::theme::Palette;
 
 pub const FONT_SIZE_PX: f32 = 14.0;
 const TRANSPARENT: &str = "none";
 
-/// Mermaid source drawn as an SVG in the palette's colours on a transparent background.
-pub fn render(source: &str, palette: &Palette) -> Result<String, DiagramError> {
-    let options = RenderOptions { theme: themed(palette), layout: layout() };
-    let rendered = panic::catch_unwind(AssertUnwindSafe(|| mermaid_rs_renderer::render_with_options(source, options)));
-    match rendered {
-        Ok(Ok(svg)) => Ok(with_accents(&svg, palette)),
-        Ok(Err(error)) => Err(DiagramError::Invalid(first_line(&error.to_string()))),
-        Err(_) => Err(DiagramError::Crashed),
-    }
+/// A parsed diagram laid out and drawn as an SVG in the palette's colours on a transparent background.
+pub fn render(graph: &Graph, palette: &Palette) -> Result<String, DiagramError> {
+    let (theme, config) = (themed(palette), layout());
+    let svg = caught(|| mermaid_rs_renderer::render_svg(&mermaid_rs_renderer::compute_layout(graph, &theme, &config), &theme, &config))?;
+    Ok(with_accents(&svg, palette))
 }
 
 // Decision shapes are the only polygons drawn straight on the canvas; arrowheads are polygons in a transformed group or marker paths.
@@ -29,10 +24,6 @@ fn with_accents(svg: &str, palette: &Palette) -> String {
         Some((opening, rest)) => format!("{opening}>{style}{rest}"),
         None => svg.to_owned(),
     }
-}
-
-fn first_line(message: &str) -> String {
-    message.lines().next().unwrap_or("invalid diagram").to_owned()
 }
 
 // Fast metrics keep the engine off its own font cache under `~/.cache` for ASCII labels.
@@ -139,17 +130,13 @@ mod tests {
 
     #[test]
     fn flowchart_uses_the_palette_on_a_transparent_background() {
-        let svg = render("graph TD\n  A[Start] --> B{Ready?}", &MRK_DARK.palette).unwrap();
+        let graph = mermaid_rs_renderer::parse_mermaid("graph TD\n  A[Start] --> B{Ready?}").unwrap().graph;
+        let svg = render(&graph, &MRK_DARK.palette).unwrap();
 
         assert!(svg.contains(&MRK_DARK.palette.text.hex()));
         assert!(svg.contains(&MRK_DARK.palette.muted.hex()));
         assert!(svg.contains("fill=\"none\""));
         assert!(!svg.contains("#FFFFFF"));
-    }
-
-    #[test]
-    fn invalid_source_is_an_error() {
-        assert!(matches!(render("hello", &MRK_DARK.palette), Err(DiagramError::Invalid(_))));
     }
 
     #[test]
