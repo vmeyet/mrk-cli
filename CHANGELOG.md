@@ -25,6 +25,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Source lines of `render_sections` are right for files with CR-only line endings.
 - A tab in inline code stops on the column it lands on, and `sanitize::text` places a tab after a removed newline on the joined line.
 
+### Fixed
+
+- The pager gives the terminal back on `SIGTERM`, `SIGHUP`, `SIGINT` or `SIGQUIT` at once, even while it renders a new width, and a signal after `q` is no longer swallowed.
+- Pager pictures through tmux keep ids of their own across panes, and a Sixel picture no longer loses its bottom pixel rows.
+- Alt-modified keys and terminal replies that arrive late no longer act as pager keys; alternate scroll is only touched on terminals that restore it.
+- A panic on any thread while the pager runs is printed, sanitized, once the terminal is back.
+
 ### Security
 
 - `mrk update` installs the commit the release tag pointed at when listed, so a tag moved meanwhile cannot change what builds.

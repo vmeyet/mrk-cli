@@ -40,13 +40,14 @@ impl Image {
         Some(quantize(width, height, &rgba))
     }
 
-    /// The pixel `rows` as one Sixel sequence, cut to whole bands of six so the image never reaches into the text row
-    /// below it, which would scroll the screen at the bottom.
+    /// The pixel `rows` as one Sixel sequence, the last band's rows past them left transparent: no row goes missing,
+    /// and none outside them is drawn.
     pub fn encode(&self, rows: Range<u32>) -> String {
         let top = rows.start.min(self.height);
-        let height = rows.end.min(self.height).saturating_sub(top) / BAND_PX * BAND_PX;
-        let bands: String = (top..top + height).step_by(BAND_PX as usize).map(|band_top| self.band(band_top)).collect();
-        format!("{BEGIN}\"1;1;{};{height}{}{bands}{END}", self.width, self.colors)
+        let bottom = rows.end.clamp(top, self.height);
+        let bands: String =
+            (top..bottom).step_by(BAND_PX as usize).map(|band_top| self.band(band_top..bottom.min(band_top + BAND_PX))).collect();
+        format!("{BEGIN}\"1;1;{};{}{}{bands}{END}", self.width, bottom - top, self.colors)
     }
 
     fn row(&self, y: u32) -> &[Option<u8>] {
@@ -54,10 +55,10 @@ impl Image {
         &self.pixels[y as usize * width..][..width]
     }
 
-    /// Six rows from `top`: each colour's sixels in turn, back to the band's start (`$`) between colours, then down (`-`).
-    fn band(&self, top: u32) -> String {
+    /// Up to six rows: each colour's sixels in turn, back to the band's start (`$`) between colours, then down (`-`).
+    fn band(&self, rows: Range<u32>) -> String {
         let mut masks: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
-        for (bit, y) in (top..top + BAND_PX).enumerate() {
+        for (bit, y) in rows.enumerate() {
             for (x, index) in self.row(y).iter().enumerate().filter_map(|(x, index)| Some((x, (*index)?))) {
                 masks.entry(index).or_insert_with(|| vec![0; self.width as usize])[x] |= 1 << bit;
             }
@@ -68,13 +69,9 @@ impl Image {
 }
 
 /// Draws the pixel `rows` of the image, all of them when `None`, with Sixel from the cursor, then puts the cursor back
-/// where it was: where it ends up after an image differs between terminals. Rows that stop inside the image run on to a
-/// whole band, the next part of the image, which the part drawn after them covers again, so cutting a picture in parts
-/// leaves no gap between them.
+/// where it was: where it ends up after an image differs between terminals.
 pub fn draw(image: &Image, rows: Option<Range<u32>>) -> String {
-    let rows = rows.unwrap_or(0..image.height);
-    let whole_bands = rows.start..rows.start + (rows.end - rows.start).next_multiple_of(BAND_PX);
-    format!("\x1b7{}\x1b8", image.encode(whole_bands))
+    format!("\x1b7{}\x1b8", image.encode(rows.unwrap_or(0..image.height)))
 }
 
 fn decode(png: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
@@ -215,12 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn rows_are_cut_to_whole_bands_inside_the_image() {
+    fn the_last_band_is_padded_with_transparent_rows_and_nothing_past_the_image_is_drawn() {
         let image = image(1, 14, &[RED; 14]);
 
-        assert!(image.encode(0..14).contains("\"1;1;1;12#"));
-        assert!(image.encode(3..10).contains("\"1;1;1;6#"));
-        assert!(image.encode(10..40).contains("\"1;1;1;0#"));
+        assert_eq!(image.encode(0..14), "\x1bP0;1;0q\"1;1;1;14#0;2;100;0;0#0~-#0~-#0B-\x1b\\");
+        assert_eq!(image.encode(3..10), "\x1bP0;1;0q\"1;1;1;7#0;2;100;0;0#0~-#0@-\x1b\\");
+        assert_eq!(image.encode(10..40), "\x1bP0;1;0q\"1;1;1;4#0;2;100;0;0#0N-\x1b\\");
+        assert_eq!(image.encode(20..40), "\x1bP0;1;0q\"1;1;1;0#0;2;100;0;0\x1b\\");
     }
 
     #[test]
@@ -268,6 +266,6 @@ mod tests {
 
         assert!(drawn.starts_with("\x1b7\x1bP") && drawn.ends_with("\x1b\\\x1b8"), "{drawn:?}");
         assert!(drawn.contains("\"1;1;1;12#"), "{drawn:?}");
-        assert!(draw(&image, Some(6..12)).contains("\"1;1;1;6#"));
+        assert!(draw(&image, Some(6..11)).contains("\"1;1;1;5#0;2;100;0;0#0^-"));
     }
 }

@@ -9,6 +9,8 @@ mod query;
 mod reply;
 mod sixel;
 mod tmux;
+#[cfg(unix)]
+mod tty;
 
 use std::io::Write;
 
@@ -330,7 +332,7 @@ mod tests {
     const SIXEL: Option<Graphics> = Some(Graphics { protocol: Protocol::Sixel, cell: CELL });
 
     #[test]
-    fn a_tall_sixel_picture_sends_each_run_on_to_a_whole_band_so_no_rows_go_missing() {
+    fn a_tall_sixel_picture_sends_every_pixel_row_once_across_its_runs() {
         let png = sixel::test_png(1, 100, &[[255, 0, 0, 255]; 100]);
         let picture = Picture { png, cols: 1, rows: 5, alt: "flow".to_owned(), indent: Line::blank(), concealed_text: None };
         let short_screen = Capabilities { rows: 3, ..capabilities(ColorDepth::None, SIXEL) };
@@ -338,7 +340,7 @@ mod tests {
         let drawn = ansi(&Document { blocks: vec![Block::Picture(picture)] }, &short_screen, 0);
         let heights: Vec<&str> = drawn.split("\"1;1;1;").skip(1).filter_map(|rest| rest.split('#').next()).collect();
 
-        assert_eq!(heights, ["42", "42", "18"], "{drawn:?}");
+        assert_eq!(heights, ["40", "40", "20"], "{drawn:?}");
     }
 
     #[test]

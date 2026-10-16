@@ -60,6 +60,9 @@ assert_cmd = "2.0"
 insta = "1"
 predicates = "3.1"
 
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1.1", features = ["fs", "process", "pty", "termios"] }
+
 [profile.release]
 opt-level = "s"
 lto = "fat"

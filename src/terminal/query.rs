@@ -39,46 +39,24 @@ fn request(questions: Questions) -> String {
 
 #[cfg(unix)]
 mod tty {
-    use std::fs::{File, OpenOptions};
+    use std::fs::File;
     use std::io::{self, Read, Write};
     use std::time::{Duration, Instant};
 
     use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
     use rustix::process::getpgrp;
-    use rustix::termios::{OptionalActions, Termios, tcgetattr, tcgetpgrp, tcsetattr};
+    use rustix::termios::tcgetpgrp;
 
     use super::reply::{self, Replies};
+    use crate::terminal::tty::{self, RawMode};
 
     const MAX_REPLY_BYTES: usize = 4096;
     const READ_BYTES: usize = 256;
     const IDLE_WAIT: Duration = Duration::from_millis(2);
 
-    struct RawMode<'a> {
-        tty: &'a File,
-        saved: Termios,
-    }
-
-    impl<'a> RawMode<'a> {
-        fn enable(tty: &'a File) -> io::Result<Self> {
-            let saved = tcgetattr(tty)?;
-            let mut raw = saved.clone();
-            raw.make_raw();
-            tcsetattr(tty, OptionalActions::Now, &raw)?;
-            Ok(Self { tty, saved })
-        }
-    }
-
-    /// Restoring with `TCSAFLUSH` discards the input left unread in the same step, so the shell or the pager never reads
-    /// a reply that arrived during the round as keys; a reply arriving after it still reaches them.
-    impl Drop for RawMode<'_> {
-        fn drop(&mut self) {
-            let _ = tcsetattr(self.tty, OptionalActions::Flush, &self.saved);
-        }
-    }
-
     /// Non-blocking reads rather than `poll`, which macOS refuses on `/dev/tty`.
     fn open_nonblocking() -> io::Result<File> {
-        let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+        let tty = tty::open()?;
         fcntl_setfl(&tty, fcntl_getfl(&tty)? | OFlags::NONBLOCK)?;
         Ok(tty)
     }
