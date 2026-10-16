@@ -4,8 +4,9 @@ Package `mrk-cli` (`mrk` is taken on crates.io), library crate `mrk`, binary `mr
 
 ## Features
 
-- `cli` (default): the binary and the `cli`, `config`, `terminal` and `update` modules, with `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `dirs`, `toml`, `serde`, `shell-words`, `rustix`, `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
-- Always on, the library core: `document`, `text`, `theme`, `markdown`, `diff`, `code`, `mermaid`, `raster`, `version`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
+- `cli` (default): the library's `terminal` module and the binary, whose own `cli`, `config` and `update` modules are no part of the library, with `anyhow`, `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `dirs`, `toml`, `serde`, `shell-words`, `rustix`, `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
+- Always on, the library core: `document`, `text`, `sanitize`, `theme`, `markdown`, `diff`, `code`, `mermaid`, `raster`, `version`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
+  The core returns typed errors (`theme::UnknownTheme`, `raster::RasterError`); the binary adds its own wording.
 
 ## Pipeline
 
@@ -27,28 +28,31 @@ main ─▶ cli::run
 ## Crate layout
 
 ```
-build.rs           embeds the git commit as GIT_HASH for version.rs
+build.rs           embeds the git commit as GIT_HASH for version.rs, only when the package is the root of its git checkout (a vendored copy reports `unknown`)
 assets/fonts/      MrkSans.ttf, rebuilt by scripts/last-resort-font, and the DejaVu license it ships under
 src/
-  main.rs          calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
-  lib.rs           module list; `cli`, `config`, `terminal`, `update` behind the `cli` feature
+  main.rs          the binary: declares `cli`, `config`, `update`, calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
+  lib.rs           the library's module list; `terminal` behind the `cli` feature
   cli/             clap arguments, precedence flags > env > config, orchestration
     help.rs        the sections after the options (settings, config lookup, pager keys, exit status), as --help text and man roff
     input.rs       file or stdin, capped at 8 MiB, the name the pager shows
     output.rs      Output (print, pager, MRK_PAGER command), Layout: the render closure the pager calls on resize
-  config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected)
+  config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected); the width bounds MIN_WIDTH 20, MAX_WIDTH 1000 and DEFAULT_WIDTH 100
   diff.rs          blocks(): two versions of a file rendered with render_blocks, paired block by block, changed words as char ranges (similar)
-  document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight()
+  document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight(); Line::printable() is the text safe to print
+  sanitize.rs      text, lines, link: what may reach a terminal, for the binary and library users alike
   text.rs          display_width, cut, wrap
-  theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names
-  update.rs        `mrk update`: latest release tag from `git ls-remote --tags`, compared with the running version, installed with `cargo install --tag`
+  theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names, UnknownTheme
+  update.rs        `mrk update`: the latest release tag and its commit from `git ls-remote --tags`, compared with the running version;
+                   `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
+                   else `cargo install --rev <commit>` in cargo's own temporary build folder
   version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)
     blocks.rs      SourceBlock, BlockKind: the top-level sections both render and render_blocks are built from
   code/            syntect + two-face: highlight a fenced block into a surface panel
   mermaid/         mermaid-rs-renderer SVG ─▶ raster PNG ─▶ Picture; mermaid-text fallback
   raster/          resvg and its fonts: an SVG ─▶ PNG, a line of text ─▶ Picture (a jumbo title); no other module sees resvg
-  terminal/        detect, write (ANSI + OSC 8 + kitty graphics or Sixel), sanitize, colour downgrade
+  terminal/        detect, write (ANSI + OSC 8 + kitty graphics or Sixel) through sanitize, colour downgrade
     sixel.rs       PNG ─▶ at most 256 colours ─▶ Sixel bands; pure, no dependency beyond `png`
     pager/         the built-in pager, below
 ```
@@ -88,7 +92,7 @@ src/
 - Escape sequences are produced only inside `terminal/`: `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs`, `sixel.rs` and `tmux.rs` for pictures, `query.rs` for the capability queries, `error_report` for dimmed error causes.
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
 - A `Line` never exceeds `settings.width` cells; the renderer that builds it guarantees it, `text::wrap` helps.
-- Every width is `text::display_width`: counted per grapheme (at most two cells), a tab as four, the characters `terminal::sanitize` removes as none.
+- Every width is `text::display_width`: counted per grapheme (at most two cells), a tab as four, the characters `sanitize` removes as none.
   Every cut to a width goes through `text::cut`, which never splits a grapheme.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 
@@ -119,3 +123,4 @@ src/
 - Pushing a `vX.Y.Z` tag that matches the package version builds `aarch64`/`x86_64` for `apple-darwin`, `unknown-linux-gnu` and `unknown-linux-musl` on native runners with the `dist` profile (the release profile), then publishes a GitHub release with a shell installer and a Homebrew formula pushed to `vmeyet/homebrew-tap`.
 - Linux ships twice: glibc for Homebrew, and static musl that the shell installer falls back to on Alpine or an old glibc.
 - The only C code is oniguruma, built by `cc`; the musl jobs compile it with `musl-gcc` from `musl-tools`, and fonts come from the system at run time with the embedded `mrk Sans` as last resort, so nothing links beyond libc.
+- `mrk update` outside Homebrew builds from source with cargo rather than downloading the release's binary: it trusts the same git host and needs no checksum or signature scheme, at the cost of a few minutes of compiling. It installs the commit the tag pointed at when listed (the peeled `^{}` line for an annotated tag), so a tag moved between listing and fetching cannot change what builds.

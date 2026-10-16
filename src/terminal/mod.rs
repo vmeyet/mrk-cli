@@ -6,7 +6,6 @@ mod kitty;
 pub mod pager;
 mod query;
 mod reply;
-pub mod sanitize;
 mod sixel;
 mod tmux;
 
@@ -18,6 +17,7 @@ pub use detect::{Preferences, detect};
 
 use self::ansi::Half;
 use crate::document::{Block, CellSize, Document, JumboTitle, Picture};
+use crate::sanitize;
 use crate::theme::Appearance;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

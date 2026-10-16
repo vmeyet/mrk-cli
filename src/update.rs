@@ -1,11 +1,10 @@
 //! `mrk update`: where a newer mrk comes from, and whether the running one is already it.
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-
-use crate::version;
+use mrk::version;
 
 /// Where `mrk update` installs from.
 pub const REPO: &str = "https://github.com/vmeyet/mrk-cli";
@@ -13,8 +12,7 @@ pub const REPO: &str = "https://github.com/vmeyet/mrk-cli";
 /// The Homebrew formula `mrk update` upgrades when brew installed the running binary.
 const FORMULA: &str = "vmeyet/tap/mrk";
 
-/// cargo's build folder, kept between updates so only mrk recompiles.
-const BUILD_FOLDER: &str = "cargo_target";
+const PEELED_SUFFIX: &str = "^{}";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -59,56 +57,59 @@ fn number(part: &str) -> Option<u64> {
     part.bytes().all(|byte| byte.is_ascii_digit()).then(|| part.parse().ok()).flatten()
 }
 
+/// A release and the commit its tag pointed at when listed: cargo builds that commit, so a tag moved since cannot
+/// swap the code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Release {
+    version: Version,
+    commit: String,
+}
+
+/// One `git ls-remote --tags` line: `<id>\trefs/tags/v1.2.3`, then `<commit>\trefs/tags/v1.2.3^{}` when the tag is
+/// annotated, its own id being the tag object's rather than the commit's.
+struct Tag<'a> {
+    version: Version,
+    id: &'a str,
+    is_peeled: bool,
+}
+
+fn tag(line: &str) -> Option<Tag<'_>> {
+    let (id, name) = line.split_once("\trefs/tags/v")?;
+    let (name, is_peeled) = name.strip_suffix(PEELED_SUFFIX).map_or((name, false), |name| (name, true));
+    let version = Version::parse(name)?;
+    is_object_id(id).then_some(Tag { version, id, is_peeled })
+}
+
+/// A full SHA-1 or SHA-256 id, so what reaches cargo's `--rev` is never a flag nor a branch name.
+fn is_object_id(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The newest release among `git ls-remote --tags` lines, with the commit its tag points at.
+fn newest_release(listing: &str) -> Option<Release> {
+    let newest = listing.lines().filter_map(tag).max_by_key(|tag| (tag.version, tag.is_peeled))?;
+    Some(Release { version: newest.version, commit: newest.id.to_owned() })
+}
+
 /// Only a release newer than the running one installs, unless forced.
 pub fn decide(installed: Version, latest: Version, force: bool) -> Decision {
     if force || latest > installed { Decision::Install } else { Decision::UpToDate }
 }
 
-/// The newest release among `git ls-remote --tags` lines (`<commit>\trefs/tags/v1.2.3`).
-fn newest_release(listing: &str) -> Option<Version> {
-    listing.lines().filter_map(|line| line.split_once("\trefs/tags/v")).filter_map(|(_, release)| Version::parse(release)).max()
-}
-
-fn cache_root() -> PathBuf {
-    std::env::var_os("MRK_CACHE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| dirs::cache_dir().map(|dir| dir.join("mrk")))
-        .unwrap_or_else(|| PathBuf::from(".mrk-cache"))
-}
-
-fn build_folder() -> Result<PathBuf> {
-    let path = cache_root().join(BUILD_FOLDER);
-    std::fs::create_dir_all(&path).with_context(|| format!("creating {}", path.display()))?;
-    Ok(path)
-}
-
-fn git(args: &[&str]) -> Result<String> {
-    let output = Command::new("git").args(args).env("GIT_TERMINAL_PROMPT", "0").output().context("running git")?;
+/// The trimmed stdout of a command that must succeed.
+fn stdout_of(command: &mut Command) -> Result<String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let output = command.output().with_context(|| format!("running {program}"))?;
     if !output.status.success() {
-        bail!("git {}: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());
+        bail!("{program} failed: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
 /// The newest release tagged in the repo.
-fn latest() -> Result<Version> {
-    let listing = git(&["ls-remote", "--tags", "--refs", REPO])?;
+fn latest() -> Result<Release> {
+    let listing = stdout_of(Command::new("git").args(["ls-remote", "--tags", REPO]).env("GIT_TERMINAL_PROMPT", "0"))?;
     newest_release(&listing).with_context(|| format!("{REPO} has no release tag"))
-}
-
-/// cargo ties a `--git` build to the repo URL, never to the commit, so a kept build folder would
-/// look fresh and reinstall the old binary with its old commit hash. Dropping mrk's own
-/// fingerprints recompiles mrk and reruns `build.rs`; the dependencies stay built.
-fn forget_mrk(build: &Path) -> Result<()> {
-    let Ok(entries) = std::fs::read_dir(build.join("release").join(".fingerprint")) else { return Ok(()) };
-    let prefix = concat!(env!("CARGO_PKG_NAME"), "-");
-    for entry in entries {
-        let entry = entry?;
-        if entry.file_name().to_string_lossy().starts_with(prefix) {
-            std::fs::remove_dir_all(entry.path()).with_context(|| format!("removing {}", entry.path().display()))?;
-        }
-    }
-    Ok(())
 }
 
 /// Homebrew keeps every formula it installs under a `Cellar` folder.
@@ -120,21 +121,37 @@ fn installed_by_brew() -> bool {
     std::env::current_exe().and_then(std::fs::canonicalize).is_ok_and(|exe| is_brew_path(&exe))
 }
 
-fn upgrade_with_brew() -> Result<()> {
-    let status = Command::new("brew").args(["upgrade", FORMULA]).status().context("running brew upgrade")?;
+/// `brew upgrade` does nothing for the version already installed, so a forced update reinstalls.
+fn brew_command(force: bool) -> &'static str {
+    if force { "reinstall" } else { "upgrade" }
+}
+
+/// Whether `brew list --versions` (`mrk 0.6.0 0.7.0_1`, `_1` being a formula revision) lists the release.
+fn brew_lists(listing: &str, release: Version) -> bool {
+    let versions = listing.split_whitespace().skip(1).map(|installed| installed.split_once('_').map_or(installed, |(version, _)| version));
+    versions.filter_map(Version::parse).any(|installed| installed == release)
+}
+
+/// The tap's formula follows a release by a few minutes, so brew can succeed and still install an older version.
+fn install_with_brew(release: Version, force: bool) -> Result<()> {
+    let command = brew_command(force);
+    println!("→ brew {command} {FORMULA}…");
+    let status = Command::new("brew").args([command, FORMULA]).status().with_context(|| format!("running brew {command}"))?;
     if !status.success() {
-        bail!("brew upgrade failed");
+        bail!("brew {command} failed");
+    }
+    let listing = stdout_of(Command::new("brew").args(["list", "--versions", FORMULA]))?;
+    if !brew_lists(&listing, release) {
+        bail!("brew installed {listing}, not {}: the tap has not caught up yet, try again in a few minutes", release.tag());
     }
     Ok(())
 }
 
-/// Rebuilds and installs a release from the repo with cargo, reusing the dependencies built last time.
-fn install_with_cargo(release: Version) -> Result<()> {
-    let build = build_folder()?;
-    forget_mrk(&build)?;
+/// Builds the release's commit in a temporary folder cargo removes once installed.
+fn install_with_cargo(release: &Release) -> Result<()> {
+    println!("→ installing mrk {} ({}) from {REPO}…", release.version.tag(), version::short(&release.commit));
     let status = Command::new("cargo")
-        .args(["install", "--git", REPO, "--tag", &release.tag(), "--force", "--locked", "--target-dir"])
-        .arg(&build)
+        .args(["install", "--git", REPO, "--rev", &release.commit, "--force", "--locked"])
         .status()
         .context("running cargo install")?;
     if !status.success() {
@@ -143,24 +160,19 @@ fn install_with_cargo(release: Version) -> Result<()> {
     Ok(())
 }
 
-/// Upgrades through brew when brew installed mrk, otherwise rebuilds the release with cargo.
-fn install(release: Version) -> Result<()> {
-    if installed_by_brew() {
-        println!("→ upgrading {FORMULA} to {} with brew…", release.tag());
-        return upgrade_with_brew();
-    }
-    println!("→ installing mrk {} from {REPO}…", release.tag());
-    install_with_cargo(release)
+/// Installs through brew when brew installed mrk, otherwise builds the release with cargo.
+fn install(release: &Release, force: bool) -> Result<()> {
+    if installed_by_brew() { install_with_brew(release.version, force) } else { install_with_cargo(release) }
 }
 
 /// Installs the latest release when it is newer than the running one.
 pub fn run(force: bool) -> Result<()> {
     let latest = latest().context("could not check the latest release")?;
-    match decide(Version::running()?, latest, force) {
+    match decide(Version::running()?, latest.version, force) {
         Decision::UpToDate => println!("✓ already up to date ({})", version::label()),
         Decision::Install => {
-            install(latest)?;
-            println!("✓ updated, run `mrk --version` to see it");
+            install(&latest, force)?;
+            println!("✓ installed mrk {}, run `mrk --version` to see it", latest.version.tag());
         }
     }
     Ok(())
@@ -171,32 +183,16 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
+    const TAG_OBJECT: &str = "1111111111111111111111111111111111111111";
+    const COMMIT: &str = "2222222222222222222222222222222222222222";
+    const OLD_COMMIT: &str = "3333333333333333333333333333333333333333";
+
     fn version(text: &str) -> Version {
         Version::parse(text).unwrap()
     }
 
-    #[test]
-    fn forgetting_mrk_drops_only_its_own_fingerprints() {
-        let build = tempfile::tempdir().unwrap();
-        let fingerprints = build.path().join("release").join(".fingerprint");
-        for name in ["mrk-cli-3483aceb8f1a5a28", "mrk-cli-e613dd567bc7d97f", "mrk-client-0000000000000000", "serde-0123456789abcdef"] {
-            std::fs::create_dir_all(fingerprints.join(name)).unwrap();
-        }
-
-        forget_mrk(build.path()).unwrap();
-
-        let mut left: Vec<String> =
-            std::fs::read_dir(&fingerprints).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        left.sort();
-        assert_eq!(left, ["mrk-client-0000000000000000", "serde-0123456789abcdef"]);
-    }
-
-    #[test]
-    fn forgetting_mrk_in_a_folder_never_built_is_fine() {
-        let build = tempfile::tempdir().unwrap();
-
-        forget_mrk(&build.path().join("missing")).unwrap();
-        forget_mrk(build.path()).unwrap();
+    fn release(text: &str, commit: &str) -> Release {
+        Release { version: version(text), commit: commit.to_owned() }
     }
 
     #[test]
@@ -207,6 +203,24 @@ mod tests {
     #[test]
     fn a_binary_installed_by_cargo_is_not_a_brew_install() {
         assert!(!is_brew_path(Path::new("/Users/me/.cargo/bin/mrk")));
+    }
+
+    #[test]
+    fn brew_reinstalls_when_forced_and_upgrades_otherwise() {
+        assert_eq!(brew_command(true), "reinstall");
+        assert_eq!(brew_command(false), "upgrade");
+    }
+
+    #[test]
+    fn brew_has_the_release_when_it_lists_it_whatever_the_formula_revision() {
+        assert!(brew_lists("mrk 0.7.0", version("0.7.0")));
+        assert!(brew_lists("mrk 0.6.0 0.7.0_1", version("0.7.0")));
+    }
+
+    #[test]
+    fn brew_lacks_the_release_when_the_tap_has_not_caught_up() {
+        assert!(!brew_lists("mrk 0.6.0", version("0.7.0")));
+        assert!(!brew_lists("", version("0.7.0")));
     }
 
     #[test]
@@ -249,15 +263,30 @@ mod tests {
 
     #[test]
     fn the_newest_release_wins_by_number_not_by_listing_order() {
-        let listing =
-            "aaaa\trefs/tags/v0.10.0\nbbbb\trefs/tags/v0.9.1\ncccc\trefs/tags/v1.0.0-rc.1\ndddd\trefs/tags/nightly\neeee\trefs/tags/v0.2.0";
+        let listing = format!(
+            "{OLD_COMMIT}\trefs/tags/v0.10.0\n{COMMIT}\trefs/tags/v0.9.1\n{COMMIT}\trefs/tags/v1.0.0-rc.1\n{COMMIT}\trefs/tags/nightly\n{COMMIT}\trefs/tags/v0.2.0"
+        );
 
-        assert_eq!(newest_release(listing), Some(version("0.10.0")));
+        assert_eq!(newest_release(&listing), Some(release("0.10.0", OLD_COMMIT)));
+    }
+
+    #[test]
+    fn an_annotated_tag_installs_the_commit_it_points_at() {
+        let listing = format!("{TAG_OBJECT}\trefs/tags/v0.7.0\n{COMMIT}\trefs/tags/v0.7.0^{{}}\n{OLD_COMMIT}\trefs/tags/v0.6.0");
+
+        assert_eq!(newest_release(&listing), Some(release("0.7.0", COMMIT)));
+    }
+
+    #[test]
+    fn a_tag_without_a_full_object_id_is_ignored() {
+        let listing = format!("--upload-pack=x\trefs/tags/v9.0.0\nabcd\trefs/tags/v8.0.0\n{COMMIT}\trefs/tags/v0.7.0");
+
+        assert_eq!(newest_release(&listing), Some(release("0.7.0", COMMIT)));
     }
 
     #[test]
     fn a_repo_without_release_tags_has_no_newest_release() {
         assert_eq!(newest_release(""), None);
-        assert_eq!(newest_release("aaaa\trefs/tags/nightly"), None);
+        assert_eq!(newest_release(&format!("{COMMIT}\trefs/tags/nightly")), None);
     }
 }

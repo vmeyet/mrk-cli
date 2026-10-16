@@ -2,13 +2,17 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow};
+use mrk::terminal::{Align, ImagesMode};
 use serde::Deserialize;
 
 use crate::cli::UsageError;
-use crate::terminal::{Align, ImagesMode};
 
 pub const MIN_WIDTH: usize = 20;
+/// Wider than any window (a 4K screen in a 6-pixel font is about 640 columns); a code line is padded to the width,
+/// so the bound also bounds the memory every line takes.
+pub const MAX_WIDTH: usize = 1000;
+pub const DEFAULT_WIDTH: usize = 100;
 const FILE: &str = "mrk/config.toml";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -38,22 +42,27 @@ pub fn paths() -> Vec<PathBuf> {
     candidates(std::env::var_os("XDG_CONFIG_HOME"), dirs::home_dir(), dirs::config_dir())
 }
 
-fn check(config: &Config) -> Result<()> {
-    match config.width {
-        Some(width) if width < MIN_WIDTH => bail!("`width = {width}` is too narrow: {MIN_WIDTH} is the least"),
-        _ => Ok(()),
+/// The width when it lies within `MIN_WIDTH..=MAX_WIDTH`, else why not, for the flag, the environment and the config alike.
+pub fn check_width(width: usize) -> Result<usize, String> {
+    match width {
+        ..MIN_WIDTH => Err(format!("{width} is too narrow: {MIN_WIDTH} is the least")),
+        MIN_WIDTH..=MAX_WIDTH => Ok(width),
+        _ => Err(format!("{width} is too wide: {MAX_WIDTH} is the most")),
     }
 }
 
 pub fn parse(text: &str) -> Result<Config> {
     let config: Config = toml::from_str(text)?;
-    check(&config)?;
+    if let Some(width) = config.width {
+        check_width(width).map_err(|reason| anyhow!("width {reason}"))?;
+    }
     Ok(config)
 }
 
+/// A config file that exists but cannot be read is as much a usage mistake as one that does not parse.
 pub fn load_from(path: &Path) -> Result<Config> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    parse(&text).with_context(|| UsageError(format!("invalid config {}", path.display())))
+    let config = std::fs::read_to_string(path).map_err(anyhow::Error::from).and_then(|text| parse(&text));
+    config.with_context(|| UsageError(format!("invalid config {}", path.display())))
 }
 
 /// The first config file that exists; defaults when there is none.
@@ -137,6 +146,22 @@ mod tests {
 
         assert!(parse("width = \"wide\"").is_err());
         assert!(parse("width = 5").unwrap_err().to_string().contains("too narrow"));
+        assert!(parse("width = 50000000").unwrap_err().to_string().contains("too wide"));
+    }
+
+    #[test]
+    fn a_width_is_kept_only_between_the_bounds() {
+        assert_eq!(check_width(MIN_WIDTH), Ok(MIN_WIDTH));
+        assert_eq!(check_width(MAX_WIDTH), Ok(MAX_WIDTH));
+        assert_eq!(check_width(MIN_WIDTH - 1), Err("19 is too narrow: 20 is the least".to_owned()));
+        assert_eq!(check_width(usize::MAX).unwrap_err(), format!("{} is too wide: 1000 is the most", usize::MAX));
+    }
+
+    #[test]
+    fn an_unreadable_config_is_a_usage_error() {
+        let folder = tempfile::tempdir().unwrap();
+
+        assert!(load_from(folder.path()).unwrap_err().is::<UsageError>());
     }
 
     #[test]

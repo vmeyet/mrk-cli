@@ -14,7 +14,7 @@ fn is_bidi_control(character: char) -> bool {
 }
 
 /// The characters a terminal could interpret: C0 and C1 controls, DEL, bidi overrides and isolates.
-/// `terminal::sanitize` removes them, so they take no cell.
+/// `sanitize` removes them, so they take no cell.
 pub fn is_forbidden(character: char) -> bool {
     character.is_control() || is_bidi_control(character)
 }

@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::sanitize;
 use crate::theme::Theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -98,8 +99,14 @@ impl Line {
         self.spans.iter().map(|span| crate::text::display_width(&span.text)).sum()
     }
 
+    /// The text as the input wrote it, escape sequences included: for searching and comparing, never for printing.
     pub fn plain(&self) -> String {
         self.spans.iter().map(|span| span.text.as_str()).collect()
+    }
+
+    /// The text safe to write to a terminal: `plain` through [`sanitize::text`].
+    pub fn printable(&self) -> String {
+        sanitize::text(&self.plain())
     }
 }
 
@@ -215,6 +222,14 @@ mod tests {
     use super::*;
 
     const RED: Rgb = Rgb(255, 0, 0);
+
+    #[test]
+    fn printable_text_carries_no_escape_sequence_while_plain_keeps_the_input() {
+        let line = Line::new(vec![Span::plain("hi \x1b]52;c;AAAA\x07"), Span::plain(" there")]);
+
+        assert_eq!(line.plain(), "hi \x1b]52;c;AAAA\x07 there");
+        assert_eq!(line.printable(), "hi ]52;c;AAAA there");
+    }
 
     #[test]
     fn mix_moves_each_channel_toward_the_other_colour_and_rounds() {

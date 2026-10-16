@@ -1,17 +1,32 @@
+//! Text and links made safe to write to a terminal, which interprets the escape sequences an untrusted input can carry.
 use crate::text::{TAB, is_forbidden};
 
 const MAX_LINK_BYTES: usize = 2048;
-const ALLOWED_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
+const WEB_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+/// Each ends on the slash that starts the path, so a `file:` link names no host but this machine.
+const LOCAL_FILE_PREFIXES: [&str; 2] = ["file:///", "file://localhost/"];
 
 /// The text with every character a terminal could interpret removed: C0 and C1 controls, DEL, bidi overrides and isolates.
 /// A tab becomes spaces.
 pub fn text(raw: &str) -> String {
-    raw.split('\t').map(|part| part.chars().filter(|&character| !is_forbidden(character)).collect::<String>()).collect::<Vec<_>>().join(TAB)
+    clean(raw, |_| false)
 }
 
-/// `text` for a message of several lines: each line is cleaned, the newlines between them are kept.
+/// `text` for a message of several lines: the newlines are kept.
 pub fn lines(raw: &str) -> String {
-    raw.split('\n').map(text).collect::<Vec<_>>().join("\n")
+    clean(raw, |character| character == '\n')
+}
+
+fn clean(raw: &str, keeps: impl Fn(char) -> bool) -> String {
+    let mut cleaned = String::with_capacity(raw.len());
+    for character in raw.chars() {
+        match character {
+            '\t' => cleaned.push_str(TAB),
+            _ if is_forbidden(character) && !keeps(character) => {}
+            _ => cleaned.push(character),
+        }
+    }
+    cleaned
 }
 
 fn percent_encode(raw: &str) -> String {
@@ -25,16 +40,36 @@ fn scheme(target: &str) -> Option<&str> {
     is_valid.then_some(scheme)
 }
 
-fn has_allowed_scheme(target: &str) -> bool {
-    scheme(target).is_some_and(|scheme| ALLOWED_SCHEMES.iter().any(|allowed| scheme.eq_ignore_ascii_case(allowed)))
+/// A `file:` link to another host (`file://host/share`, `file:////host/share`, `file:///\\host\share`) opens an SMB share
+/// on some systems, which sends it the user's credentials.
+fn is_local_file(target: &str) -> bool {
+    let path = LOCAL_FILE_PREFIXES.iter().find_map(|prefix| {
+        let head = target.get(..prefix.len())?;
+        head.eq_ignore_ascii_case(prefix).then(|| &target[prefix.len()..])
+    });
+    path.is_some_and(|path| !names_a_share(&path.to_ascii_lowercase()))
+}
+
+/// Openers decode `%2F` and `%5C` before they read the path, so the encoded slash and backslash count too.
+fn names_a_share(path: &str) -> bool {
+    path.starts_with('/') || path.starts_with("%2f") || path.contains('\\') || path.contains("%5c")
+}
+
+fn is_allowed(target: &str) -> bool {
+    match scheme(target) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("file") => is_local_file(target),
+        Some(scheme) => WEB_SCHEMES.iter().any(|allowed| scheme.eq_ignore_ascii_case(allowed)),
+        None => false,
+    }
 }
 
 /// The OSC 8 target for a link, or `None` when the link must not be clickable: longer than 2,048 bytes,
-/// or with a scheme other than http, https, mailto and file (so relative paths and `javascript:` are dropped).
+/// with a scheme other than http, https, mailto and file (so relative paths and `javascript:` are dropped),
+/// or a `file:` link to another host.
 pub fn link(raw: &str) -> Option<String> {
     let target = percent_encode(&text(raw));
     let is_short = target.len() <= MAX_LINK_BYTES;
-    (is_short && has_allowed_scheme(&target)).then_some(target)
+    (is_short && is_allowed(&target)).then_some(target)
 }
 
 #[cfg(test)]
@@ -104,6 +139,28 @@ mod tests {
         for target in ["https://example.com/a?b=c#d", "http://x.y", "mailto:me@example.com", "file:///tmp/a.md", "HTTPS://EXAMPLE.COM"] {
             assert_eq!(link(target).as_deref(), Some(target), "{target}");
         }
+    }
+
+    #[test]
+    fn file_links_pass_only_for_this_machine() {
+        for target in ["file:///C:/notes.md", "file://localhost/tmp/a.md", "FILE://LocalHost/tmp/a.md"] {
+            assert_eq!(link(target).as_deref(), Some(target), "{target}");
+        }
+        for target in ["file://evil.host/share/x", "file:////evil.host/share", "file:///\\\\evil.host\\share", "file:/tmp/a.md", "file:"] {
+            assert_eq!(link(target), None, "{target}");
+        }
+    }
+
+    #[test]
+    fn an_encoded_slash_or_backslash_cannot_name_another_host() {
+        for target in ["file:///%5C%5Cevil.host%5Cshare", "file:///%2f%2Fevil.host/x", "file:///tmp/a%5cb"] {
+            assert_eq!(link(target), None, "{target}");
+        }
+    }
+
+    #[test]
+    fn every_tab_becomes_spaces_wherever_it_sits() {
+        assert_eq!(text("\ta\x1b\tb\t"), "    a    b    ");
     }
 
     #[test]

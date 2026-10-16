@@ -38,7 +38,7 @@ fn svg(text: &str, color: Rgb, font_size: f32, width_px: f32, height_px: u32) ->
     )
 }
 
-/// The text as XML character data: markup escaped, and the characters `terminal::sanitize` removes from the concealed
+/// The text as XML character data: markup escaped, and the characters `sanitize` removes from the concealed
 /// copy dropped, controls that XML forbids among them.
 fn escaped(text: &str) -> String {
     text.chars()

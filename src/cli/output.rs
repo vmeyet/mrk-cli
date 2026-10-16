@@ -2,13 +2,13 @@ use std::io::{self, BufWriter, Write};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
+use mrk::document::{Document, Settings};
+use mrk::terminal::pager::{self, Rendered, Session};
+use mrk::terminal::{self, Align, Capabilities};
+use mrk::theme::Theme;
 
 use super::UsageError;
-use crate::config::MIN_WIDTH;
-use crate::document::{Document, Settings};
-use crate::terminal::pager::{self, Rendered, Session};
-use crate::terminal::{self, Align, Capabilities};
-use crate::theme::{self, Theme};
+use crate::config::{DEFAULT_WIDTH, MIN_WIDTH};
 
 const SIDE_MARGINS: usize = 4;
 
@@ -36,7 +36,7 @@ pub fn choose(wants_pager: bool, is_terminal: bool, command: Option<&str>) -> Re
 }
 
 fn default_width(columns: u16) -> usize {
-    usize::from(columns).saturating_sub(SIDE_MARGINS).min(theme::DEFAULT_WIDTH)
+    usize::from(columns).saturating_sub(SIDE_MARGINS).min(DEFAULT_WIDTH)
 }
 
 pub fn width(requested: Option<usize>, columns: u16) -> usize {
@@ -66,7 +66,7 @@ impl Layout {
         };
 
         let margin = terminal::margin(self.align, &capabilities, settings.width);
-        Rendered { document: crate::markdown::render(&self.source, &settings), margin }
+        Rendered { document: mrk::markdown::render(&self.source, &settings), margin }
     }
 }
 

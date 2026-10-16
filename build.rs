@@ -1,22 +1,32 @@
-//! Embeds the git commit the binary was built from, so `mrk update` knows what it runs.
+//! Embeds the git commit the binary was built from, which `mrk --version` shows.
 use std::path::Path;
 use std::process::Command;
 
 const UNKNOWN: &str = "unknown";
 
 fn main() {
-    println!("cargo:rustc-env=GIT_HASH={}", git(["rev-parse", "HEAD"]).unwrap_or_else(|| UNKNOWN.to_owned()));
-    for path in head_files() {
+    let (commit, watched) =
+        if is_repository_root() { (git(["rev-parse", "HEAD"]), head_files()) } else { (None, vec!["build.rs".to_owned()]) };
+    println!("cargo:rustc-env=GIT_HASH={}", commit.as_deref().unwrap_or(UNKNOWN));
+    for path in watched {
         println!("cargo:rerun-if-changed={path}");
     }
 }
 
-/// The files that change when HEAD moves, so the embedded hash never goes stale.
-/// Empty outside a git checkout, which leaves cargo's default "rebuild on any change".
+/// A vendored or packaged copy sits inside some other repository, whose commit says nothing about this code.
+fn is_repository_root() -> bool {
+    let root = git(["rev-parse", "--show-toplevel"]).and_then(|root| Path::new(&root).canonicalize().ok());
+    let package = std::env::var_os("CARGO_MANIFEST_DIR").and_then(|dir| Path::new(&dir).canonicalize().ok());
+    root.is_some() && root == package
+}
+
+/// The files that change when HEAD moves, so the embedded hash never goes stale: `packed-refs` holds the branch once
+/// git packs it.
 fn head_files() -> Vec<String> {
     let head = git(["rev-parse", "--git-path", "HEAD"]);
+    let packed = git(["rev-parse", "--git-path", "packed-refs"]);
     let branch = git(["symbolic-ref", "--quiet", "HEAD"]).and_then(|r| git(["rev-parse", "--git-path", &r]));
-    [head, branch].into_iter().flatten().filter(|p| Path::new(p).exists()).collect()
+    [head, packed, branch].into_iter().flatten().filter(|p| Path::new(p).exists()).collect()
 }
 
 fn git<const N: usize>(args: [&str; N]) -> Option<String> {
