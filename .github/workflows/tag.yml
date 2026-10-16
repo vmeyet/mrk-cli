@@ -3,13 +3,15 @@ on:
   push:
     branches: [main]
     paths: [Cargo.toml]
-permissions:
-  contents: read
+permissions: {}
 jobs:
   tag:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      # The deploy key stays persisted: the tag push below authenticates with it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ssh-key: ${{ secrets.RELEASE_TAGGER_KEY }}
           fetch-tags: true
