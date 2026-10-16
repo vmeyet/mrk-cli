@@ -45,7 +45,7 @@ mod tty {
 
     use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
     use rustix::process::getpgrp;
-    use rustix::termios::{QueueSelector, tcflush, tcgetpgrp};
+    use rustix::termios::{OptionalActions, Termios, tcgetattr, tcgetpgrp, tcsetattr};
 
     use super::reply::{self, Replies};
 
@@ -55,21 +55,24 @@ mod tty {
 
     struct RawMode<'a> {
         tty: &'a File,
+        saved: Termios,
     }
 
     impl<'a> RawMode<'a> {
         fn enable(tty: &'a File) -> io::Result<Self> {
-            crossterm::terminal::enable_raw_mode()?;
-            Ok(Self { tty })
+            let saved = tcgetattr(tty)?;
+            let mut raw = saved.clone();
+            raw.make_raw();
+            tcsetattr(tty, OptionalActions::Now, &raw)?;
+            Ok(Self { tty, saved })
         }
     }
 
-    /// Unread input is discarded first: a reply arriving after the round would otherwise be echoed into the shell, or
-    /// read as keys by the pager.
+    /// Restoring with `TCSAFLUSH` discards the input left unread in the same step, so the shell or the pager never reads
+    /// a reply that arrived during the round as keys; a reply arriving after it still reaches them.
     impl Drop for RawMode<'_> {
         fn drop(&mut self) {
-            let _ = tcflush(self.tty, QueueSelector::IFlush);
-            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = tcsetattr(self.tty, OptionalActions::Flush, &self.saved);
         }
     }
 

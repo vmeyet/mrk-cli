@@ -17,7 +17,7 @@ mrk's job is to make rendering a hostile file equivalent to rendering a boring o
    Known exception: `mermaid-rs-renderer` caches a copy of the diagram's system font under `$XDG_CACHE_HOME/mmdr/font-cache/` for pie, gantt, ER and non-ASCII labels. The cached bytes come from an installed font picked by mrk's font list, never from the input.
 4. **Bounded work.** Input capped at 8 MiB; a Mermaid block over 64 KiB falls back to text; a diagram or a title picture is shrunk so its PNG stays within 4096×4096 pixels; a flowchart that reuses a subgraph id or nests subgraphs over 16 deep is never handed to the text renderer (its recursion would overflow the stack, which no `catch_unwind` survives) and shows as source; SVG rasterisation refuses external `href`s (images, fonts) so a diagram label cannot pull a file off disk; a title enters its SVG as escaped character data, control characters dropped, so it can add no element.
 
-5. **Terminal queries are parsed strictly.** Responses are read from `/dev/tty` with a timeout, bounded in length, and anything unexpected means "unsupported".
+5. **Terminal queries are parsed strictly.** Responses are read from `/dev/tty` with a timeout, bounded in length; bytes between replies (keys typed meanwhile) are skipped, and a malformed reply means "unsupported".
 6. **Config is data.** Strict TOML, unknown keys rejected, no paths or commands in it.
    `MRK_PAGER`, set by the user, is split into words (`shell-words`) and run without a shell, so nothing in it expands; the pager's search query goes through `sanitize` like span text.
 7. **No `unsafe`**, enforced by `unsafe_code = "forbid"`; `cargo deny check` clean.

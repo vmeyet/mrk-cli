@@ -219,10 +219,10 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_reply_does_not_hide_the_next_one() {
-        let replies = parse(&[b"\x1b]11;rgb:ff\x00ff/0/0\x07".as_slice(), b"\x1b]11;rgb:0/0/0", DA1].concat());
-
-        assert_eq!(replies, Replies { answered: true, ..Replies::default() });
+    fn a_string_reply_ends_at_its_first_esc_so_broken_ones_are_not_scanned_to_the_end() {
+        assert_eq!(string_end(b"11;rgb:0/0/0\x1b\\", false), Some((12, 14)));
+        assert_eq!(string_end(b"11;rgb:0/0/0\x07", true), Some((12, 13)));
+        assert_eq!(string_end(b"11;rgb:0\x1b]11;rgb:0/0/0\x07", true), None);
     }
 
     #[test]
