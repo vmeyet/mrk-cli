@@ -63,7 +63,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Table | rounded box (`╭┬╮ ├┼┤ ╰┴╯`) in `subtle`, bold header in `accent`, column alignment honoured, cells wrap when the table is too wide. When even three cells per column cannot fit, each row is a record instead: one `header: value` line per cell, records a blank line apart; a table with only a header lists its names one per line |
 | Rule | `─` in `subtle` across the width, with a centred `◆` |
 | Footnote | `¹`-style marker in `accent`; notes listed at the end under a short rule |
-| Front matter | key/value lines in `muted`, then a rule |
+| Front matter | its lines in `muted`, each behind its indent (at most half the width), then a rule |
 | Pager status bar | last row on `surface`: file name in bold `text`, the search prompt or `3/12` in `accent`, `Top`/`Bot`/`42%` in `accent` and a `muted` key hint |
 | Search match | current match `surface` on `accent`, bold; other matches `text` on `subtle` |
 | Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off. In a list or quote the image keeps the indent and bar beside every row, and an item that opens on a diagram has its marker on a line of its own |

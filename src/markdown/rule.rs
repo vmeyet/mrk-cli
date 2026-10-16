@@ -1,10 +1,12 @@
 use super::context::Context;
+use super::layout;
 use crate::document::{Line, Span, Style};
 use crate::text;
 
 const RULE: &str = "─";
 const CENTRE: &str = " ◆ ";
-const FRONT_MATTER_FENCES: [&str; 2] = ["---", "+++"];
+/// The only front matter fence comrak is told about: YAML's.
+pub(super) const FRONT_MATTER_DELIMITER: &str = "---";
 
 /// `───── ◆ ─────` across the width.
 pub(super) fn thematic(context: &Context) -> Line {
@@ -32,19 +34,28 @@ pub(super) fn short(width: usize, context: &Context) -> Line {
     Line::new(vec![Span::new(RULE.repeat(width.min(context.width())), Style::fg(context.palette().subtle))])
 }
 
-/// The `key: value` lines between the fences in `muted`, keys bold, then a rule.
+/// The lines between the fences in `muted`, blank ones left out, then a rule.
 pub(super) fn front_matter(source: &str, context: &Context) -> Vec<Line> {
     let muted = Style::fg(context.palette().muted);
-    let entries = source.lines().map(str::trim_end).filter(|line| !line.trim().is_empty() && !FRONT_MATTER_FENCES.contains(&line.trim()));
-    let lines = entries.flat_map(|line| text::wrap(&entry(line, muted), context.width(), &[Span::plain("  ")]));
+    let entries = front_matter_body(source).filter(|line| !line.trim().is_empty());
+    let lines = entries.flat_map(|line| entry(line, muted, context.width()));
     lines.chain(std::iter::once(full(context))).collect()
 }
 
-fn entry(line: &str, muted: Style) -> Vec<Span> {
-    match line.split_once(':') {
-        Some((key, value)) if !key.starts_with(' ') => vec![Span::new(format!("{key}:"), muted.bold()), Span::new(value.to_owned(), muted)],
-        _ => vec![Span::new(line.to_owned(), muted)],
-    }
+/// A front matter line behind its own indent (YAML nests by it), up to half the width; it wraps two cells further in.
+fn entry(line: &str, muted: Style, width: usize) -> Vec<Line> {
+    let value = line.trim_start();
+    let indent_width = text::display_width(&line[..line.len() - value.len()]).min(width / 2);
+    let lines = text::wrap(&[Span::new(value, muted)], width.saturating_sub(indent_width), &[Span::plain("  ")]);
+    let indent = layout::blank(indent_width);
+    layout::prefix_lines(lines, &indent, &indent)
+}
+
+/// comrak's front matter is the opening fence, the body, the closing fence and the blank lines after it.
+fn front_matter_body(source: &str) -> impl Iterator<Item = &str> {
+    let lines = source.trim_end().lines();
+    let fenced = lines.clone().count();
+    lines.skip(1).take(fenced.saturating_sub(2))
 }
 
 #[cfg(test)]

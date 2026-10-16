@@ -20,8 +20,6 @@ use self::layout::Spacing;
 use crate::document::{Block, Document, Settings, Span};
 use crate::text;
 
-const FRONT_MATTER_DELIMITER: &str = "---";
-
 /// Renders GitHub-flavoured Markdown into a document at `settings.width`; images and links are never fetched.
 pub fn render(source: &str, settings: &Settings) -> Document {
     let blocks = layout::stack(sections(source, settings).into_iter().map(Section::stacked), Spacing::Loose);
@@ -50,7 +48,7 @@ fn options() -> Options<'static> {
     options.extension.autolink = true;
     options.extension.footnotes = true;
     options.extension.alerts = true;
-    options.extension.front_matter_delimiter = Some(FRONT_MATTER_DELIMITER.to_owned());
+    options.extension.front_matter_delimiter = Some(rule::FRONT_MATTER_DELIMITER.to_owned());
     options
 }
 
@@ -206,5 +204,19 @@ mod tests {
     fn front_matter_is_muted_lines_then_a_rule() {
         insta::assert_snapshot!(plain_at("---\ntitle: Hello\ntags: [a, b]\n---\n\nBody", 30));
         assert_eq!(span_with("---\ntitle: Hello\n---\n", "Hello").style.fg, Some(MRK_DARK.palette.muted));
+    }
+
+    #[test]
+    fn front_matter_keeps_every_line_between_its_fences() {
+        let source = "---\nnote: |\n  ---\n  +++\n---\n\n\nBody";
+
+        assert_eq!(plain_at(source, 30), format!("note: |\n  ---\n  +++\n{}\n\nBody\n", "─".repeat(30)));
+    }
+
+    #[test]
+    fn a_front_matter_indent_takes_at_most_half_the_width() {
+        let source = format!("---\n{}deep: value\n---\n", " ".repeat(100));
+
+        assert_eq!(plain_at(&source, 20).lines().next(), Some("          deep:"));
     }
 }
