@@ -33,7 +33,11 @@ pub struct Style {
 
 impl Style {
     pub fn fg(color: Rgb) -> Self {
-        Self { fg: Some(color), ..Self::default() }
+        Self::default().with_fg(color)
+    }
+
+    pub fn with_fg(self, color: Rgb) -> Self {
+        Self { fg: Some(color), ..self }
     }
 
     pub fn on(self, color: Rgb) -> Self {

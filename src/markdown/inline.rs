@@ -45,20 +45,20 @@ fn inline<'a>(node: &'a AstNode<'a>, base: Style, context: &Context, depth: usiz
         NodeValue::SoftBreak => vec![Span::new(" ", base)],
         NodeValue::LineBreak => vec![Span::new("\n", base)],
         NodeValue::Code(code) => vec![Span::new(format!(" {} ", code.literal), inline_code(base, palette))],
-        NodeValue::HtmlInline(html) => vec![Span::new(html.replace('\n', " "), Style { fg: Some(palette.muted), ..base })],
+        NodeValue::HtmlInline(html) => vec![Span::new(html.replace('\n', " "), base.with_fg(palette.muted))],
         NodeValue::Emph => children(node, base.italic(), context, depth),
         NodeValue::Strong => children(node, base.bold(), context, depth),
         NodeValue::Strikethrough => children(node, base.strike().dim(), context, depth),
         NodeValue::Link(link) => {
-            let text = children(node, Style { fg: Some(palette.link), ..base }.underline(), context, depth);
+            let text = children(node, base.with_fg(palette.link).underline(), context, depth);
             linked(text, &link.url, base, context)
         }
         NodeValue::Image(image) => {
-            let text = vec![Span::new(format!("{IMAGE_MARKER}{}", alt(node)), Style { fg: Some(palette.muted), ..base })];
+            let text = vec![Span::new(format!("{IMAGE_MARKER}{}", alt(node)), base.with_fg(palette.muted))];
             linked(text, &image.url, base, context)
         }
         NodeValue::FootnoteReference(reference) => {
-            vec![Span::new(footnote::marker(reference.ix), Style { fg: Some(palette.accent), ..base })]
+            vec![Span::new(footnote::marker(reference.ix), base.with_fg(palette.accent))]
         }
         _ => children(node, base, context, depth),
     }
@@ -66,7 +66,7 @@ fn inline<'a>(node: &'a AstNode<'a>, base: Style, context: &Context, depth: usiz
 
 /// Muted toward `text` so a sentence full of identifiers still reads as prose.
 fn inline_code(base: Style, palette: &Palette) -> Style {
-    Style { fg: Some(palette.text.mix(palette.code, 0.20)), bg: Some(palette.surface.mix(palette.code, 0.05)), ..base }
+    base.with_fg(palette.text.mix(palette.code, 0.20)).on(palette.surface.mix(palette.code, 0.05))
 }
 
 fn alt<'a>(image: &'a AstNode<'a>) -> String {
@@ -88,7 +88,7 @@ fn shown_target(spans: &[Span], url: &str, base: Style, context: &Context) -> Op
         return None;
     }
     let text: String = spans.iter().map(|span| span.text.as_str()).collect();
-    (!reads_as(&text, url)).then(|| Span::new(format!(" <{url}>"), Style { fg: Some(context.palette().muted), ..base }))
+    (!reads_as(&text, url)).then(|| Span::new(format!(" <{url}>"), base.with_fg(context.palette().muted)))
 }
 
 /// Whether `text` is `url`, or the address an autolink made it from: comrak adds `mailto:` to an email and `http://`

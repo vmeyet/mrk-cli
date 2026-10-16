@@ -40,6 +40,6 @@ fn pad(content: Line, width: usize, palette: &Palette) -> Line {
 }
 
 fn on_surface(span: Span, palette: &Palette) -> Span {
-    let style = Style { fg: span.style.fg.or(Some(palette.text)), bg: Some(palette.surface), ..span.style };
+    let style = Style { fg: span.style.fg.or(Some(palette.text)), ..span.style }.on(palette.surface);
     Span { style, ..span }
 }
