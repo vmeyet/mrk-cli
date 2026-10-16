@@ -19,7 +19,7 @@ pub fn lines(raw: &str) -> String {
 
 fn clean(raw: &str, keeps_newlines: bool) -> String {
     let is_kept = |character: char| (keeps_newlines && character == '\n') || !is_forbidden(character);
-    expand_tabs(raw).chars().filter(|&character| is_kept(character)).collect()
+    expand_tabs(raw, 0).chars().filter(|&character| is_kept(character)).collect()
 }
 
 fn percent_encode(raw: &str) -> String {
@@ -143,8 +143,8 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_becomes_spaces() {
-        assert_eq!(text("a\tb"), "a    b");
+    fn a_tab_becomes_the_spaces_up_to_the_next_tab_stop() {
+        assert_eq!(text("a\tb"), "a   b");
     }
 
     #[test]
@@ -200,7 +200,8 @@ mod tests {
 
     #[test]
     fn every_tab_becomes_spaces_wherever_it_sits() {
-        assert_eq!(text("\ta\x1b\tb\t"), "    a    b    ");
+        assert_eq!(text("\ta\x1b\tb\t"), "    a   b   ");
+        assert_eq!(lines("ab\tc\nabcd\te"), "ab  c\nabcd    e");
     }
 
     #[test]

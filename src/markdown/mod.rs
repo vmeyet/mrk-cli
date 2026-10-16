@@ -115,7 +115,7 @@ fn ansi_at(source: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{Line, MIN_BLOCK_WIDTH, Style};
+    use crate::document::{Line, MIN_WIDTH, Style};
     use crate::theme::MRK_DARK;
 
     /// The showcase without its fenced blocks, which belong to `code` and `mermaid`.
@@ -143,9 +143,11 @@ mod tests {
 
     #[test]
     fn no_line_exceeds_the_width() {
-        for width in [MIN_BLOCK_WIDTH, 20, 40, 80] {
-            for source in [EVERYTHING.to_owned(), showcase_without_fences()] {
-                let too_wide: Vec<String> = lines(&source, width).iter().filter(|line| line.width() > width).map(Line::plain).collect();
+        let showcase = include_str!("../../tests/fixtures/showcase.md");
+        let zero_width_words = format!("{} \u{200b} b \u{ad} c \u{301} d\n", "a".repeat(20));
+        for width in MIN_WIDTH..=60 {
+            for source in [EVERYTHING, showcase, &zero_width_words] {
+                let too_wide: Vec<String> = lines(source, width).iter().filter(|line| line.width() > width).map(Line::plain).collect();
 
                 assert!(too_wide.is_empty(), "at {width} columns: {too_wide:#?}");
             }
@@ -164,7 +166,7 @@ mod tests {
 
     #[test]
     fn a_width_under_the_minimum_lays_out_at_the_minimum() {
-        assert_eq!(plain_at(EVERYTHING, 3), plain_at(EVERYTHING, MIN_BLOCK_WIDTH));
+        assert_eq!(plain_at(EVERYTHING, 3), plain_at(EVERYTHING, MIN_WIDTH));
     }
 
     #[test]

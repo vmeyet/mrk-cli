@@ -5,8 +5,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::document::{Line, Span};
 
-/// What a tab becomes on screen.
-const TAB: &str = "    ";
+/// A tab moves to the next column that is a multiple of this.
+const TAB_STOP: usize = 4;
 
 /// Terminals draw a grapheme in one or two cells, so a row this wide always has room for the next one.
 pub const WIDEST_GRAPHEME: usize = 2;
@@ -23,22 +23,44 @@ pub fn is_forbidden(character: char) -> bool {
     character.is_control() || is_bidi_control(character)
 }
 
-/// `text` with every tab written as `TAB`; borrowed when it has none.
-pub fn expand_tabs(text: &str) -> Cow<'_, str> {
-    if text.contains('\t') { Cow::Owned(text.replace('\t', TAB)) } else { Cow::Borrowed(text) }
+/// `text` with each tab written as the spaces up to the next tab stop, `text` starting `column` cells into its line;
+/// a newline starts a line again. Borrowed when there is no tab.
+pub fn expand_tabs(text: &str, column: usize) -> Cow<'_, str> {
+    if !text.contains('\t') {
+        return Cow::Borrowed(text);
+    }
+    let mut expanded = String::with_capacity(text.len() + TAB_STOP);
+    let mut column = column;
+    for (index, part) in text.split('\t').enumerate() {
+        if index > 0 {
+            let spaces = TAB_STOP - column % TAB_STOP;
+            expanded.extend(std::iter::repeat_n(' ', spaces));
+            column += spaces;
+        }
+        expanded.push_str(part);
+        column = match part.rfind('\n') {
+            Some(newline) => display_width(&part[newline + 1..]),
+            None => column + display_width(part),
+        };
+    }
+    Cow::Owned(expanded)
 }
 
-/// The cells `text` takes once sanitized, counted one grapheme at a time.
+/// The cells `text` takes once sanitized, counted one grapheme at a time, its tabs expanded from the start of a line.
 pub fn display_width(text: &str) -> usize {
     if text.bytes().all(|byte| byte == b' ' || byte.is_ascii_graphic()) {
         return text.len();
     }
+    if text.contains('\t') {
+        return display_width(&expand_tabs(text, 0));
+    }
     text.graphemes(true).map(grapheme_width).sum()
 }
 
+/// A tab counts as a whole tab stop: only `cut` meets one, in text no line builder expanded.
 fn grapheme_width(grapheme: &str) -> usize {
     match grapheme {
-        "\t" => TAB.len(),
+        "\t" => TAB_STOP,
         _ if grapheme.chars().any(is_forbidden) => 0,
         _ => grapheme.width().min(WIDEST_GRAPHEME),
     }
@@ -83,8 +105,10 @@ fn cut_rows(spans: &[Span], first: usize, rest: usize) -> Vec<Vec<Span>> {
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut free = first;
+    let mut column = 0;
     for span in spans {
-        let text = expand_tabs(&span.text);
+        let text = expand_tabs(&span.text, column);
+        column += display_width(&text);
         let mut left = text.as_ref();
         while !left.is_empty() {
             match cut(left, free) {
@@ -112,22 +136,20 @@ enum Token {
     Break,
 }
 
-fn span_tokens(span: &Span) -> Vec<Token> {
-    let text = expand_tabs(&span.text);
-    let rows = text.split('\n').map(|row| row_tokens(span, row));
-    rows.enumerate().flat_map(|(index, row)| (index > 0).then_some(Token::Break).into_iter().chain(row)).collect()
+fn span_tokens(span: &Span) -> impl Iterator<Item = Token> + '_ {
+    let rows = span.text.split('\n').enumerate();
+    rows.flat_map(move |(index, row)| (index > 0).then_some(Token::Break).into_iter().chain(row_tokens(span, row)))
 }
 
-/// The words and spaces of one row of `span`; on a background the whole row is one word.
-fn row_tokens(span: &Span, row: &str) -> Vec<Token> {
-    if span.style.bg.is_some() {
-        return (!row.is_empty()).then(|| Token::Word(vec![piece(span, row)])).into_iter().collect();
-    }
-    let words = row.split(' ').enumerate().map(|(index, word)| {
+/// The words and spaces of one row of `span`, a tab breaking like a space; on a background (inline code padding) a
+/// space holds its word together, so the whole row is one word.
+fn row_tokens<'a>(span: &'a Span, row: &'a str) -> impl Iterator<Item = Token> + 'a {
+    let holds_together = span.style.bg.is_some();
+    let words = row.split(move |character| !holds_together && matches!(character, ' ' | '\t')).enumerate();
+    words.flat_map(move |(index, word)| {
         let space = (index > 0).then(|| Token::Space(piece(span, " ")));
-        space.into_iter().chain((!word.is_empty()).then(|| Token::Word(vec![piece(span, word)])))
-    });
-    words.flatten().collect()
+        space.into_iter().chain((!word.is_empty()).then(|| Token::Word(vec![piece(span, &expand_tabs(word, 0))])))
+    })
 }
 
 /// Words that touch wrap as one, whatever their styles.
@@ -180,7 +202,8 @@ impl<'a> LineBuilder<'a> {
 
     fn place_word(self, word: Vec<Span>) -> Self {
         let word_width = spans_width(&word);
-        match (word_width <= self.free(), word_width <= self.room()) {
+        let fits_here = self.used + self.space_width() + word_width <= self.width;
+        match (fits_here, word_width <= self.room()) {
             (true, _) => self.push_spaced(word),
             (false, true) if self.has_content() => self.close().push_spaced(word),
             _ => self.split_word(&word),
@@ -330,9 +353,25 @@ mod tests {
     }
 
     #[test]
-    fn what_sanitize_removes_takes_no_cell_and_a_tab_takes_four() {
+    fn what_sanitize_removes_takes_no_cell_and_a_tab_reaches_the_next_stop() {
         assert_eq!(display_width("a\x1b[31mb\u{9b}\u{202e}c\r\n"), 7);
-        assert_eq!(display_width("a\tb"), 6);
+        assert_eq!(display_width("a\tb"), 5);
+        assert_eq!(display_width("abcd\tb"), 9);
+    }
+
+    #[test]
+    fn tabs_stop_every_four_columns_from_the_start_of_the_line() {
+        assert_eq!(expand_tabs("ab\tc", 0), "ab  c");
+        assert_eq!(expand_tabs("\tc", 2), "  c");
+        assert_eq!(expand_tabs("a\nb\tc", 0), "a\nb   c");
+        assert!(matches!(expand_tabs("no tab", 0), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn hard_wrap_counts_tab_stops_across_spans() {
+        let lines = hard_wrap(&[Span::plain("ab"), Span::new("\tc", Style::default().bold())], 20, &[]);
+
+        assert_eq!(plain_lines(&lines), ["ab  c"]);
     }
 
     #[test]
@@ -377,7 +416,7 @@ mod tests {
 
     #[test]
     fn no_line_exceeds_the_width() {
-        let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed doeiusmodtemporincididunt ut labore 漢字漢字 et\tdolore.";
+        let text = "Lorem ipsum dolor sit amet, consectetur \u{200b} adipiscing elit, sed doeiusmodtemporincididunt ut labore 漢字漢字 et\tdolore.";
         for width in 3..40 {
             let wrapped = wrap(&[Span::plain(text)], width, &[Span::plain(" ")]);
             let cut = hard_wrap(&[Span::plain(text)], width, &[Span::plain(" ")]);

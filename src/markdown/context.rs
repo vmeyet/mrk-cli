@@ -1,6 +1,8 @@
-use crate::document::{MIN_BLOCK_WIDTH, Settings, Style};
+use crate::document::{MIN_WIDTH, Settings, Style};
 use crate::theme::Palette;
 
+/// A container indents its blocks only while that leaves them this wide.
+const MIN_NESTED_WIDTH: usize = 12;
 /// Containers nested deeper than this render their content as bare text: bounded recursion on hostile input.
 const MAX_NESTING: usize = 32;
 
@@ -17,16 +19,16 @@ pub(super) struct Context {
 pub(super) enum Nested {
     /// Behind the container's prefix, in a context that much narrower.
     Indented(Context),
-    /// At the container's own width without its prefix, since indenting would leave less than `MIN_BLOCK_WIDTH`.
+    /// At the container's own width without its prefix, since indenting would leave less than `MIN_NESTED_WIDTH`.
     Unindented(Context),
     /// Past `MAX_NESTING`: the container renders as its bare text.
     TooDeep,
 }
 
 impl Context {
-    /// The context of the whole document, at least `MIN_BLOCK_WIDTH` wide.
+    /// The context of the whole document, at least `MIN_WIDTH` wide.
     pub fn new(settings: &Settings) -> Self {
-        let settings = Settings { width: settings.width.max(MIN_BLOCK_WIDTH), ..*settings };
+        let settings = Settings { width: settings.width.max(MIN_WIDTH), ..*settings };
         Self { settings, text: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0 }
     }
 
@@ -44,7 +46,7 @@ impl Context {
             return Nested::TooDeep;
         }
         let deeper = Self { nesting: self.nesting + 1, ..*self };
-        match self.width().checked_sub(columns).filter(|width| *width >= MIN_BLOCK_WIDTH) {
+        match self.width().checked_sub(columns).filter(|width| *width >= MIN_NESTED_WIDTH) {
             Some(width) => Nested::Indented(Self { settings: Settings { width, ..self.settings }, ..deeper }),
             None => Nested::Unindented(deeper),
         }

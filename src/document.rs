@@ -168,9 +168,9 @@ pub enum JumboTitle {
     DoubleHeight,
 }
 
-/// The narrowest a block is laid out: a narrower `Settings::width` lays out this wide, and a container whose indent
-/// would leave less stops indenting.
-pub const MIN_BLOCK_WIDTH: usize = 12;
+/// The narrowest width the renderers lay out at: a code panel needs its padding, its continuation marker and a wide
+/// grapheme side by side. A narrower `Settings::width` is laid out this wide.
+pub const MIN_WIDTH: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
