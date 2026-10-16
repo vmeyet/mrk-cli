@@ -102,7 +102,7 @@ pub fn jumbo_title(capabilities: &Capabilities) -> Option<JumboTitle> {
 
 /// What stands left of each row of a picture: the margin, then its indent.
 fn picture_indent(picture: &Picture, capabilities: &Capabilities, margin: usize) -> String {
-    format!("{}{}", " ".repeat(margin), ansi::line(&picture.indent, capabilities, 0).trim_end_matches('\n'))
+    format!("{}{}", " ".repeat(margin), ansi::line(&picture.indent, capabilities, 0))
 }
 
 /// What stands in for a picture, after `indent`, when the terminal cannot draw it.
@@ -132,27 +132,37 @@ fn picture(picture: &Picture, capabilities: &Capabilities, margin: usize) -> Str
 
 fn block(block: &Block, capabilities: &Capabilities, margin: usize) -> String {
     match block {
-        Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin)).collect(),
+        Block::Lines(lines) => lines.iter().map(|line| ansi::line(line, capabilities, margin) + "\n").collect(),
         Block::Picture(each) => picture(each, capabilities, margin),
-        Block::DoubleHeight(lines) => {
-            lines.iter().flat_map(|line| [Half::Top, Half::Bottom].map(|half| ansi::half(line, half, capabilities, margin))).collect()
-        }
+        Block::DoubleHeight(lines) => lines
+            .iter()
+            .flat_map(|line| [Half::Top, Half::Bottom].map(|half| ansi::half(line, half, capabilities, margin) + "\n"))
+            .collect(),
     }
 }
 
-/// Writes the document for this terminal, `margin` columns from the left: the only place mrk produces escape sequences.
+/// Writes the document for this terminal, `margin` columns from the left.
 pub fn write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write) -> std::io::Result<()> {
     document.blocks.iter().try_for_each(|each| out.write_all(block(each, capabilities, margin).as_bytes()))
 }
 
-/// An error and its causes for stderr, sanitized, causes dimmed when `is_styled`.
-pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
-    let (dim, reset) = if is_styled { ("\x1b[2m", "\x1b[0m") } else { ("", "") };
-    let causes: String = error.chain().skip(1).map(|cause| format!("  {dim}{}{reset}\n", sanitize::text(&cause.to_string()))).collect();
-    format!("✗ {}\n{causes}", sanitize::text(&error.to_string()))
+fn cleaned(message: &dyn std::fmt::Display) -> String {
+    sanitize::lines(message.to_string().trim_end())
 }
 
-/// The bytes `write` would produce, as a string for tests.
+fn indented(message: &str, (dim, reset): (&str, &str)) -> String {
+    message.lines().map(|line| format!("  {dim}{line}{reset}\n")).collect()
+}
+
+/// An error and its causes for stderr, sanitized, every line after the first indented, causes dimmed when `is_styled`.
+pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
+    let dimmed = if is_styled { ("\x1b[2m", "\x1b[0m") } else { ("", "") };
+    let causes: String = error.chain().skip(1).map(|cause| indented(&cleaned(cause), dimmed)).collect();
+    format!("✗ {}\n{causes}", cleaned(error).replace('\n', "\n  "))
+}
+
+/// The bytes `write` produces, as a string.
+#[cfg(test)]
 pub fn ansi(document: &Document, capabilities: &Capabilities, margin: usize) -> String {
     document.blocks.iter().map(|each| block(each, capabilities, margin)).collect()
 }
@@ -181,6 +191,17 @@ mod tests {
         assert_eq!(error_report(&error, false), "✗ cannot read [31mfile\n  inner ]52;c;AAAA\n");
         assert_eq!(error_report(&error, true), "✗ cannot read [31mfile\n  \x1b[2minner ]52;c;AAAA\x1b[0m\n");
     }
+
+    #[test]
+    fn an_error_report_keeps_every_line_of_a_message_indented() {
+        let error = anyhow::anyhow!("fatal: no remote\r\nhint: add one\n").context("update failed\nfor the tag");
+
+        assert_eq!(
+            error_report(&error, true),
+            "✗ update failed\n  for the tag\n  \x1b[2mfatal: no remote\x1b[0m\n  \x1b[2mhint: add one\x1b[0m\n"
+        );
+    }
+
     use crate::document::{Line, Span, Style};
     use crate::theme::MRK_DARK;
 

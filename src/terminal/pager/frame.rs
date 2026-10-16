@@ -6,7 +6,6 @@ use super::search::{self, Match};
 use super::state::Pager;
 use super::status;
 use crate::document::Line;
-use crate::terminal::ansi::Half;
 use crate::terminal::kitty::Placement;
 use crate::terminal::sixel::Image;
 use crate::terminal::{Capabilities, Protocol, ansi, kitty};
@@ -90,11 +89,7 @@ fn row_matches(matches: &[Match], row: usize) -> &[Match] {
 }
 
 fn drawn_line(line: &Line, look: &Look) -> String {
-    ansi::line(line, look.capabilities, look.margin).trim_end_matches('\n').to_owned()
-}
-
-fn drawn_half(line: &Line, half: Half, look: &Look) -> String {
-    ansi::half(line, half, look.capabilities, look.margin).trim_end_matches('\n').to_owned()
+    ansi::line(line, look.capabilities, look.margin)
 }
 
 fn picture_row(pager: &Pager, picture: usize, row: usize, look: &Look, pictures: &Pictures) -> String {
@@ -109,7 +104,7 @@ fn row_text(pager: &Pager, index: usize, look: &Look, pictures: &Pictures) -> St
         Some(Row::Line(line)) if matches.is_empty() => drawn_line(line, look),
         Some(Row::Line(line)) => drawn_line(&search::highlight(line, matches, pager.search.current_match(), look.palette), look),
         Some(Row::Picture(picture)) => picture_row(pager, *picture, index, look, pictures),
-        Some(Row::DoubleHeight(line, half)) => drawn_half(line, *half, look),
+        Some(Row::DoubleHeight(line, half)) => ansi::half(line, *half, look.capabilities, look.margin),
         None => String::new(),
     }
 }
@@ -128,7 +123,7 @@ fn text_rows(pager: &Pager, look: &Look, pictures: &Pictures) -> String {
 
 fn status_row(pager: &Pager, look: &Look) -> String {
     let bar = status::bar(pager, look.name, look.palette, look.columns);
-    format!("{}{}", row_start(pager.height, look), ansi::line(&bar, look.capabilities, 0).trim_end_matches('\n'))
+    format!("{}{}", row_start(pager.height, look), ansi::line(&bar, look.capabilities, 0))
 }
 
 fn hidden_pictures(page: &Page) -> String {
@@ -310,7 +305,7 @@ mod tests {
     #[test]
     fn a_hostile_query_is_drawn_sanitized() {
         let typed =
-            [Action::StartSearch, Action::Type('\x1b'), Action::Type(']'), Action::Type('\x07')].iter().fold(sample(), Pager::apply);
+            [Action::StartSearch, Action::Type('\x1b'), Action::Type(']'), Action::Type('\x07')].into_iter().fold(sample(), Pager::apply);
 
         let frame = drawn(&typed, None);
 

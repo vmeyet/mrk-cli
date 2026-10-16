@@ -43,21 +43,21 @@ const DIACRITICS: [char; 297] = [
     '\u{1d243}', '\u{1d244}',
 ];
 
-fn chunks(png: &[u8]) -> Vec<String> {
-    let encoded = STANDARD.encode(png);
-    encoded.as_bytes().chunks(CHUNK_BYTES).map(|chunk| String::from_utf8_lossy(chunk).into_owned()).collect()
-}
-
 fn command(index: usize, chunk: &str, is_last: bool, first_keys: &str) -> String {
     let more = u8::from(!is_last);
     let keys = if index == 0 { format!("{first_keys},m={more}") } else { format!("q=2,m={more}") };
     format!("\x1b_G{keys};{chunk}\x1b\\")
 }
 
+/// The PNG in base64, which is ASCII, so cutting it every `CHUNK_BYTES` bytes always lands between characters.
 fn commands(png: &[u8], first_keys: &str) -> Vec<String> {
-    let chunks = chunks(png);
-    let last = chunks.len().saturating_sub(1);
-    chunks.iter().enumerate().map(|(index, chunk)| command(index, chunk, index == last, first_keys)).collect()
+    let encoded = STANDARD.encode(png);
+    let starts = (0..encoded.len()).step_by(CHUNK_BYTES);
+    let last = starts.len().saturating_sub(1);
+    starts
+        .enumerate()
+        .map(|(index, start)| command(index, &encoded[start..encoded.len().min(start + CHUNK_BYTES)], index == last, first_keys))
+        .collect()
 }
 
 fn chunked(png: &[u8], first_keys: &str) -> String {

@@ -70,7 +70,8 @@ impl Environment {
         self.program() == "iTerm.app" || self.get("LC_TERMINAL") == Some("iTerm2")
     }
 
-    fn is_tmux(&self) -> bool {
+    /// Inside tmux, kitty graphics need passthrough and the environment it inherited may name another terminal.
+    pub fn is_tmux(&self) -> bool {
         self.has("TMUX")
     }
 
@@ -104,11 +105,6 @@ pub fn hyperlinks(environment: &Environment, color: ColorDepth) -> bool {
     color != ColorDepth::None && !is_known_bad
 }
 
-/// Inside tmux, kitty graphics need passthrough and the environment it inherited may name another terminal.
-pub fn inside_tmux(environment: &Environment) -> bool {
-    environment.is_tmux()
-}
-
 /// `Some` when the environment already says whether the terminal draws kitty-protocol pictures; inside tmux it can
 /// only say no.
 pub fn known_graphics(environment: &Environment) -> Option<bool> {
@@ -120,10 +116,12 @@ pub fn known_graphics(environment: &Environment) -> Option<bool> {
         || environment.is_iterm()
         || environment.is_dumb()
         || environment.term() == "linux";
-    match () {
-        () if is_known_with => Some(true),
-        () if is_known_without => Some(false),
-        () => None,
+    if is_known_with {
+        Some(true)
+    } else if is_known_without {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -235,8 +233,8 @@ mod tests {
     fn inside_tmux_the_inherited_terminal_is_not_trusted_but_iterm_still_is_ruled_out() {
         assert_eq!(known_graphics(&tty(&[("TMUX", "/tmp/tmux"), ("GHOSTTY_RESOURCES_DIR", "/x"), ("TERM", "tmux-256color")])), None);
         assert_eq!(known_graphics(&tty(&[("TMUX", "/tmp/tmux"), ("LC_TERMINAL", "iTerm2")])), Some(false));
-        assert!(inside_tmux(&tty(&[("TMUX", "/tmp/tmux")])));
-        assert!(!inside_tmux(&tty(&[("TERM", "tmux-256color")])));
+        assert!(tty(&[("TMUX", "/tmp/tmux")]).is_tmux());
+        assert!(!tty(&[("TERM", "tmux-256color")]).is_tmux());
     }
 
     #[test]

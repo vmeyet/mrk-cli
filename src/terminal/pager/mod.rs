@@ -143,7 +143,7 @@ pub fn run(session: &Session, render: impl Fn(u16) -> Rendered) -> io::Result<()
         match step(&event, view.pager.prompt.is_some()) {
             Step::Quit => return Ok(()),
             Step::Nothing => continue,
-            Step::Act(action) => view = View { pager: view.pager.apply(&action), ..view },
+            Step::Act(action) => view = View { pager: view.pager.apply(action), ..view },
             Step::Resize(columns, rows) => {
                 let (size, next) = latest_size(columns, rows)?;
                 pending = next;

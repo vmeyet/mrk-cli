@@ -1,7 +1,7 @@
 use crossterm::terminal::WindowSize;
 
 use super::environment::{
-    Environment, background_hint, color_depth, double_height, hyperlinks, inside_tmux, known_graphics, wants_pictures,
+    Environment, background_hint, color_depth, double_height, hyperlinks, known_graphics, wants_pictures,
 };
 use super::query::{self, Questions};
 use super::reply::Replies;
@@ -42,7 +42,7 @@ fn questions(environment: &Environment, color: ColorDepth, window_cell: Option<C
         graphics: may_draw && known.is_none(),
         cell: may_draw && window_cell.is_none(),
         background: is_background_unknown && environment.stdout_is_tty && color != ColorDepth::None,
-        passthrough: inside_tmux(environment),
+        passthrough: environment.is_tmux(),
     }
 }
 
@@ -52,7 +52,7 @@ fn protocol(environment: &Environment, replies: &Replies) -> Option<Protocol> {
     match known_graphics(environment) {
         Some(true) => Some(Protocol::Kitty),
         Some(false) => None,
-        None if replies.graphics && inside_tmux(environment) => Some(Protocol::KittyThroughTmux),
+        None if replies.graphics && environment.is_tmux() => Some(Protocol::KittyThroughTmux),
         None if replies.graphics => Some(Protocol::Kitty),
         None => replies.sixel.then_some(Protocol::Sixel),
     }

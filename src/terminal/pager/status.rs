@@ -15,21 +15,26 @@ fn width(spans: &[Span]) -> usize {
 }
 
 fn truncated(text: &str, columns: usize) -> String {
-    match columns {
-        _ if display_width(text) <= columns => text.to_owned(),
-        0 => String::new(),
-        _ => format!("{}{ELLIPSIS}", cut(text, columns - 1).0),
+    if display_width(text) <= columns {
+        text.to_owned()
+    } else if columns == 0 {
+        String::new()
+    } else {
+        format!("{}{ELLIPSIS}", cut(text, columns - 1).0)
     }
 }
 
 fn position(pager: &Pager) -> String {
     let rows = pager.page.rows.len();
     let percent = (pager.top + pager.height).min(rows) * 100 / rows.max(1);
-    match () {
-        () if rows <= pager.height => "All".to_owned(),
-        () if pager.top == 0 => "Top".to_owned(),
-        () if pager.top >= pager.max_top() => "Bot".to_owned(),
-        () => format!("{percent}%"),
+    if rows <= pager.height {
+        "All".to_owned()
+    } else if pager.top == 0 {
+        "Top".to_owned()
+    } else if pager.top >= pager.max_top() {
+        "Bot".to_owned()
+    } else {
+        format!("{percent}%")
     }
 }
 
@@ -134,8 +139,8 @@ mod tests {
     #[test]
     fn the_bar_at_several_widths() {
         let searched =
-            [Action::StartSearch, Action::Type('1'), Action::Confirm, Action::NextMatch].iter().fold(pager(100, 20), Pager::apply);
-        let typing = [Action::StartSearch, Action::Type('r'), Action::Type('o')].iter().fold(pager(100, 20), Pager::apply);
+            [Action::StartSearch, Action::Type('1'), Action::Confirm, Action::NextMatch].into_iter().fold(pager(100, 20), Pager::apply);
+        let typing = [Action::StartSearch, Action::Type('r'), Action::Type('o')].into_iter().fold(pager(100, 20), Pager::apply);
         let lines: Vec<String> = [80, 50, 30, 12, 3]
             .into_iter()
             .flat_map(|columns| [shown(&pager(100, 20), columns), shown(&searched, columns), shown(&typing, columns)])
@@ -156,7 +161,7 @@ mod tests {
 
     #[test]
     fn a_query_without_match_says_so() {
-        let searched = [Action::StartSearch, Action::Type('z'), Action::Confirm].iter().fold(pager(10, 5), Pager::apply);
+        let searched = [Action::StartSearch, Action::Type('z'), Action::Confirm].into_iter().fold(pager(10, 5), Pager::apply);
 
         assert!(shown(&searched, 60).contains("no match"));
     }
