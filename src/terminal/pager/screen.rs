@@ -168,20 +168,41 @@ impl Screen {
         Ok(Self { previous_hook: Some(hold_panics(&held)), held })
     }
 
-    /// Sends the page's pictures once, after freeing the ones stored for the page before.
-    pub fn store(&self, pictures: &Pictures, page: &Page) -> io::Result<()> {
+    /// `write` on the terminal as the pager holds it, holding `taken`; `given_back` once the terminal was given back.
+    fn on_terminal<T>(&self, given_back: T, write: impl FnOnce(&mut Taken) -> io::Result<T>) -> io::Result<T> {
+        lock(&self.held.taken).as_mut().map_or(Ok(given_back), write)
+    }
+}
+
+/// Where the pager draws: frames written to it, and the page's pictures stored once per render.
+pub trait Canvas: Write {
+    /// Sends the page's pictures once, after freeing the ones stored for the page before, and keeps what frees them for
+    /// the give-back.
+    fn store(&mut self, pictures: &Pictures, page: &Page) -> io::Result<()>;
+}
+
+impl Canvas for Screen {
+    fn store(&mut self, pictures: &Pictures, page: &Page) -> io::Result<()> {
         let (free, stored) = (pictures.free(page), pictures.store(page));
-        let mut taken = lock(&self.held.taken);
-        let Some(taken) = taken.as_mut() else { return Ok(()) };
-        let previous = std::mem::replace(&mut taken.free, free);
-        taken.out.write_all((previous + &stored).as_bytes())
+        self.on_terminal((), |taken| {
+            let previous = std::mem::replace(&mut taken.free, free);
+            taken.out.write_all((previous + &stored).as_bytes())
+        })
+    }
+}
+
+/// `write_all` holds `taken` once, so a frame is never cut by the give-back.
+impl Write for Screen {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.on_terminal(bytes.len(), |taken| taken.out.write(bytes))
     }
 
-    pub fn show(&self, frame: &str) -> io::Result<()> {
-        let mut taken = lock(&self.held.taken);
-        let Some(taken) = taken.as_mut() else { return Ok(()) };
-        taken.out.write_all(frame.as_bytes())?;
-        taken.out.flush()
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.on_terminal((), |taken| taken.out.write_all(bytes))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.on_terminal((), |taken| taken.out.flush())
     }
 }
 
