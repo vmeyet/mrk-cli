@@ -8,7 +8,7 @@ The default `cli` feature adds the binary and `mrk::terminal`, which detects the
 Turn it off to leave them out with their dependencies:
 
 ```toml
-mrk-cli = { git = "https://github.com/vmeyet/mrk-cli", default-features = false }
+mrk-cli = { version = "0.9", default-features = false }
 ```
 
 ```rust

@@ -5,27 +5,56 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Added
+## [0.9.0] - 2026-11-12
 
-- Library: `Palette::colors` lists a palette's colours.
-- Release archives carry a GitHub build attestation, checked with `gh attestation verify`.
-- mrk is on crates.io: `cargo install --locked mrk-cli`.
-- `mrk --version` shows the commit for a crates.io install too, no longer `unknown`.
+### Breaking changes for library users
 
-### Changed
-
-**Breaking** for library users:
-
+- `Span::link` is an `Option<Arc<str>>`, set only to a target `sanitize::link` accepts, and `Span::linked` takes any `Into<Arc<str>>`.
 - `text`, `raster` (with `raster::line` and `RasterError`), `theme::Choice` and `theme::UnknownTheme` are no longer public, nor `Rgb::hex`, `Rgb::mix` and `Line::joined`.
 - `terminal::error_report` takes any `std::error::Error`, no longer an `anyhow::Error`.
 - `terminal::ColorChoice`, `ImagesMode` and `Align` no longer implement clap's `ValueEnum` nor serde's `Deserialize`.
 - `Settings`, `Style`, `Span`, `Picture`, `JumboTitle`, `Theme`, `Palette`, `SyntaxTheme`, `terminal::Capabilities`, `Graphics`, `Protocol`, `ColorDepth` and `Preferences` are `#[non_exhaustive]`: build `Settings` and `Preferences` from `Default`, then set their fields.
 
+### Added
+
+- mrk is on crates.io: `cargo install --locked mrk-cli`, or `mrk-cli = "0.9"` as a library.
+- `mrk --version` shows the commit for a crates.io install too.
+- Release archives carry a GitHub build attestation, checked with `gh attestation verify`.
+- Library: `Palette::colors` lists a palette's colours.
+- The reference documents `mrk update` and `--man`.
+
+### Changed
+
+- Code highlighting is bounded: a document highlights about 256 KiB of code, a line over 512 bytes costing more the longer it is; a block past that, or the rest of a block after a line over 11 KB, prints plain with its label kept.
+- A code block in a language with no syntax (`output`, a misspelt name) spends none of the highlighting budget.
+- `mrk -p notes.md &` stops like `less` until `fg` opens the pager; a background job that cannot stop (it ignores `SIGTTOU`) fails with `not the terminal's foreground job` instead of changing the terminal's modes under the shell.
+- Mermaid: a sequence over 200 participants or a git graph over 200 branches shows as source with its note, before either parser reads it.
+- Mermaid: a picture also counts pie slices, timeline periods and events, xy chart categories, series and values, state notes and each part of a sequence frame.
+- Mermaid: every diagram parsed spends at least 5 ms of the document's 12 s, even one both counts refuse, so a document of many refused diagrams shows the rest as source with the budget note.
+- Mermaid: a picture still laying out at the deadline shows as `too slow to lay out`, no longer `out of time for the document's diagrams`, and a pager resize starts neither engine on it again.
+- A table drawn as records cuts each header name to one line with an ellipsis, instead of wrapping it in every record.
+- `mrk update` through cargo installs under the running mrk's root only when it holds `.crates.toml`, else under cargo's default root, checked writable before building; cargo reads nothing from the terminal.
+- `mrk update` through brew runs the installed mrk to check its release and commit, as through cargo.
+- `mrk update` also stops cleanly, its build folder removed, on Ctrl-\\ (131) or a closed terminal (129); under `nohup`, a closed terminal leaves the build running.
+- The pager restores autowrap and the cursor as they were on terminals that save modes, instead of turning them on.
+
 ### Fixed
 
-- `nohup mrk update &` keeps building when the terminal closes: `SIGHUP` is left alone when neither stdout nor stderr is a terminal.
-- A signal that stops `mrk update` on a closed terminal exits with 128 + the signal, no longer with a panic (101).
-- `mrk -p notes.md &` stops like `less` and `fg` opens the pager, instead of failing at once; a job that ignores `SIGTTOU` still fails.
+- A Mermaid diagram whose subgraphs reuse an id as mermaid-text reads it (a bare `subgraph`, an id ending in a carriage return) shows as source instead of overflowing the stack.
+- A Mermaid diagram the picture parser panics on (an architecture group opening on `)`) shows as source instead of exiting with 101.
+- A signal that stops `mrk update` while its output is closed exits with 128 + the signal, no longer with a panic (101).
+- A long link wrapped over many lines holds its target once: a 400 KB URL no longer costs 1.6 GB.
+- An emoji split by a character `sanitize` removes (`❤`, U+200B, U+FE0F) counts as the one emoji printed, so a table row stays as wide as its border.
+- In the pager, a picture or title picture with no indent starts at the margin, as when printed, and a search match never splits a grapheme.
+- A resize during the pager's first render shows in its first frame.
+- Library: a diff keeps the spacing of code inside a list item or a quote, and a renumbered item stays the same when its wider marker wraps it again.
+- Library: a diff compares sections by a hash first, so a long shared opening costs little.
+
+### Security
+
+- `sanitize` also removes the invisible operators (U+2061–U+2064), the deprecated format characters (U+206A–U+206F), U+180E, U+FFF9–U+FFFB and U+1D173–U+1D17A, which hide inside a name.
+- The config and the user font folders are looked for only under an absolute home or `$XDG_CONFIG_HOME`, never relative to the current directory.
+- rustix 1.1.6 clears RUSTSEC-2026-0486.
 
 ## [0.8.0] - 2026-10-16
 
@@ -193,6 +222,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.9.0]: https://github.com/vmeyet/mrk-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/vmeyet/mrk-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/vmeyet/mrk-cli/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/vmeyet/mrk-cli/compare/v0.5.0...v0.6.0
