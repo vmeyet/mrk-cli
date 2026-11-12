@@ -3,10 +3,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use mrk::terminal::{Align, ImagesMode};
 use serde::Deserialize;
 
-use crate::cli::UsageError;
+use crate::cli::{UsageError, When, Where};
 
 pub const MIN_WIDTH: usize = 20;
 /// Wider than any window (a 4K screen in a 6-pixel font is about 640 columns): it only rejects absurd widths, such as
@@ -22,8 +21,8 @@ pub struct Config {
     pub theme_dark: Option<String>,
     pub theme_light: Option<String>,
     pub width: Option<usize>,
-    pub images: Option<ImagesMode>,
-    pub align: Option<Align>,
+    pub images: Option<When>,
+    pub align: Option<Where>,
     pub pager: Option<bool>,
     pub jumbo_title: Option<bool>,
 }
@@ -129,8 +128,8 @@ mod tests {
             theme_dark: Some("nord".to_owned()),
             theme_light: Some("github-light".to_owned()),
             width: Some(72),
-            images: Some(ImagesMode::Never),
-            align: Some(Align::Left),
+            images: Some(When::Never),
+            align: Some(Where::Left),
             pager: Some(true),
             jumbo_title: Some(true),
         };

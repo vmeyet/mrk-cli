@@ -61,7 +61,7 @@ fn rows<'a>(node: &'a AstNode<'a>, columns: usize, context: &Context) -> Vec<Row
 }
 
 fn cell_width(cell: &Cell) -> usize {
-    cell.iter().map(|span| text::display_width(&span.text)).sum::<usize>().max(1)
+    text::spans_width(cell).max(1)
 }
 
 /// Each column as wide as its widest cell when that fits; otherwise the room is shared, narrow columns keeping

@@ -19,7 +19,7 @@ fn main() -> ExitCode {
             if let Some(Interrupted(signal)) = error.downcast_ref::<Interrupted>() {
                 return ExitCode::from(u8::try_from(128 + signal).unwrap_or(u8::MAX));
             }
-            eprint!("{}", mrk::terminal::error_report(&error, std::io::stderr().is_terminal()));
+            eprint!("{}", mrk::terminal::error_report(error.as_ref(), std::io::stderr().is_terminal()));
             if error.is::<UsageError>() { ExitCode::from(USAGE_EXIT) } else { ExitCode::FAILURE }
         }
     }

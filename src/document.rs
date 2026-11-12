@@ -10,19 +10,20 @@ pub struct Rgb(pub u8, pub u8, pub u8);
 
 impl Rgb {
     /// `#rrggbb`, as SVG and CSS write a colour.
-    pub fn hex(self) -> String {
+    pub(crate) fn hex(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
     }
 
     /// The colour `amount` of the way from this one to `other`: 0.0 keeps it, 1.0 gives `other`.
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a float `as u8` saturates into 0..=255")]
-    pub fn mix(self, other: Rgb, amount: f32) -> Rgb {
+    pub(crate) fn mix(self, other: Rgb, amount: f32) -> Rgb {
         let channel = |from: u8, to: u8| (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8;
         Rgb(channel(self.0, other.0), channel(self.1, other.1), channel(self.2, other.2))
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Style {
     pub fg: Option<Rgb>,
     pub bg: Option<Rgb>,
@@ -68,6 +69,7 @@ impl Style {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Span {
     pub text: String,
     pub style: Style,
@@ -119,7 +121,7 @@ impl Line {
     /// A line of text slices, each styled and linked as its span, neighbours that look alike joined into one span.
     /// Every span and text is allocated at its exact size: documents hold millions of lines, and growth by doubling
     /// would leave up to half of each spare.
-    pub fn joined<'a>(pieces: impl IntoIterator<Item = (&'a str, &'a Span)>) -> Self {
+    pub(crate) fn joined<'a>(pieces: impl IntoIterator<Item = (&'a str, &'a Span)>) -> Self {
         let pieces: Vec<(&str, &Span)> = pieces.into_iter().collect();
         let runs = pieces.chunk_by(|(_, left), (_, right)| left.looks_like(right));
         let mut spans = Vec::with_capacity(runs.clone().count());
@@ -137,7 +139,7 @@ impl Line {
     }
 
     pub fn width(&self) -> usize {
-        self.spans.iter().map(|span| crate::text::display_width(&span.text)).sum()
+        crate::text::spans_width(&self.spans)
     }
 
     /// The text as the input wrote it, escape sequences included: for searching and comparing, never for printing.
@@ -153,6 +155,7 @@ impl Line {
 
 /// A PNG and the terminal cell box it is drawn into.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Picture {
     pub png: Vec<u8>,
     pub cols: u16,
@@ -198,6 +201,7 @@ pub struct CellSize {
 
 /// How a level-1 heading is drawn two rows tall, when asked for and the terminal can.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum JumboTitle {
     /// A picture of each line over its concealed text.
     Picture,
@@ -210,6 +214,7 @@ pub enum JumboTitle {
 pub const MIN_WIDTH: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Settings {
     pub width: usize,
     pub theme: Theme,

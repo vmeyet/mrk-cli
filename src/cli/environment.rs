@@ -3,9 +3,8 @@ use std::ffi::OsString;
 
 use anyhow::Result;
 use clap::ValueEnum;
-use mrk::terminal::Align;
 
-use super::{UsageError, parse_width};
+use super::{UsageError, Where, parse_width};
 
 /// What the environment sets, each value below the flags and above the config file, read only when no flag sets
 /// it: a bad value matters only where it is used.
@@ -36,8 +35,8 @@ impl Environment {
         Ok(parsed.transpose().map_err(|reason| UsageError(format!("MRK_WIDTH: {reason}")))?)
     }
 
-    pub fn align(&self) -> Result<Option<Align>> {
-        let parsed = text("MRK_ALIGN", self.align.as_ref())?.map(|raw| Align::from_str(&raw, false).map_err(|_| raw));
+    pub fn align(&self) -> Result<Option<Where>> {
+        let parsed = text("MRK_ALIGN", self.align.as_ref())?.map(|raw| Where::from_str(&raw, false).map_err(|_| raw));
         Ok(parsed.transpose().map_err(|raw| UsageError(format!("MRK_ALIGN: `{raw}` is neither left nor center")))?)
     }
 }
@@ -68,7 +67,7 @@ mod tests {
 
         assert_eq!(read.theme().unwrap().as_deref(), Some("nord"));
         assert_eq!(read.width().unwrap(), Some(72));
-        assert_eq!(read.align().unwrap(), Some(Align::Left));
+        assert_eq!(read.align().unwrap(), Some(Where::Left));
     }
 
     #[test]

@@ -58,10 +58,11 @@ mod tty {
         tcgetpgrp(tty).is_ok_and(|group| group == getpgrp())
     }
 
-    fn read_available(mut source: impl Read) -> io::Result<Vec<u8>> {
+    fn read_available(mut source: impl Read, limit: usize) -> io::Result<Vec<u8>> {
         let mut buffer = [0; READ_BYTES];
-        match source.read(&mut buffer) {
-            Ok(count) => Ok(buffer[..count].to_vec()),
+        let room = &mut buffer[..limit.min(READ_BYTES)];
+        match source.read(room) {
+            Ok(count) => Ok(room[..count].to_vec()),
             Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => Ok(Vec::new()),
             Err(error) => Err(error),
         }
@@ -70,7 +71,7 @@ mod tty {
     fn read_replies(mut source: impl Read, deadline: Instant, is_complete: impl Fn(&Replies) -> bool) -> io::Result<Vec<u8>> {
         let mut received = Vec::new();
         while !is_complete(&reply::parse(&received)) && received.len() < MAX_REPLY_BYTES && Instant::now() < deadline {
-            let chunk = read_available(&mut source)?;
+            let chunk = read_available(&mut source, MAX_REPLY_BYTES - received.len())?;
             if chunk.is_empty() {
                 std::thread::sleep(IDLE_WAIT);
             }
@@ -160,6 +161,24 @@ mod tty {
             let received = read_until_answered(io::repeat(b'x'), PATIENCE);
 
             assert_eq!(received.len(), MAX_REPLY_BYTES);
+        }
+
+        /// Hands out at most 100 bytes per read, a size the cap is no multiple of.
+        struct Uneven;
+
+        impl Read for Uneven {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                let count = buffer.len().min(100);
+                buffer[..count].fill(b'x');
+                Ok(count)
+            }
+        }
+
+        #[test]
+        fn a_flood_in_uneven_reads_stops_exactly_at_the_byte_cap() {
+            assert_ne!(MAX_REPLY_BYTES % 100, 0);
+
+            assert_eq!(read_until_answered(Uneven, PATIENCE).len(), MAX_REPLY_BYTES);
         }
     }
 }

@@ -7,7 +7,9 @@ const SHOWCASE: &str = include_str!("fixtures/showcase.md");
 const CELL: CellSize = CellSize { width_px: 10, height_px: 22 };
 
 fn test_settings() -> Settings {
-    Settings { hyperlinks: true, ..Settings::default() }
+    let mut settings = Settings::default();
+    settings.hyperlinks = true;
+    settings
 }
 
 fn widest_line(settings: &Settings) -> usize {
@@ -29,7 +31,8 @@ fn the_showcase_renders_as_text_without_pictures() {
 
 #[test]
 fn the_showcase_draws_both_diagrams_as_pictures_when_the_terminal_can() {
-    let settings = Settings { cell: Some(CELL), ..test_settings() };
+    let mut settings = test_settings();
+    settings.cell = Some(CELL);
 
     let pictures: Vec<_> = markdown::render(SHOWCASE, &settings)
         .blocks
@@ -44,7 +47,8 @@ fn the_showcase_draws_both_diagrams_as_pictures_when_the_terminal_can() {
 #[test]
 fn no_showcase_line_is_wider_than_the_width() {
     for width in [20, 33, 60, 80, 100] {
-        let settings = Settings { width, ..test_settings() };
+        let mut settings = test_settings();
+        settings.width = width;
 
         assert!(widest_line(&settings) <= width, "width {width}");
     }

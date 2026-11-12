@@ -14,8 +14,6 @@ mod tty;
 
 use std::io::Write;
 
-use serde::Deserialize;
-
 pub use detect::{Preferences, detect};
 
 use self::ansi::Half;
@@ -26,6 +24,7 @@ use crate::sanitize;
 use crate::theme::Appearance;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ColorDepth {
     None,
     Ansi256,
@@ -33,6 +32,7 @@ pub enum ColorDepth {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Capabilities {
     pub color: ColorDepth,
     pub hyperlinks: bool,
@@ -48,6 +48,7 @@ pub struct Capabilities {
 
 /// How the terminal draws pictures; kitty when it speaks both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Protocol {
     Kitty,
     /// Kitty graphics from inside tmux: passed through it and shown by Unicode placeholder cells.
@@ -56,13 +57,13 @@ pub enum Protocol {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Graphics {
     pub protocol: Protocol,
     pub cell: CellSize,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ColorChoice {
     #[default]
     Auto,
@@ -70,8 +71,7 @@ pub enum ColorChoice {
     Never,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImagesMode {
     #[default]
     Auto,
@@ -79,8 +79,7 @@ pub enum ImagesMode {
     Never,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Align {
     Left,
     #[default]
@@ -189,11 +188,12 @@ fn indented(message: &str, (dim, reset): (&str, &str)) -> String {
 }
 
 /// An error and its causes for stderr, sanitized, every line after the first indented, causes dimmed when `is_styled`.
-pub fn error_report(error: &anyhow::Error, is_styled: bool) -> String {
+pub fn error_report(error: &dyn std::error::Error, is_styled: bool) -> String {
     let dimmed = if is_styled { ("\x1b[2m", "\x1b[0m") } else { ("", "") };
     let message = cleaned(error);
     let (first, rest) = message.split_once('\n').unwrap_or((&message, ""));
-    let causes: String = error.chain().skip(1).map(|cause| indented(&cleaned(cause), dimmed)).collect();
+    let causes: String =
+        std::iter::successors(error.source(), |cause| cause.source()).map(|cause| indented(&cleaned(cause), dimmed)).collect();
     format!("✗ {first}\n{}{causes}", indented(rest, ("", "")))
 }
 
@@ -224,8 +224,8 @@ mod tests {
     fn an_error_report_strips_escapes_and_dims_causes_only_when_styled() {
         let error = anyhow::anyhow!("inner \x1b]52;c;AAAA\x07").context("cannot read \x1b[31mfile");
 
-        assert_eq!(error_report(&error, false), "✗ cannot read [31mfile\n  inner ]52;c;AAAA\n");
-        assert_eq!(error_report(&error, true), "✗ cannot read [31mfile\n  \x1b[2minner ]52;c;AAAA\x1b[0m\n");
+        assert_eq!(error_report(error.as_ref(), false), "✗ cannot read [31mfile\n  inner ]52;c;AAAA\n");
+        assert_eq!(error_report(error.as_ref(), true), "✗ cannot read [31mfile\n  \x1b[2minner ]52;c;AAAA\x1b[0m\n");
     }
 
     #[test]
@@ -233,7 +233,7 @@ mod tests {
         let error = anyhow::anyhow!("fatal: no remote\r\nhint: add one\n").context("update failed\nfor the tag");
 
         assert_eq!(
-            error_report(&error, true),
+            error_report(error.as_ref(), true),
             "✗ update failed\n  for the tag\n  \x1b[2mfatal: no remote\x1b[0m\n  \x1b[2mhint: add one\x1b[0m\n"
         );
     }

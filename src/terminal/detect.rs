@@ -12,6 +12,7 @@ const DEFAULT_ROWS: u16 = 24;
 
 /// What the user asked for, which detection must respect.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Preferences {
     pub color: ColorChoice,
     pub images: ImagesMode,

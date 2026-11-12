@@ -1,17 +1,18 @@
 //! Render Markdown beautifully in the terminal.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod code;
 pub mod diff;
 pub mod document;
 pub mod markdown;
 pub mod mermaid;
-pub mod raster;
+mod raster;
 pub mod sanitize;
 #[cfg(all(test, feature = "cli"))]
 mod snapshot;
 #[cfg(feature = "cli")]
 pub mod terminal;
-pub mod text;
+mod text;
 pub mod theme;
 
 /// Runs the Rust snippets of `docs/library.md` as doctests, so the guide compiles against the API it describes.

@@ -63,15 +63,15 @@ pub struct Layout {
 
 impl Layout {
     pub fn render(&self, columns: u16) -> Rendered {
-        let capabilities = Capabilities { columns, ..self.capabilities };
-        let settings = Settings {
-            width: width(self.requested_width, columns),
-            theme: self.theme,
-            cell: capabilities.graphics.map(|graphics| graphics.cell),
-            hyperlinks: capabilities.hyperlinks,
-            jumbo_title: if self.jumbo_title { terminal::jumbo_title(&capabilities) } else { None },
-            diagram_deadline: Some(Instant::now() + DIAGRAMS_TIME),
-        };
+        let mut capabilities = self.capabilities;
+        capabilities.columns = columns;
+        let mut settings = Settings::default();
+        settings.width = width(self.requested_width, columns);
+        settings.theme = self.theme;
+        settings.cell = capabilities.graphics.map(|graphics| graphics.cell);
+        settings.hyperlinks = capabilities.hyperlinks;
+        settings.jumbo_title = if self.jumbo_title { terminal::jumbo_title(&capabilities) } else { None };
+        settings.diagram_deadline = Some(Instant::now() + DIAGRAMS_TIME);
 
         let margin = terminal::margin(self.align, &capabilities, settings.width);
         Rendered { document: mrk::markdown::render(&self.source, &settings), margin }

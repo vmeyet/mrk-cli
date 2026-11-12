@@ -87,13 +87,6 @@ fn code_kind(code: &NodeCodeBlock) -> SectionKind {
     }
 }
 
-fn item_kind<'a>(item: &'a AstNode<'a>) -> SectionKind {
-    match &item.data().value {
-        NodeValue::TaskItem(task) => SectionKind::ListItem { task: Some(task.symbol.is_some()) },
-        _ => SectionKind::ListItem { task: None },
-    }
-}
-
 /// `None` for a node the enabled Markdown extensions never put at the top level.
 fn kind<'a>(node: &'a AstNode<'a>) -> Option<SectionKind> {
     let kind = match &node.data().value {
@@ -132,7 +125,8 @@ fn section<'a>(node: &'a AstNode<'a>, kind: SectionKind, blocks: Vec<Block>, wri
 fn group<'a>(node: &'a AstNode<'a>, written: &[bool], context: &Context) -> Group {
     if let NodeValue::List(list) = &node.data().value {
         let items = node.children().zip(list::items(node, list, context));
-        let sections = items.map(|(item, blocks)| section(item, item_kind(item), blocks, written)).collect();
+        let sections =
+            items.map(|(item, blocks)| section(item, SectionKind::ListItem { task: list::task(item) }, blocks, written)).collect();
         return Group::Sections { spacing: list::spacing(list), sections };
     }
     let blocks = super::block(node, context);
