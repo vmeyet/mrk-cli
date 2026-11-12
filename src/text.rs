@@ -314,6 +314,21 @@ pub(crate) fn spans_width(spans: &[Span]) -> usize {
     spans.iter().map(|span| display_width(&span.text)).sum()
 }
 
+/// The cells `spans` take up to the end of their last word.
+pub(crate) fn trimmed_width(spans: &[Span]) -> usize {
+    display_width(joined(spans).trim_end())
+}
+
+/// The cells the first word of `spans` takes, a word running across spans counted whole.
+pub(crate) fn first_word_width(spans: &[Span]) -> Option<usize> {
+    joined(spans).split_whitespace().next().map(display_width)
+}
+
+/// The text of `spans` as one, so graphemes and words that cross from one span to the next are measured whole.
+pub(crate) fn joined(spans: &[Span]) -> String {
+    spans.iter().map(|span| span.text.as_str()).collect()
+}
+
 const SPACE: &str = " ";
 
 /// The line being filled, the lines already closed, and the shape every line takes.
@@ -637,6 +652,22 @@ mod tests {
 
         assert_eq!(plain_lines(&lines), ["let a ", "> = 12", "> 345"]);
         assert_eq!(lines[1].spans, [Span::plain("> = "), Span::new("12", bold)]);
+    }
+
+    #[test]
+    fn trimmed_width_ends_at_the_last_word_across_spans() {
+        let spans = [Span::plain("界 a"), Span::plain("b  "), Span::plain(" ")];
+
+        assert_eq!(trimmed_width(&spans), 5);
+        assert_eq!(trimmed_width(&[Span::plain("  ")]), 0);
+    }
+
+    #[test]
+    fn the_first_word_is_measured_whole_across_spans() {
+        let spans = [Span::plain("  界"), Span::plain("ab c")];
+
+        assert_eq!(first_word_width(&spans), Some(4));
+        assert_eq!(first_word_width(&[Span::plain(" ")]), None);
     }
 
     #[test]

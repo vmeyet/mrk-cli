@@ -8,9 +8,9 @@ use std::ops::Range;
 use similar::{Algorithm, DiffOp, DiffTag, capture_diff_slices};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::document::{Block, Line, Rgb, Settings};
+use crate::document::{Block, Line, Rgb, Settings, Span};
 use crate::markdown::{Section, SectionKind, render_sections};
-use crate::text::display_width;
+use crate::text::{first_word_width, trimmed_width};
 
 /// Both diffs take up to the product of the two sides' lengths. Past this many sections, both sides counted, only
 /// the equal sections at the start and the end pair as `Same`.
@@ -97,7 +97,10 @@ fn written_lines(section: &Section, settings: &Settings) -> Vec<String> {
     for (line, wrapped) in lines.iter().zip(wrapped) {
         let text = written(line, keeps_spacing(&section.kind, line, surface));
         match joined.last_mut() {
-            Some(previous) if wrapped => *previous = format!("{previous} {text}"),
+            Some(previous) if wrapped => {
+                previous.push(' ');
+                previous.push_str(&text);
+            }
             _ => joined.push(text),
         }
     }
@@ -109,20 +112,20 @@ fn written_lines(section: &Section, settings: &Settings) -> Vec<String> {
 fn is_wrapped(kind: &SectionKind, line: &Line, next: &Line, settings: &Settings) -> bool {
     let surface = settings.theme.palette.surface;
     let flows = *kind != SectionKind::Table && !keeps_spacing(kind, line, surface) && !keeps_spacing(kind, next, surface);
-    flows && first_word_width(next).is_some_and(|word| text_end(line) + 1 + word > settings.width)
+    flows && first_word_width(opening_text(next)).is_some_and(|word| text_end(line) + 1 + word > settings.width)
 }
 
 /// The column after the last of the input's text on a line, the frame before it counted.
 fn text_end(line: &Line) -> usize {
     let end = line.spans.iter().rposition(|span| !span.is_frame).map_or(0, |last| last + 1);
-    display_width(line.spans[..end].iter().map(|span| span.text.as_str()).collect::<String>().trim_end())
+    trimmed_width(&line.spans[..end])
 }
 
-/// The width of the first word of the input's text on a line, after the frame that opens it.
-fn first_word_width(line: &Line) -> Option<usize> {
-    let text: String =
-        line.spans.iter().skip_while(|span| span.is_frame).take_while(|span| !span.is_frame).map(|span| span.text.as_str()).collect();
-    text.split_whitespace().next().map(display_width)
+/// The spans of the input's text a line opens on, after the frame before them.
+fn opening_text(line: &Line) -> &[Span] {
+    let start = line.spans.iter().position(|span| !span.is_frame).unwrap_or(line.spans.len());
+    let text = &line.spans[start..];
+    &text[..text.iter().position(|span| span.is_frame).unwrap_or(text.len())]
 }
 
 /// Code, wherever it sits, Mermaid source, front matter and HTML show the input's spacing; elsewhere a run of spaces is
@@ -421,6 +424,16 @@ mod tests {
                 assert!(key.lines.iter().any(|line| line.ends_with(text)), "{container:?} at {width}: {:?}", key.lines);
             }
         }
+    }
+
+    #[test]
+    fn a_paragraph_wrapped_over_many_rows_is_compared_as_its_whole_text() {
+        let text = (0..2_000).map(|index| format!("w{index}")).collect::<Vec<_>>().join(" ");
+        let settings = Settings { width: 20, ..test_settings() };
+
+        let sections = render_sections(&text, &settings);
+
+        assert_eq!(Key::of(&sections[0], &settings).lines, [text]);
     }
 
     #[test]

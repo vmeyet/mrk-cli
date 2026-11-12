@@ -27,7 +27,7 @@ const ALIASES: &[(&str, &str)] = &[
 ];
 
 /// Whether `language` names plain text, which is never highlighted.
-pub(super) fn is_plain(language: &str) -> bool {
+fn is_plain(language: &str) -> bool {
     PLAIN.iter().any(|plain| plain.eq_ignore_ascii_case(language))
 }
 
