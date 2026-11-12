@@ -30,7 +30,8 @@ pub fn describe(source: &str) -> &'static str {
     KINDS.iter().find(|(prefix, _)| keyword.starts_with(prefix)).map_or(UNKNOWN, |(_, name)| name)
 }
 
-fn header(source: &str) -> Option<&str> {
+/// The line that opens the diagram, after any front matter and comment.
+pub(super) fn header(source: &str) -> Option<&str> {
     let body = skip_front_matter(source);
     body.lines().map(str::trim).find(|line| !line.is_empty() && !line.starts_with("%%"))
 }

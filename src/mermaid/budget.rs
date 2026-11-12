@@ -5,7 +5,7 @@ use mermaid_rs_renderer::{DiagramKind, Edge, Graph};
 
 use super::DiagramError;
 use super::catch::caught;
-use super::text;
+use super::{kind, text};
 
 /// Mermaid blocks above this size are shown as source.
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
@@ -121,10 +121,10 @@ impl Diagram {
     }
 
     /// What drawing it costs its document: as a picture when pictures are drawn and its count allows one, else as
-    /// text; nothing when both counts refuse it.
+    /// text; at least `MIN_COST_MS`, even when both counts refuse it, since parsing it took time.
     pub fn cost(&self, pictures: bool) -> usize {
         let picture = self.picture.as_ref().ok().filter(|_| pictures).map(|(_, cost)| cost + PICTURE_COST_MS);
-        picture.or_else(|| self.text.as_ref().ok().copied()).map_or(0, |cost| cost.max(MIN_COST_MS))
+        picture.or_else(|| self.text.as_ref().ok().copied()).map_or(MIN_COST_MS, |cost| cost.max(MIN_COST_MS))
     }
 }
 
@@ -175,7 +175,7 @@ fn readable(source: &str) -> Result<(), DiagramError> {
     if !has_safe_subgraphs(source) {
         return Err(DiagramError::UnsafeSubgraphs);
     }
-    Ok(())
+    Load::Lanes.within(scanned_lanes(source)).map(|_| ())
 }
 
 fn picture_cost(graph: &Graph) -> Result<usize, DiagramError> {
@@ -253,6 +253,43 @@ fn scanned_text_load(source: &str) -> Option<(Load, usize)> {
     }
 }
 
+/// Both parsers look each participant or branch up among those already met, so their time grows with the square of
+/// the lanes: a scan counts the names first, those a message or a declaration gives, `participant A as Alice` being `A`
+/// and a git graph starting on `main`.
+fn scanned_lanes(source: &str) -> usize {
+    let keyword = kind::header(source).and_then(|header| header.split_whitespace().next()).unwrap_or_default().to_ascii_lowercase();
+    let names: HashSet<String> = if keyword.starts_with("sequencediagram") {
+        statements(source).skip(1).flat_map(|statement| participants(&statement)).collect()
+    } else if keyword.starts_with("gitgraph") {
+        statements(source).filter_map(|statement| declared(&statement, &["branch"])).chain(["main".to_owned()]).collect()
+    } else {
+        HashSet::new()
+    };
+    names.len()
+}
+
+/// The participants a sequence statement names: the one it declares, or those either side of a message's arrows.
+fn participants(statement: &str) -> Vec<String> {
+    if let Some(name) = declared(statement.trim_start_matches("create "), &["participant", "actor"]) {
+        return vec![name];
+    }
+    let before_text = statement.split_once(':').map_or(statement, |(before, _)| before);
+    let sides = sides(before_text, &SEQUENCE_ARROWS);
+    if sides.len() < 2 {
+        return Vec::new();
+    }
+    sides.iter().map(|side| side.trim().trim_start_matches(['+', '-']).to_owned()).filter(|name| !name.is_empty()).collect()
+}
+
+/// The word after the keyword a statement opens on, when it is one of `keywords`.
+fn declared(statement: &str, keywords: &[&str]) -> Option<String> {
+    let mut words = statement.split_whitespace();
+    let keyword = words.next()?;
+    if keywords.iter().any(|candidate| candidate.eq_ignore_ascii_case(keyword)) { words.next().map(str::to_owned) } else { None }
+}
+
+/// Longest first, so a shorter arrow never splits a longer one.
+const SEQUENCE_ARROWS: [&str; 10] = ["<<-->>", "<<->>", "-->>", "->>", "-->", "->", "--x", "-x", "--)", "-)"];
 const LINEAR_KINDS: [&str; 8] = ["sequenceDiagram", "pie", "gantt", "timeline", "journey", "gitGraph", "mindmap", "kanban"];
 const ARROWS: [&str; 3] = ["--", "==", "-."];
 const CLASS_ARROWS: [&str; 2] = ["--", ".."];
@@ -260,9 +297,14 @@ const ARROW_MARK: char = '\u{0}';
 
 /// One edge per pair of nodes either side of each arrow: `a & b --> c & d --> e` is four then two.
 fn edges_in(statement: &str, arrows: &[&str]) -> usize {
+    let nodes: Vec<usize> = sides(statement, arrows).iter().map(|side| side.split('&').count()).collect();
+    nodes.windows(2).map(|pair| pair[0] * pair[1]).sum()
+}
+
+/// The text between the arrows of a statement, `arrows` matched in their order.
+fn sides(statement: &str, arrows: &[&str]) -> Vec<String> {
     let marked = arrows.iter().fold(statement.to_owned(), |marked, arrow| marked.replace(arrow, &ARROW_MARK.to_string()));
-    let sides: Vec<usize> = marked.split(ARROW_MARK).map(|side| side.split('&').count()).collect();
-    sides.windows(2).map(|pair| pair[0] * pair[1]).sum()
+    marked.split(ARROW_MARK).map(str::to_owned).collect()
 }
 
 /// The statements as mermaid-text reads them: split on newlines and semicolons, with every carriage return deleted.
@@ -348,6 +390,20 @@ mod tests {
         edges(count, |index| format!("{name}{index} --> {name}{}", index + 1))
     }
 
+    /// A sequence of `count` participants, each named by a message.
+    fn messaged(count: usize) -> String {
+        format!("sequenceDiagram\n{}", (1..count).map(|index| format!("  p{} ->> p{index}: m\n", index - 1)).collect::<String>())
+    }
+
+    fn boxed(count: usize) -> String {
+        messaged(count).replace("sequenceDiagram\n", "sequenceDiagram\n  box Front\n    participant p0\n  end\n")
+    }
+
+    /// A git graph of `count` branches, `main` included.
+    fn branched(count: usize) -> String {
+        format!("gitGraph\n{}", (1..count).map(|index| format!("  branch b{index}\n  commit\n")).collect::<String>())
+    }
+
     fn graph(source: &str) -> Graph {
         mermaid_rs_renderer::parse_mermaid(source).unwrap().graph
     }
@@ -384,7 +440,7 @@ mod tests {
 
     #[test]
     fn a_diagram_both_engines_refuse_or_drawn_row_after_row_costs_little() {
-        assert_eq!(cost(&chain(200, "a"), true), 0);
+        assert_eq!(cost(&chain(200, "a"), true), MIN_COST_MS);
         assert_eq!(cost(&"%%\n".repeat(MAX_SOURCE_BYTES), true), 0);
         assert_eq!(cost(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000)), false), MIN_COST_MS);
     }
@@ -429,6 +485,16 @@ mod tests {
         let allowance = Allowance::new(spending.chain(unread), false);
 
         assert_eq!(allowance.0.values().filter(|diagram| diagram.is_ok()).count(), MAX_DOCUMENT_DIAGRAMS);
+    }
+
+    #[test]
+    fn diagrams_parsed_then_refused_by_both_counts_still_spend_the_budget() {
+        let refused = (0..MAX_DOCUMENT_DIAGRAMS).map(|index| chain(MAX_EDGES + 1, &format!("d{index}_")));
+        let unread = std::iter::from_fn(|| -> Option<String> { panic!("a diagram read after the budget was spent") });
+
+        let allowance = Allowance::new(refused.chain(unread), false);
+
+        assert_eq!(allowance.0.len(), MAX_DOCUMENT_DIAGRAMS);
     }
 
     #[test]
@@ -527,21 +593,36 @@ mod tests {
 
     #[test]
     fn the_text_engine_counts_the_lanes_every_row_crosses() {
-        fn participants(count: usize) -> String {
-            format!("sequenceDiagram\n{}", (1..count).map(|index| format!("  p{} ->> p{index}: m\n", index - 1)).collect::<String>())
+        for lanes in [messaged, boxed, branched] {
+            assert_eq!(admit_text(&lanes(MAX_LANES)), Ok(()));
+            assert_eq!(text_cost(&lanes(MAX_LANES + 1), None), Err(DiagramError::OverBudget(Load::Lanes)));
         }
-        fn boxed(count: usize) -> String {
-            participants(count).replace("sequenceDiagram\n", "sequenceDiagram\n  box Front\n    participant p0\n  end\n")
+        assert_eq!(cost(&messaged(MAX_LANES), false), MAX_LANES);
+    }
+
+    #[test]
+    fn lanes_over_the_limit_are_refused_before_parsing() {
+        fn declared(count: usize) -> String {
+            format!("sequenceDiagram\n{}", (0..count).map(|index| format!("  actor p{index} as Person {index}\n")).collect::<String>())
         }
-        fn branches(count: usize) -> String {
-            format!("gitGraph\n{}", (1..count).map(|index| format!("  branch b{index}\n  commit\n")).collect::<String>())
+        fn fronted(count: usize) -> String {
+            format!("---\ntitle: Lanes\n---\n{}", messaged(count))
         }
 
-        for lanes in [participants, boxed, branches] {
-            assert_eq!(admit_text(&lanes(MAX_LANES)), Ok(()));
-            assert_eq!(admit_text(&lanes(MAX_LANES + 1)), Err(DiagramError::OverBudget(Load::Lanes)));
+        for lanes in [messaged, boxed, branched, declared, fronted] {
+            assert_eq!(readable(&lanes(MAX_LANES)), Ok(()));
+            assert_eq!(readable(&lanes(MAX_LANES + 1)), Err(DiagramError::OverBudget(Load::Lanes)));
         }
-        assert_eq!(cost(&participants(MAX_LANES), false), MAX_LANES);
+    }
+
+    #[test]
+    fn the_lane_scan_counts_each_participant_once_whatever_names_it() {
+        let source = "sequenceDiagram\n  autonumber\n  create participant A\n  actor U as User\n  U->>+A: hi\n  A-->>-U: ok\n  \
+                      A-)B: async\n  B--xU: lost\n  U<<->>A: both\n  note over A,B: n\n  loop every minute\n  A->>A: tick\n  end";
+
+        assert_eq!(scanned_lanes(source), 3);
+        assert_eq!(scanned_lanes("gitGraph\n  commit\n  branch dev\n  checkout main\n  branch dev"), 2);
+        assert_eq!(scanned_lanes(&chain(MAX_LANES + 1, "n")), 0);
     }
 
     #[test]
