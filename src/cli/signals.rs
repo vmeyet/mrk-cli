@@ -20,7 +20,8 @@ const GRACE: Duration = Duration::from_secs(5);
 /// No signal arrived.
 const NONE: usize = 0;
 
-/// The signals that end mrk by default: Ctrl-C, Ctrl-\\, a closed terminal and a parent program stopping it.
+/// The signals that end mrk by default: Ctrl-C, Ctrl-\\, a closed terminal and a parent program stopping it. The
+/// pager holds the same ones (`terminal::pager::signals`), since it only runs with stdout on a terminal.
 const ENDING_ON_A_TERMINAL: [i32; 4] = [SIGHUP, SIGINT, SIGQUIT, SIGTERM];
 const ENDING_OFF_A_TERMINAL: [i32; 3] = [SIGINT, SIGQUIT, SIGTERM];
 
