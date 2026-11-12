@@ -34,7 +34,7 @@ main ─▶ cli::run
 ## Crate layout
 
 ```
-build.rs           embeds the git commit as GIT_HASH for version.rs, only when the package is the root of its git checkout (a vendored copy reports `unknown`)
+build.rs           embeds the git commit as GIT_HASH for version.rs: `git rev-parse HEAD` when the package is the root of its git checkout, else the `git.sha1` cargo wrote to `.cargo_vcs_info.json` when packaging, else `unknown`
 assets/fonts/      MrkSans.ttf, rebuilt by scripts/last-resort-font, and the DejaVu license it ships under
 src/
   main.rs          the binary: declares `cli`, `config`, `update`, `version`, installs the panic hook, calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
@@ -176,6 +176,9 @@ src/
 - Pushing a `vX.Y.Z` tag that matches the package version builds `aarch64`/`x86_64` for `apple-darwin`, `unknown-linux-gnu` and `unknown-linux-musl` on native runners with the `dist` profile (the release profile), then publishes a GitHub release with a shell installer and a Homebrew formula pushed to `vmeyet/homebrew-tap`.
   Pull requests never run it (`pr-run-mode = "skip"`), so no pull request gets its `contents: write` token.
   Each build job attests its archives (`github-attestations`), so `gh attestation verify` ties an archive to this workflow.
+- The maintainer publishes the crate to crates.io by hand from the release tag (`cargo publish --locked`); trusted publishing from the release workflow comes later.
+  `cargo publish --dry-run --locked` runs in CI and `scripts/check`, so the package always builds from what it includes.
+  `mrk --version` reports the commit whatever the install: from git in a checkout, from `.cargo_vcs_info.json` in a crates.io package.
 - Linux ships twice: glibc for Homebrew, and static musl that the shell installer falls back to on Alpine or an old glibc.
 - The only C code is oniguruma, built by `cc`; the musl jobs compile it with `musl-gcc` from `musl-tools`, and fonts come from the system at run time with the embedded `mrk Sans` as last resort, so nothing links beyond libc.
 - `mrk update` outside Homebrew builds from source with cargo rather than downloading the release's binary: it trusts the same git host and needs no checksum or signature scheme, at the cost of a few minutes of compiling. It installs the commit the tag pointed at when listed (the peeled `^{}` line for an annotated tag), so a tag moved between listing and fetching cannot change what builds.

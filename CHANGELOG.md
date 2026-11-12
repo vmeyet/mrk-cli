@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Library: `Palette::colors` lists a palette's colours.
 - Release archives carry a GitHub build attestation, checked with `gh attestation verify`.
+- mrk is on crates.io: `cargo install --locked mrk-cli`.
+- `mrk --version` shows the commit for a crates.io install too, no longer `unknown`.
 
 ### Changed
 

@@ -7,6 +7,8 @@ cargo test --no-default-features
 cargo test --all-targets
 cargo deny --all-features check --hide-inclusion-graph
 cargo machete
+# Dirty allowed so the check runs before a commit; CI checks a clean checkout.
+cargo publish --dry-run --locked --allow-dirty
 
 msrv=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')
 if rustup toolchain list | grep -q "^$msrv-"; then

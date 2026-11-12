@@ -34,6 +34,8 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --no-default-features
       - run: cargo test --all-targets
+      - if: runner.os == 'Linux'
+        run: cargo publish --dry-run --locked
 
   msrv:
     runs-on: ubuntu-latest
