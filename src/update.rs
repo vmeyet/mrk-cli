@@ -1,6 +1,7 @@
 //! `mrk update`: where a newer mrk comes from, and whether the running one is already it.
 use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -203,7 +204,8 @@ fn install_with_cargo(release: &Release) -> Result<()> {
     let status = match signals::wait_ending(&mut cargo, &held).context("waiting for cargo install")? {
         Ok(status) => status,
         Err(interrupted) => {
-            println!("→ stopped: nothing was installed, the build folder is removed");
+            // The terminal may be hung up: a failed write must not panic away the signal's exit code.
+            let _ = writeln!(io::stdout(), "→ stopped: nothing was installed, the build folder is removed");
             return Err(interrupted.into());
         }
     };

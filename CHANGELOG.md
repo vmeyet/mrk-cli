@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Fixed
 
 - `nohup mrk update &` keeps building when the terminal closes: `SIGHUP` is left alone when neither stdout nor stderr is a terminal.
+- A signal that stops `mrk update` on a closed terminal exits with 128 + the signal, no longer with a panic (101).
 
 ## [0.8.0] - 2026-10-16
 

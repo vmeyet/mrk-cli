@@ -99,3 +99,17 @@ fn under_nohup_a_closed_terminal_leaves_the_build_running() {
     assert_eq!(status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("cargo install failed"), "{stderr}");
 }
+
+#[test]
+fn a_signal_ends_mrk_with_its_code_even_when_stdout_is_gone() {
+    let fakes = Fakes::new();
+    let mut update = fakes.update(&[MRK]);
+    fakes.wait_for_the_build();
+
+    drop(update.stdout.take());
+    send(&update, Signal::TERM);
+
+    let (status, stderr) = stderr_of(update);
+    assert_eq!(status.code(), Some(128 + Signal::TERM.as_raw()), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}
