@@ -1,7 +1,7 @@
 //! Signals that would end mrk, held off while a child program runs, so mrk outlives the child and cleans up after it.
 use std::fmt;
 use std::io;
-use std::process::{Child, Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use signal_hook::SigId;
+use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 use signal_hook::flag;
 use signal_hook::low_level;
 
@@ -18,6 +19,9 @@ const POLL: Duration = Duration::from_millis(50);
 const GRACE: Duration = Duration::from_secs(5);
 /// No signal arrived.
 const NONE: usize = 0;
+
+/// The signals that end mrk by default: Ctrl-C, Ctrl-\\, a closed terminal and a parent program stopping it.
+pub const ENDING_SIGNALS: [i32; 4] = [SIGHUP, SIGINT, SIGQUIT, SIGTERM];
 
 /// Per signal, the flag of an action that ends mrk as the default disposition would, armed whenever no `Held` holds
 /// that signal: signal-hook cannot give the default disposition back once it handled a signal.
@@ -44,14 +48,15 @@ pub struct Held {
 }
 
 impl Held {
+    /// Each signal is caught before its default is disarmed, so one arriving in between still ends mrk.
     pub fn hold(signals: &[i32]) -> io::Result<Self> {
         let mut held = Self { arrived: Arc::new(AtomicUsize::new(NONE)), catchers: Vec::new(), endings: Vec::new() };
         for &signal in signals {
             let ending = ending(signal)?;
-            ending.store(false, Ordering::SeqCst);
-            held.endings.push(ending);
             let number = usize::try_from(signal).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
             held.catchers.push(flag::register_usize(signal, Arc::clone(&held.arrived), number)?);
+            ending.store(false, Ordering::SeqCst);
+            held.endings.push(ending);
         }
         Ok(held)
     }
@@ -65,12 +70,13 @@ impl Held {
     }
 }
 
+/// The defaults are armed again before the signals stop being caught, so none slips through in between.
 impl Drop for Held {
     fn drop(&mut self) {
+        self.endings.iter().for_each(|ending| ending.store(true, Ordering::SeqCst));
         self.catchers.iter().for_each(|catcher| {
             low_level::unregister(*catcher);
         });
-        self.endings.iter().for_each(|ending| ending.store(true, Ordering::SeqCst));
     }
 }
 
@@ -86,9 +92,10 @@ fn ending(signal: i32) -> io::Result<Arc<AtomicBool>> {
 }
 
 /// `command` in a process group of its own, so the terminal's Ctrl-C reaches mrk alone and mrk ends the whole build.
+/// It reads no input: a background group reading the terminal would stop, and mrk would wait for it forever.
 pub fn spawn_alone(command: &mut Command) -> io::Result<Child> {
     use std::os::unix::process::CommandExt;
-    command.process_group(0).spawn()
+    command.process_group(0).stdin(Stdio::null()).spawn()
 }
 
 /// Waits for a child `spawn_alone` started; once a held signal arrives, ends its whole process group, `SIGTERM` then
@@ -129,6 +136,8 @@ fn is_alive(group: Pid) -> bool {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use std::io::Write;
+
     use signal_hook::consts::{SIGUSR1, SIGUSR2};
 
     use super::*;
@@ -155,5 +164,27 @@ mod tests {
 
         assert_eq!(wait_ending(&mut shell, &held).unwrap(), Err(Interrupted(SIGUSR2)));
         assert!(!is_alive(group));
+    }
+
+    #[test]
+    fn a_closed_terminal_and_ctrl_backslash_are_held_like_ctrl_c() {
+        let held = Held::hold(&ENDING_SIGNALS).unwrap();
+
+        for signal in [SIGHUP, SIGQUIT] {
+            low_level::raise(signal).unwrap();
+
+            assert_eq!(held.arrived(), Some(Interrupted(signal)));
+        }
+    }
+
+    #[test]
+    fn a_child_alone_in_its_group_reads_no_input() {
+        let (input, mut writer) = io::pipe().unwrap();
+        writer.write_all(b"typed\n").unwrap();
+        drop(writer);
+        let mut command = Command::new("sh");
+        command.args(["-c", "! read line"]).stdin(input);
+
+        assert!(spawn_alone(&mut command).unwrap().wait().unwrap().success());
     }
 }

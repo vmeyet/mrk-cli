@@ -49,7 +49,8 @@ src/
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names, UnknownTheme
   update.rs        `mrk update`: the latest release tag and its commit from `git ls-remote --tags`, compared with the running version;
                    `brew update` then `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
-                   else `cargo install --rev <commit> --target-dir <temporary folder>`, the folder removed afterwards, also on Ctrl-C or SIGTERM,
+                   else `cargo install --rev <commit> --target-dir <temporary folder>` under the cargo root holding the running mrk (`.crates.toml`)
+                   or cargo's default, checked writable first, the folder removed afterwards, also on SIGHUP, SIGINT, SIGQUIT or SIGTERM;
                    then the installed binary's `--version` and the `mrk` the PATH finds checked
   version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)

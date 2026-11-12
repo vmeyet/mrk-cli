@@ -41,7 +41,7 @@ static LAST_RESORT_FONT: &[u8] = include_bytes!("../../assets/fonts/MrkSans.ttf"
 
 /// The font directories are walked once, whichever sets load from them.
 static FONT_FILES: LazyLock<Vec<PathBuf>> =
-    LazyLock::new(|| font_directories().iter().flat_map(|directory| font_files(directory)).collect());
+    LazyLock::new(|| font_directories(std::env::home_dir()).iter().flat_map(|directory| font_files(directory)).collect());
 static LABEL_FONTS: LazyLock<Arc<Database>> = LazyLock::new(|| Arc::new(fonts_named(&FONT_FILES, &FAMILY_STEMS)));
 static FALLBACK_FONTS: LazyLock<Arc<Database>> =
     LazyLock::new(|| Arc::new(fonts_named(&FONT_FILES, &[FAMILY_STEMS.as_slice(), &FALLBACK_STEMS].concat())));
@@ -114,10 +114,12 @@ fn fonts_from<'a>(files: impl Iterator<Item = &'a PathBuf>) -> Database {
     database
 }
 
-fn font_directories() -> Vec<PathBuf> {
-    let home = std::env::home_dir().unwrap_or_default();
+/// Without an absolute home the user directories are left out: joined to an empty or relative one they would name
+/// folders under the current directory.
+fn font_directories(home: Option<PathBuf>) -> Vec<PathBuf> {
     let system = ["/System/Library/Fonts", "/Library/Fonts", "/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from);
-    let user = ["Library/Fonts", ".local/share/fonts", ".fonts"].map(|relative| home.join(relative));
+    let home = home.filter(|home| home.is_absolute());
+    let user = home.into_iter().flat_map(|home| ["Library/Fonts", ".local/share/fonts", ".fonts"].map(|relative| home.join(relative)));
     system.into_iter().chain(user).collect()
 }
 
@@ -170,6 +172,22 @@ mod tests {
 
     fn is_fallback(path: &str) -> bool {
         FALLBACK_STEMS.contains(&family_stem(Path::new(path)).as_str())
+    }
+
+    #[test]
+    fn the_user_font_directories_are_under_the_home() {
+        let directories = font_directories(Some(PathBuf::from("/Users/nina")));
+
+        assert!(directories.contains(&PathBuf::from("/Users/nina/.fonts")));
+    }
+
+    #[test]
+    fn without_an_absolute_home_no_font_directory_is_relative_to_the_current_one() {
+        for home in [None, Some(PathBuf::new()), Some(PathBuf::from("nina"))] {
+            let directories = font_directories(home.clone());
+
+            assert!(directories.iter().all(|directory| directory.is_absolute()), "{home:?}: {directories:?}");
+        }
     }
 
     #[test]

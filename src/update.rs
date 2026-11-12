@@ -6,7 +6,6 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use mrk::sanitize;
-use signal_hook::consts::{SIGINT, SIGTERM};
 
 use crate::cli::signals::{self, Held};
 use crate::version;
@@ -20,6 +19,9 @@ const BINARY: &str = "mrk";
 const FORMULA: &str = "vmeyet/tap/mrk";
 
 const PEELED_SUFFIX: &str = "^{}";
+
+/// The list of what cargo installed, kept at the root it installs under.
+const CARGO_INSTALLS: &str = ".crates.toml";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -155,8 +157,9 @@ fn run_brew(arguments: &[&str]) -> Result<()> {
 
 /// brew reads the tap as it last fetched it, up to a day old, so it is fetched first unless the user turned that off.
 /// `brew upgrade` does nothing for the version already installed, so a forced update reinstalls. The tap's formula
-/// follows a release once its build is done, so brew can succeed and still install an older version.
-fn install_with_brew(release: Version, force: bool) -> Result<()> {
+/// follows a release once its build is done, so brew can succeed and still install an older version: both the listing
+/// and what the installed binary reports are checked.
+fn install_with_brew(release: &Release, force: bool) -> Result<()> {
     if std::env::var_os("HOMEBREW_NO_AUTO_UPDATE").is_some_and(|value| !value.is_empty()) {
         println!("→ HOMEBREW_NO_AUTO_UPDATE is set: brew reads the tap as it last fetched it, which may miss the release");
     } else {
@@ -166,19 +169,29 @@ fn install_with_brew(release: Version, force: bool) -> Result<()> {
     let mut list = Command::new("brew");
     list.args(["list", "--versions", FORMULA]);
     let listing = stdout_of(list)?;
-    if !brew_lists(&listing, release) {
-        bail!("brew installed {listing}, not {}: the tap's formula has not caught up with the release yet, try again later", release.tag());
+    if !brew_lists(&listing, release.version) {
+        bail!(
+            "brew installed {listing}, not {}: the tap's formula has not caught up with the release yet, try again later",
+            release.version.tag()
+        );
     }
-    Ok(())
+    check_install(release, &brew_binary()?)
+}
+
+fn brew_binary() -> Result<PathBuf> {
+    let mut prefix = Command::new("brew");
+    prefix.args(["--prefix", FORMULA]);
+    Ok(PathBuf::from(stdout_of(prefix)?).join("bin").join(BINARY))
 }
 
 /// Builds the release's commit in a temporary folder, whatever `CARGO_TARGET_DIR` says, removed once done, also when
-/// Ctrl-C or `SIGTERM` stops the build; installs it where the running mrk is, then checks what was installed and
+/// a signal that would end mrk stops the build; installs it where the running mrk is, then checks what was installed and
 /// which `mrk` the `PATH` finds.
 fn install_with_cargo(release: &Release) -> Result<()> {
     println!("→ installing mrk {} from {REPO}…", release.label());
     let root = install_root().context("finding where to install mrk")?;
-    let held = Held::hold(&[SIGINT, SIGTERM]).context("holding Ctrl-C during the build")?;
+    check_writable(&root)?;
+    let held = Held::hold(&signals::ENDING_SIGNALS).context("holding the ending signals during the build")?;
     let build = tempfile::Builder::new().prefix("mrk-update-").tempdir().context("creating a build folder")?;
     let mut cargo = Command::new("cargo");
     cargo
@@ -197,10 +210,10 @@ fn install_with_cargo(release: &Release) -> Result<()> {
     if !status.success() {
         bail!("cargo install failed");
     }
-    check_cargo_install(release, &root.join("bin").join(BINARY))
+    check_install(release, &root.join("bin").join(BINARY))
 }
 
-/// The folder whose `bin` holds the running mrk, so the update replaces it; else where cargo installs by default.
+/// The root cargo installed the running mrk under, so the update replaces it; else where cargo installs by default.
 fn install_root() -> Option<PathBuf> {
     let running = std::env::current_exe().and_then(std::fs::canonicalize).ok();
     running
@@ -209,14 +222,28 @@ fn install_root() -> Option<PathBuf> {
         .or_else(|| cargo_root(std::env::var_os("CARGO_INSTALL_ROOT"), std::env::var_os("CARGO_HOME"), std::env::home_dir()))
 }
 
-/// `…/bin/mrk` is installed under `…`.
+/// `…/bin/mrk` is installed under `…` when cargo lists its installs there: for any other `bin`, `~/bin` or
+/// `/usr/local/bin`, cargo would write its lists in the parent.
 fn root_of(binary: &Path) -> Option<PathBuf> {
     let folder = binary.parent()?;
-    (folder.file_name()? == "bin").then(|| folder.parent().map(Path::to_path_buf)).flatten()
+    if folder.file_name()? != "bin" {
+        return None;
+    }
+    let root = folder.parent()?;
+    root.join(CARGO_INSTALLS).is_file().then(|| root.to_path_buf())
 }
 
-/// What the running mrk now reports must be the release, and it must be the `mrk` a shell runs.
-fn check_cargo_install(release: &Release, installed: &Path) -> Result<()> {
+/// cargo creates the root when it is missing, so its nearest existing folder must take a file; checked before the
+/// build, which takes minutes.
+fn check_writable(root: &Path) -> Result<()> {
+    let existing = root.ancestors().find(|folder| folder.is_dir()).unwrap_or(root);
+    tempfile::tempfile_in(existing)
+        .map(drop)
+        .with_context(|| format!("cannot install under {}", sanitize::text(&existing.display().to_string())))
+}
+
+/// What the installed mrk now reports must be the release, and it must be the `mrk` a shell runs.
+fn check_install(release: &Release, installed: &Path) -> Result<()> {
     let mut ask = Command::new(installed);
     ask.arg("--version");
     let label = stdout_of(ask)?;
@@ -239,7 +266,7 @@ fn check_cargo_install(release: &Release, installed: &Path) -> Result<()> {
 
 /// Where `cargo install` puts binaries by default: `$CARGO_INSTALL_ROOT`, else `$CARGO_HOME`, else `~/.cargo`.
 fn cargo_root(install_root: Option<OsString>, cargo_home: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
-    install_root.or(cargo_home).map(PathBuf::from).or_else(|| home.map(|home| home.join(".cargo")))
+    install_root.or(cargo_home).map(PathBuf::from).or_else(|| home.filter(|home| home.is_absolute()).map(|home| home.join(".cargo")))
 }
 
 /// The first `mrk` among the `PATH` folders, as a shell would run it.
@@ -262,7 +289,7 @@ fn reports(label: &str, release: &Release) -> bool {
 
 /// Installs through brew when brew installed mrk, otherwise builds the release with cargo.
 fn install(release: &Release, force: bool) -> Result<()> {
-    if installed_by_brew() { install_with_brew(release.version, force) } else { install_with_cargo(release) }
+    if installed_by_brew() { install_with_brew(release, force) } else { install_with_cargo(release) }
 }
 
 /// Installs the latest release when it is newer than the running one.
@@ -394,10 +421,72 @@ mod tests {
         assert_eq!(cargo_root(None, None, None), None);
     }
 
+    fn installed_under(root: &Path, folder: &str) -> PathBuf {
+        let binary = root.join(folder).join(BINARY);
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, b"").unwrap();
+        binary
+    }
+
     #[test]
-    fn the_update_installs_where_the_running_binary_is() {
-        assert_eq!(root_of(Path::new("/Users/nina/tools/bin/mrk")), Some(PathBuf::from("/Users/nina/tools")));
-        assert_eq!(root_of(Path::new("/Users/nina/target/release/mrk")), None);
+    fn the_update_installs_where_cargo_installed_the_running_binary() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(CARGO_INSTALLS), b"").unwrap();
+
+        assert_eq!(root_of(&installed_under(root.path(), "bin")), Some(root.path().to_path_buf()));
+        assert_eq!(root_of(&installed_under(root.path(), "target/release")), None);
+    }
+
+    #[test]
+    fn a_bin_folder_cargo_does_not_manage_is_not_an_install_root() {
+        let home = tempfile::tempdir().unwrap();
+
+        assert_eq!(root_of(&installed_under(home.path(), "bin")), None);
+    }
+
+    #[test]
+    fn cargo_never_installs_under_a_relative_home() {
+        for home in [PathBuf::new(), PathBuf::from("nina")] {
+            assert_eq!(cargo_root(None, None, Some(home.clone())), None, "{home:?}");
+        }
+    }
+
+    #[test]
+    fn an_install_root_is_writable_when_its_nearest_existing_folder_is() {
+        let root = tempfile::tempdir().unwrap();
+
+        assert!(check_writable(&root.path().join("not/yet")).is_ok());
+    }
+
+    #[test]
+    fn a_read_only_install_root_is_refused_before_building() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let checked = check_writable(root.path());
+
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(checked.is_err());
+    }
+
+    fn reporting(label: &str) -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let binary = installed_under(root.path(), "bin");
+        std::fs::write(&binary, format!("#!/bin/sh\necho '{label}'\n")).unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (root, binary)
+    }
+
+    #[test]
+    fn an_install_is_checked_by_running_the_installed_binary() {
+        let installing = release("0.7.0", COMMIT);
+        let (_root, right) = reporting("mrk 0.7.0 (2222222)");
+        let (_other, stale) = reporting("mrk 0.6.0 (3333333)");
+
+        assert!(check_install(&installing, &right).is_ok());
+        assert!(check_install(&installing, &stale).is_err());
     }
 
     #[test]
