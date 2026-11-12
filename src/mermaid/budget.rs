@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use mermaid_rs_renderer::{DiagramKind, Edge, Graph};
 
 use super::DiagramError;
+use super::catch::caught;
 
 /// Mermaid blocks above this size are shown as source.
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
@@ -133,8 +134,8 @@ impl Allowance {
 
 fn parsed(source: &str) -> Result<Graph, DiagramError> {
     admit(source)?;
-    let parsed =
-        mermaid_rs_renderer::parse_mermaid_strict(source).map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
+    let parsed = caught(|| mermaid_rs_renderer::parse_mermaid_strict(source))?
+        .map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
     Ok(parsed.graph)
 }
 
@@ -367,6 +368,14 @@ mod tests {
     #[test]
     fn invalid_source_is_an_error() {
         assert!(matches!(picture_graph("hello"), Err(DiagramError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_parser_panic_is_a_crash() {
+        let panicking = "architecture-beta\n group )g(cloud)[G]";
+
+        assert_eq!(picture_graph(panicking).unwrap_err(), DiagramError::Crashed);
+        assert_eq!(cost(panicking, true), MIN_COST_MS);
     }
 
     #[test]
