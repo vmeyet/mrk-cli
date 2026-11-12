@@ -46,9 +46,13 @@ struct Taken {
 }
 
 impl Taken {
-    /// The terminal taken, and how to force it back.
+    /// The terminal taken, and how to force it back; refused, with nothing changed, to a background job.
     fn enter() -> io::Result<(Self, Forced)> {
-        let raw = RawMode::enable(tty::open()?)?;
+        let tty = tty::open()?;
+        if !tty::is_foreground(&tty) {
+            return Err(io::Error::other("not the terminal's foreground job"));
+        }
+        let raw = RawMode::enable(tty)?;
         let (enter, leave) = modes(environment::saves_modes(&Environment::read()));
         let forced = Forced { tty: tty::open_nonblocking()?, saved: raw.saved().clone(), leave: format!("{STRING_END}{leave}") };
         let mut out = io::stdout();
