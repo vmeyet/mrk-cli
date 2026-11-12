@@ -4,7 +4,8 @@ mrk's renderer is a Rust library without any terminal dependency.
 It turns Markdown into styled lines and PNG pictures; printing them is up to you.
 
 The package is `mrk-cli` and the crate is `mrk`.
-Turn off the default `cli` feature to leave out the binary and its dependencies:
+The default `cli` feature adds the binary and `mrk::terminal`, which detects the terminal, writes a `Document` with its escape sequences and runs the pager.
+Turn it off to leave them out with their dependencies:
 
 ```toml
 mrk-cli = { git = "https://github.com/vmeyet/mrk-cli", default-features = false }
@@ -15,8 +16,9 @@ use mrk::document::{Block, Settings};
 use mrk::{markdown, theme};
 
 let source = "# Notes\n\nSee the [guide](docs/guide.md).\n\n- one\n- two\n";
-let theme = theme::find("tokyo-night").unwrap_or(theme::MRK_DARK);
-let settings = Settings { width: 60, theme, ..Settings::default() };
+let mut settings = Settings::default();
+settings.width = 60;
+settings.theme = theme::find("tokyo-night").unwrap_or(theme::MRK_DARK);
 for section in markdown::render_sections(source, &settings) {
     println!("{:?}, lines {}-{}", section.kind, section.first_line, section.last_line);
     for block in &section.blocks {
@@ -28,6 +30,7 @@ for section in markdown::render_sections(source, &settings) {
 ```
 
 - `Settings::default()` lays out 80 columns of `mrk-dark` text, without pictures or clickable links; set only the fields you need.
+  `Settings` is `#[non_exhaustive]`, as are the other types a later release may extend: start from the default rather than a struct literal.
 - `markdown::render` gives the whole `Document`.
 - `markdown::render_sections` cuts it into top-level sections, each tagged with its kind and the source lines it came from.
 - `document::highlight` restyles character ranges of a section's text, for search or word-level diffs.

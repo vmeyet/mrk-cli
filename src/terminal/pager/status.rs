@@ -1,6 +1,6 @@
 use super::state::Pager;
 use crate::document::{Line, Span, Style};
-use crate::text::{cut, display_width};
+use crate::text::{cut, display_width, spans_width};
 use crate::theme::Palette;
 
 const HINT: &str = "q quit · / search";
@@ -9,10 +9,6 @@ const GAP: usize = 3;
 const MIN_NAME_WIDTH: usize = 12;
 const ELLIPSIS: char = '…';
 const CARET: &str = "▏";
-
-fn width(spans: &[Span]) -> usize {
-    spans.iter().map(|span| display_width(&span.text)).sum()
-}
 
 fn truncated(text: &str, columns: usize) -> String {
     if display_width(text) <= columns {
@@ -67,8 +63,8 @@ fn fill(columns: usize, palette: &Palette) -> Span {
 }
 
 fn needed(middle: &[Span], right: &[Span]) -> usize {
-    let middle_width = if middle.is_empty() { 0 } else { width(middle) + GAP };
-    2 * PADDING + GAP + middle_width + width(right)
+    let middle_width = if middle.is_empty() { 0 } else { spans_width(middle) + GAP };
+    2 * PADDING + GAP + middle_width + spans_width(right)
 }
 
 /// Centred in the row, unless that would crowd the right side, and never over the name.
@@ -101,10 +97,10 @@ pub fn bar(pager: &Pager, name: &str, palette: &Palette, columns: usize) -> Line
     let name =
         Span::new(truncated(name, columns.saturating_sub(needed(&middle, &right))), Style::fg(palette.text).on(palette.surface).bold());
 
-    let name_end = PADDING + width(std::slice::from_ref(&name));
-    let middle_start = middle_start(name_end, width(&middle), width(&right), columns);
-    let middle_end = if middle.is_empty() { name_end } else { middle_start + width(&middle) };
-    let right_start = columns.saturating_sub(PADDING + width(&right)).max(middle_end + GAP);
+    let name_end = PADDING + display_width(&name.text);
+    let middle_start = middle_start(name_end, spans_width(&middle), spans_width(&right), columns);
+    let middle_end = if middle.is_empty() { name_end } else { middle_start + spans_width(&middle) };
+    let right_start = columns.saturating_sub(PADDING + spans_width(&right)).max(middle_end + GAP);
     let before_middle = if middle.is_empty() { 0 } else { middle_start - name_end };
 
     let spans = [

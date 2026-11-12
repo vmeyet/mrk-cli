@@ -36,13 +36,18 @@ pub(super) fn items<'a>(node: &'a AstNode<'a>, list: &NodeList, context: &Contex
     items.iter().zip(&markers).map(|(item, marker)| render_item(item, marker, marker_width, spacing(list), context)).collect()
 }
 
+/// `Some(done)` for a task item, `None` for any other item.
+pub(super) fn task<'a>(item: &'a AstNode<'a>) -> Option<bool> {
+    match &item.data().value {
+        NodeValue::TaskItem(task) => Some(task.symbol.is_some()),
+        _ => None,
+    }
+}
+
 fn marker<'a>(item: &'a AstNode<'a>, list: &NodeList, number: usize, number_width: usize, context: &Context) -> Marker {
     let palette = context.palette();
     let accent = Style::fg(palette.accent);
-    let task = match &item.data().value {
-        NodeValue::TaskItem(task) => Some(task.symbol.is_some()),
-        _ => None,
-    };
+    let task = task(item);
     let numbered = || Span::new(format!("{number:>number_width$}{}", delimiter(list.delimiter)), accent);
     let glyph =
         |is_done: bool| if is_done { Span::new(DONE, Style::fg(palette.success)) } else { Span::new(OPEN, Style::fg(palette.muted)) };

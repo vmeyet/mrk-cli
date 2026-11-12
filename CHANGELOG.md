@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Library: `Palette::colors` lists a palette's colours.
+
+### Changed
+
+**Breaking** for library users:
+
+- `text`, `raster` (with `raster::line` and `RasterError`), `theme::Choice` and `theme::UnknownTheme` are no longer public, nor `Rgb::hex`, `Rgb::mix` and `Line::joined`.
+- `terminal::error_report` takes any `std::error::Error`, no longer an `anyhow::Error`.
+- `terminal::ColorChoice`, `ImagesMode` and `Align` no longer implement clap's `ValueEnum` nor serde's `Deserialize`.
+- `Settings`, `Style`, `Span`, `Picture`, `JumboTitle`, `Theme`, `Palette`, `SyntaxTheme`, `terminal::Capabilities`, `Graphics`, `Protocol`, `ColorDepth` and `Preferences` are `#[non_exhaustive]`: build `Settings` and `Preferences` from `Default`, then set their fields.
+
 ## [0.8.0] - 2026-10-16
 
 ### Added

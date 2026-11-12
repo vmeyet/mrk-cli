@@ -1,10 +1,12 @@
 //! The command line: flags win over the environment (`MRK_THEME`, `MRK_WIDTH`, `MRK_ALIGN`), the environment over the config file.
+mod choices;
 mod environment;
 mod help;
 mod input;
 mod output;
 pub mod panic;
 pub mod signals;
+mod theme_choice;
 
 use std::fmt;
 use std::io::{self, IsTerminal, Write};
@@ -13,13 +15,15 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
-use mrk::document::{Block, Document, Line, Rgb, Span, Style};
-use mrk::terminal::{self, Align, ColorChoice, ColorDepth, ImagesMode, Preferences};
-use mrk::theme::{self, Appearance, Palette, Theme};
+use mrk::document::{Block, Document, Line, Span, Style};
+use mrk::terminal::{self, Align, ColorDepth, ImagesMode, Preferences};
+use mrk::theme::{self, Appearance, Theme};
 
 use crate::config::{self, Config};
+pub use choices::{When, Where};
 use environment::{Environment, flag_or};
 use output::{Layout, Output};
+use theme_choice::Choice;
 
 const SWATCH: &str = "██";
 const TERMINAL_MARK: &str = " (your terminal)";
@@ -48,10 +52,10 @@ pub struct Cli {
     /// `always` tries inside screen and zellij too, `never` draws diagrams as text.
     /// Piped output never gets images.
     #[arg(long, value_enum, value_name = "WHEN")]
-    pub images: Option<ImagesMode>,
+    pub images: Option<When>,
     /// Place the text in the window; `center` only applies on a terminal, never to piped output.
     #[arg(long, value_enum, value_name = "WHERE")]
-    pub align: Option<Align>,
+    pub align: Option<Where>,
     /// Read in the built-in pager, which keeps diagrams as images.
     ///
     /// `MRK_PAGER` swaps it for that command (diagrams as text), but only this flag or `pager = true` turns paging on.
@@ -66,7 +70,7 @@ pub struct Cli {
     pub jumbo_title: bool,
     /// Colour the output; `auto` honours NO_COLOR and a stdout that is not a terminal.
     #[arg(long, value_enum, value_name = "WHEN", default_value_t)]
-    pub color: ColorChoice,
+    pub color: When,
     /// Print the completion script for a shell.
     #[arg(long, value_name = "SHELL", exclusive = true)]
     pub completions: Option<Shell>,
@@ -122,22 +126,16 @@ fn print_man() -> io::Result<()> {
     man.render_version_section(out)
 }
 
-fn theme_choice(cli: &Cli, environment: &Environment, config: &Config) -> Result<theme::Choice> {
+fn choose_theme(cli: &Cli, environment: &Environment, config: &Config) -> Result<Choice> {
     let named = flag_or(cli.theme.clone(), || environment.theme())?;
     let name = named.as_deref().or(config.theme.as_deref());
-    theme::Choice::new(name, config.theme_dark.as_deref(), config.theme_light.as_deref())
+    Choice::new(name, config.theme_dark.as_deref(), config.theme_light.as_deref())
         .map_err(|error| UsageError(format!("{error} (mrk --list-themes)")).into())
-}
-
-fn palette_colors(palette: &Palette) -> [Rgb; 16] {
-    let Palette { text, muted, subtle, surface, accent, h1, h2, h3, link, code, success, note, tip, important, warning, caution } =
-        *palette;
-    [text, muted, subtle, surface, accent, h1, h2, h3, link, code, success, note, tip, important, warning, caution]
 }
 
 fn theme_line(theme: &Theme, name_width: usize) -> Line {
     let name = Span::new(format!("{:name_width$}  ", theme.name), Style::fg(theme.palette.text).bold());
-    let swatches = palette_colors(&theme.palette).into_iter().map(|color| Span::new(SWATCH, Style::fg(color)));
+    let swatches = theme.palette.colors().map(|color| Span::new(SWATCH, Style::fg(color)));
     Line::new(std::iter::once(name).chain(swatches).collect())
 }
 
@@ -166,27 +164,35 @@ fn theme_list(has_color: bool, background: Option<Appearance>) -> Document {
     Document { blocks: vec![Block::Lines(groups.join(&Line::blank()))] }
 }
 
-fn list_themes(color: ColorChoice) -> Result<()> {
-    let capabilities = terminal::detect(Preferences { color, images: ImagesMode::Never, needs_background: true });
+fn preferences(color: When, images: ImagesMode, needs_background: bool) -> Preferences {
+    let mut preferences = Preferences::default();
+    preferences.color = color.into();
+    preferences.images = images;
+    preferences.needs_background = needs_background;
+    preferences
+}
+
+fn list_themes(color: When) -> Result<()> {
+    let capabilities = terminal::detect(preferences(color, ImagesMode::Never, true));
     let margin = if capabilities.is_terminal { terminal::LEFT_MARGIN } else { 0 };
     output::print(&theme_list(capabilities.color != ColorDepth::None, capabilities.background), &capabilities, margin)
 }
 
 fn render(cli: &Cli, environment: &Environment, config: &Config) -> Result<()> {
-    let theme = theme_choice(cli, environment, config)?;
+    let theme = choose_theme(cli, environment, config)?;
     let source = input::read_input(cli.file.as_deref())?;
     let wants_pager = cli.pager || config.pager.unwrap_or_default();
     let output = output::choose(wants_pager, io::stdout().is_terminal(), std::env::var("MRK_PAGER").ok().as_deref())?;
     let wanted_images = cli.images.or(config.images).unwrap_or_default();
     let is_command = matches!(output, Output::Command(_));
-    let images = if is_command { ImagesMode::Never } else { wanted_images };
+    let images = if is_command { ImagesMode::Never } else { wanted_images.into() };
     let wants_jumbo_title = cli.jumbo_title || config.jumbo_title.unwrap_or_default();
-    let capabilities = terminal::detect(Preferences { color: cli.color, images, needs_background: theme.needs_background() });
+    let capabilities = terminal::detect(preferences(cli.color, images, theme.needs_background()));
 
     let layout = Layout {
         source,
         requested_width: flag_or(cli.width, || environment.width())?.or(config.width),
-        align: flag_or(cli.align, || environment.align())?.or(config.align).unwrap_or_default(),
+        align: flag_or(cli.align, || environment.align())?.or(config.align).map(Align::from).unwrap_or_default(),
         theme: theme.resolve(capabilities.background),
         jumbo_title: wants_jumbo_title && !is_command,
         capabilities,
@@ -245,14 +251,14 @@ mod tests {
         assert_eq!(cli.file, Some(PathBuf::from("notes.md")));
         assert_eq!(cli.theme.as_deref(), Some("mrk-dark"));
         assert_eq!(cli.width, Some(72));
-        assert_eq!(cli.images, Some(ImagesMode::Never));
-        assert_eq!(cli.color, ColorChoice::Always);
+        assert_eq!(cli.images, Some(When::Never));
+        assert_eq!(cli.color, When::Always);
         assert!(cli.jumbo_title);
     }
 
     #[test]
     fn colour_defaults_to_auto() {
-        assert_eq!(parse(&[]).color, ColorChoice::Auto);
+        assert_eq!(parse(&[]).color, When::Auto);
     }
 
     #[test]
@@ -266,8 +272,8 @@ mod tests {
         assert!(Cli::try_parse_from(["mrk", "--completions", "zsh", "a.md"]).is_err());
     }
 
-    fn choice(cli: &Cli, config: &Config) -> Result<theme::Choice> {
-        theme_choice(cli, &Environment::default(), config)
+    fn choice(cli: &Cli, config: &Config) -> Result<Choice> {
+        choose_theme(cli, &Environment::default(), config)
     }
 
     fn config_with_pair(dark: &str, light: &str) -> Config {

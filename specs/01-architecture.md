@@ -5,8 +5,14 @@ Package `mrk-cli` (`mrk` is taken on crates.io), library crate `mrk`, binary `mr
 ## Features
 
 - `cli` (default): the library's `terminal` module and the binary, whose own `cli`, `config`, `update` and `version` modules are no part of the library, with `anyhow`, `clap`, `clap_complete`, `clap_mangen`, `roff`, `crossterm`, `toml`, `serde`, `shell-words`, `signal-hook` (already in the tree through crossterm), `rustix` (on unix), `tempfile` (`mrk update`'s build folder), `base64` and `png` (decodes mrk's own PNGs for Sixel; already in the tree through tiny-skia).
-- Always on, the library core: `document`, `text`, `sanitize`, `theme`, `markdown`, `diff`, `code`, `mermaid`, `raster`. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
-  The core returns typed errors (`theme::UnknownTheme`, `raster::RasterError`); the binary adds its own wording.
+- Always on, the library core: `document`, `sanitize`, `theme`, `markdown`, `diff`, `code`, `mermaid`, public; `text` and `raster`, internal. A consumer depends on mrk with `default-features = false` and gets rendering without any terminal crate; `cargo check --no-default-features` runs in CI and `scripts/check`.
+  No public core function returns an error: a diagram or a title that does not draw falls back to text. The binary owns its errors and their wording (`anyhow`, `UnknownTheme`), and the parsers of its values: clap and serde read the binary's `When` and `Where`, turned into `terminal::ColorChoice`, `ImagesMode` and `Align`.
+
+## Public surface
+
+- No public signature or trait impl names a dependency's type, so a dependency bump never breaks a library user.
+- What a later release may extend is `#[non_exhaustive]`: `Settings`, `Style`, `Span`, `Picture`, `Block`, `JumboTitle`, `Section`, `SectionKind`, `SectionChange`, `Theme`, `Palette`, `SyntaxTheme`, and in `terminal` `Capabilities`, `Graphics`, `Protocol`, `ColorDepth` and `Preferences`. A user builds `Settings` and `Preferences` from `Default`, then sets the fields it needs.
+- docs.rs documents the default features, `terminal` marked as needing `cli` (`[package.metadata.docs.rs]`, `--cfg docsrs`), for `x86_64-unknown-linux-gnu` only.
 
 ## Pipeline
 
@@ -14,7 +20,7 @@ Package `mrk-cli` (`mrk` is taken on crates.io), library crate `mrk`, binary `mr
 main ─▶ cli::run
           ├─ config::load            ~/.config/mrk/config.toml (optional)
           ├─ terminal::detect        Capabilities { color, graphics, background }
-          ├─ theme::Choice           name, or a dark/light pair by background ─▶ Theme
+          ├─ theme_choice::Choice    name, or a dark/light pair by background ─▶ Theme
           ├─ read input              file or stdin, capped at 8 MiB
           ├─ markdown::render        &str + &Settings ─▶ Document        (pure)
           │     ├─ code::render      fenced code ─▶ Vec<Line>            (pure)
@@ -34,19 +40,21 @@ src/
   main.rs          the binary: declares `cli`, `config`, `update`, `version`, installs the panic hook, calls cli::run, maps errors to `✗ message` and exit code 1, or 2 when a UsageError is in the chain
   lib.rs           the library's module list; `terminal` behind the `cli` feature
   cli/             clap arguments, precedence flags > env > config, orchestration
+    choices.rs     When (auto, always, never) and Where (left, center): what --color, --images, --align, MRK_ALIGN and the config take
     environment.rs MRK_THEME, MRK_WIDTH, MRK_ALIGN, read outside clap so an empty one counts as unset and --help shows no value
     help.rs        the sections after the options (settings, config lookup, pager keys, exit status), as --help text and man roff
     input.rs       file or stdin, capped at 8 MiB, the name the pager shows
     output.rs      Output (print, pager, MRK_PAGER command, Ctrl-C and Ctrl-\ left to it), Layout: the render closure the pager calls on resize, each render's diagrams given 10 s
     panic.rs       the panic hook: reports sanitized, quiet for a panic the Mermaid renderers catch
     signals.rs     signals held off while a child (MRK_PAGER, cargo in a process group of its own) runs, so mrk outlives it, ends it and cleans up, then exits 128 + the signal
+    theme_choice.rs Choice: the theme named by flag, environment or config, or a dark/light pair; UnknownTheme with its "did you mean"
   config.rs        Config { theme, theme_dark, theme_light, width, images, align, pager, jumbo_title }, strict TOML (unknown keys rejected); the width bounds MIN_WIDTH 20, MAX_WIDTH 1000 and DEFAULT_WIDTH 100
   diff.rs          sections(): two versions of a file rendered with render_sections, paired section by section, changed words as char ranges (similar)
   document.rs      Document, Block, Line, Span, Style, Rgb, Picture, Settings, JumboTitle, CellSize, plain(), highlight(); Line::printable() is the text safe to print
   sanitize.rs      text, lines, link: what may reach a terminal, for the binary and library users alike; the characters removed, which display_width counts as none
   snapshot.rs      tests only: a Document as terminal::ansi writes it, what colour snapshots compare
   text.rs          display_width, cut, wrap (at spaces), hard_wrap (where a line is full, for code and source), expand_tabs
-  theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, Choice, names, UnknownTheme
+  theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, names, find
   update.rs        `mrk update`: the latest release tag and its commit from `git ls-remote --tags`, compared with the running version;
                    `brew update` then `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
                    else `cargo install --rev <commit> --target-dir <temporary folder>` under the cargo root holding the running mrk (`.crates.toml`)
@@ -113,7 +121,7 @@ src/
 - `terminal::pager::run(session: &Session, render: impl Fn(u16) -> Rendered)`: `render` lays the source out for a window that many columns wide and returns the Document and its margin.
 - `terminal::write(document: &Document, capabilities: &Capabilities, margin: usize, out: &mut impl Write)`: writes a Document with its escape sequences; `margin` columns before every line and picture, from `terminal::margin`, then a picture's indent on each of its rows (centred on a wide terminal, `LEFT_MARGIN` otherwise).
   A picture is drawn after its rows scrolled into view, the cursor sent back up to the first; one taller than the window is drawn in runs one row shorter than the window, each a crop of its PNG (kitty receives the PNG once per run), since the cursor cannot climb above the top row. A Sixel run's last band is padded with transparent rows, so no pixel row goes missing between runs and none is drawn twice.
-- Escape sequences are produced only inside `terminal/`: `ansi.rs` for styled lines, `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs`, `sixel.rs` and `tmux.rs` for pictures, `query.rs` for the capability queries, `error_report` for dimmed error causes.
+- Escape sequences are produced only inside `terminal/`: `ansi.rs` for styled lines, `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs`, `sixel.rs` and `tmux.rs` for pictures, `query.rs` for the capability queries, `error_report` (any `std::error::Error` and its sources) for dimmed error causes.
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, or `sanitize::link` refuses the target (a relative path), `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
   A span carries a link only when `sanitize::link` accepts its target, and then the target it gives (2,048 bytes at most), shared (`Arc<str>`) by every span its text wraps into.
 - A `Line` never exceeds `settings.width` cells, for any width from `document::MIN_WIDTH` up; the renderer that builds it guarantees it, `text::wrap` and `text::hard_wrap` help.
