@@ -29,12 +29,13 @@ const PICTURE_COST_MS: usize = 20;
 /// What a diagram's layout time grows with, counted before an engine lays it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Load {
-    /// Nodes, edges, edge labels, subgraphs, and every edge doubling another between the same two nodes, once per
-    /// earlier one: what the layered layout routes around.
+    /// Nodes, edges, edge labels, subgraphs, state notes, and every edge doubling another between the same two nodes,
+    /// once per earlier one: what the layered layout routes around.
     Links,
-    /// Participants, messages and notes of a sequence diagram.
+    /// Participants, messages, notes and frame parts of a sequence diagram.
     Messages,
-    /// Nodes, edges, subgraphs, commits and C4 shapes and relations, for the diagrams laid out in rows or rings.
+    /// Nodes, edges, subgraphs, commits, C4 shapes and relations, and chart marks, for the diagrams laid out in rows or
+    /// rings.
     Elements,
     /// Edges, nodes on none and subgraphs, as the text engine is given them: `a & b --> c & d` is four.
     Edges,
@@ -173,10 +174,25 @@ fn picture_load(graph: &Graph) -> (Load, usize) {
         | DiagramKind::State
         | DiagramKind::Er
         | DiagramKind::Requirement
-        | DiagramKind::Architecture => (Load::Links, shapes + labels(&graph.edges) + doublings(&graph.edges)),
-        DiagramKind::Sequence | DiagramKind::ZenUML => (Load::Messages, graph.nodes.len() + graph.edges.len() + graph.sequence_notes.len()),
-        _ => (Load::Elements, shapes + graph.gitgraph.commits.len() + graph.c4.shapes.len() + graph.c4.rels.len()),
+        | DiagramKind::Architecture => (Load::Links, shapes + labels(&graph.edges) + doublings(&graph.edges) + graph.state_notes.len()),
+        DiagramKind::Sequence | DiagramKind::ZenUML => {
+            (Load::Messages, graph.nodes.len() + graph.edges.len() + graph.sequence_notes.len() + frame_parts(graph))
+        }
+        _ => (Load::Elements, shapes + graph.gitgraph.commits.len() + graph.c4.shapes.len() + graph.c4.rels.len() + chart_marks(graph)),
     }
+}
+
+/// Each part of a sequence frame: an `alt` with one `else` is two.
+fn frame_parts(graph: &Graph) -> usize {
+    graph.sequence_frames.iter().map(|frame| frame.sections.len()).sum()
+}
+
+/// What the chart parsers keep outside the nodes: pie slices, timeline periods and their events, and xy chart
+/// categories, series and their values.
+fn chart_marks(graph: &Graph) -> usize {
+    let timeline: usize = graph.timeline.events.iter().map(|period| 1 + period.events.len()).sum();
+    let series: usize = graph.xychart.series.iter().map(|series| 1 + series.values.len()).sum();
+    graph.pie_slices.len() + timeline + graph.xychart.x_axis_categories.len() + series
 }
 
 fn graph_text_load(graph: &Graph) -> Option<(Load, usize)> {
@@ -399,6 +415,22 @@ mod tests {
         assert_eq!(load_of("pie\n  \"a\" : 1").0, Load::Elements);
         assert_eq!(load_of("packet-beta\n  0-15: \"Source\"").0, Load::Elements);
         assert_eq!(load_of("gitGraph\n  commit\n  commit"), (Load::Elements, 2));
+    }
+
+    #[test]
+    fn what_a_parser_keeps_outside_nodes_and_edges_counts_too() {
+        assert_eq!(load_of("pie\n  \"a\" : 1\n  \"b\" : 2"), (Load::Elements, 2));
+        assert_eq!(load_of("timeline\n  2001 : a : b\n  2002 : c"), (Load::Elements, 2 + 3));
+        assert_eq!(load_of("xychart-beta\n  x-axis [a, b]\n  bar [1, 2]\n  line [3, 4]"), (Load::Elements, 2 + 2 * (1 + 2)));
+        assert_eq!(load_of("sequenceDiagram\n  alt x\n  a ->> b: hi\n  else y\n  a ->> b: ho\n  end"), (Load::Messages, 2 + 2 + 2));
+        assert_eq!(load_of("stateDiagram-v2\n  a --> b\n  note right of a : n\n  note left of b : m"), (Load::Links, 2 + 1 + 2));
+    }
+
+    #[test]
+    fn a_chart_over_its_count_is_refused_as_a_picture() {
+        let pie = format!("pie\n{}", (0..=MAX_ELEMENTS).map(|index| format!("  \"s{index}\" : 1\n")).collect::<String>());
+
+        assert_eq!(picture_graph(&pie).err(), Some(DiagramError::OverBudget(Load::Elements)));
     }
 
     #[test]

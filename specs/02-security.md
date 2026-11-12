@@ -27,9 +27,9 @@ mrk's job is to make rendering a hostile file equivalent to rendering a boring o
 
    | Engine | Diagrams | Counted | Limit |
    |---|---|---|---|
-   | picture | flowchart, class, state, ER, requirement, architecture | links: nodes, edges, edge labels, subgraphs, and each edge between two nodes already joined once per earlier one | 150 |
-   | picture | sequence | participants, messages and notes | 400 |
-   | picture | every other kind | nodes, edges, subgraphs, git commits, C4 shapes and relations | 600 |
+   | picture | flowchart, class, state, ER, requirement, architecture | links: nodes, edges, edge labels, subgraphs, state notes, and each edge between two nodes already joined once per earlier one | 150 |
+   | picture | sequence | participants, messages, notes, and each part of a frame (an `alt` with one `else` is two) | 400 |
+   | picture | every other kind | nodes, edges, subgraphs, git commits, C4 shapes and relations, pie slices, timeline periods and events, xy chart categories, series and values | 600 |
    | text | class | relations | 32 |
    | text | sequence, pie, gantt, timeline, journey, git, mind map, kanban | nothing: drawn row after row, 64 KiB of any took under 30 ms | none |
    | text | every other kind | edges, and nodes on no edge, plus subgraphs | 100 |
@@ -42,6 +42,7 @@ mrk's job is to make rendering a hostile file equivalent to rendering a boring o
    A thread given up on cannot be stopped: it runs to its end and its result is dropped, which costs CPU only in the pager, since a one-shot `mrk` exits without waiting for it; the fonts a picture needs load on the calling thread, never on one given up on.
    Measured on an Apple M5 in a release build, through `markdown::render` with no deadline, on the bench corpus of twelve real diagrams (CI pipeline, auth flow, two state machines, ER, class, sequence, microservices, data pipeline, Kubernetes, module dependencies, incident flow): as one document all twelve draw, eleven as pictures and the class diagram as text since mermaid-rs-renderer cannot parse it, in 3.6 s, 0.03 to 1.25 s each (the module graph, 130 links), and lay out again on a resize in 0.3 s.
    The slowest diagram within the counts took 3.1 s as a picture (95 edges between 45 random nodes, 145 links; 120 fanned-out edges, 2.9 s) and 1.2 s as text (100 edges).
+   The charts and frames counted with them lay out far faster than they are charged: at their limits, 397 nested frames took 0.07 s, 599 xy chart values 0.06 s, 600 pie slices 0.04 s, and 40 distinct such diagrams in one document at most 1.8 s; uncounted, 142 pies of 5,000 slices (8 MiB) were still laying out as pictures after 30 s, where now they draw as text in 2.4 s.
    The slowest documents within the budget took 8.7 s as pictures (30 fanned-out graphs, four drawn) and 3.7 s as text (34 graphs of 95 random edges): the budget is charged at worst rates the realistic diagrams stay well below, so the binary's 10 s is what bounds an adversarial document on a slower machine.
    A panic inside a renderer is caught and its diagram shows as source; the binary's panic hook drops the report, which quotes the diagram, and sanitizes every other one (rule 1), and the pager leaves it out of the report it prints on exit.
    syntect's time on a line can grow with the square of its length: a JavaScript regex literal on one line took 1.2 s at 8 KB and 15 s at 32 KB, and 8 MB of `a=1;` on one line 21 s and 2.4 GB.
