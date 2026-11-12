@@ -2,7 +2,7 @@
 
 Read Markdown in your terminal as a well-set page, with Mermaid diagrams drawn as real images.
 
-![mrk rendering a technical plan with a table, code and a Mermaid flowchart](examples/pictures/example-plan.gif)
+![mrk rendering a technical plan with a table, code and a Mermaid flowchart](https://raw.githubusercontent.com/vmeyet/mrk-cli/main/examples/pictures/example-plan.gif)
 
 `mrk` turns headings, tables, code, alerts, task lists and footnotes into calm colour and clean spacing, with no `#` or `*` left on screen.
 On terminals that can show pictures, Mermaid diagrams appear as images; everywhere else they become box-drawing text.
@@ -13,10 +13,16 @@ On terminals that can show pictures, Mermaid diagrams appear as images; everywhe
 brew install vmeyet/tap/mrk
 ```
 
-Or with the shell installer, or from source (Rust 1.92 or newer):
+Or with the shell installer, or from source with cargo (Rust 1.92 or newer):
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vmeyet/mrk-cli/releases/latest/download/mrk-cli-installer.sh | sh
+cargo install --locked mrk-cli
+```
+
+The last line installs the latest release from crates.io; to try what is on `main` before it is released:
+
+```sh
 cargo install --locked --git https://github.com/vmeyet/mrk-cli
 ```
 
@@ -51,7 +57,7 @@ The [`examples/`](examples/) folder holds three real-looking documents to try it
 - **Fits the window**: wraps at the terminal width (100 columns at most) and centres the text in a wide window.
 - **Big titles**, opt-in with `--jumbo-title`: level-1 headings two rows tall, as a picture on terminals that show images, as double-height text on xterm, Konsole, Windows Terminal, mlterm and iTerm2.
 
-![mrk rendering a post-mortem with alerts, a timeline table and a sequence diagram](examples/pictures/example-postmortem.png)
+![mrk rendering a post-mortem with alerts, a timeline table and a sequence diagram](https://raw.githubusercontent.com/vmeyet/mrk-cli/main/examples/pictures/example-postmortem.png)
 
 ## Terminal support
 
@@ -90,7 +96,7 @@ jumbo_title = true
 `mrk-dark`, `mrk-light`, `catppuccin-mocha`, `catppuccin-latte`, `tokyo-night`, `nord`, `dracula`, `gruvbox-dark`, `gruvbox-light`, `github-dark`, `github-light`.
 Without `theme`, mrk picks `theme_dark` or `theme_light` from the terminal background, `mrk-dark` or `mrk-light` when they are not set.
 
-![mrk --list-themes showing each theme with a colour swatch](examples/pictures/mrk-list-theme.png)
+![mrk --list-themes showing each theme with a colour swatch](https://raw.githubusercontent.com/vmeyet/mrk-cli/main/examples/pictures/mrk-list-theme.png)
 
 Every flag, variable, config key and exit code is in the [reference](docs/reference.md).
 
@@ -99,7 +105,7 @@ Every flag, variable, config key and exit code is in the [reference](docs/refere
 `mrk -p FILE`, or `pager = true` in the config, opens the built-in pager.
 It keeps diagrams as images and stays open until you press `q`.
 
-![The mrk pager scrolling release notes with a diagram kept as an image](examples/pictures/example-redis.gif)
+![The mrk pager scrolling release notes with a diagram kept as an image](https://raw.githubusercontent.com/vmeyet/mrk-cli/main/examples/pictures/example-redis.gif)
 
 | Keys                                    | Action                        |
 | :-------------------------------------- | :---------------------------- |
