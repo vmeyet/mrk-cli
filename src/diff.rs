@@ -7,7 +7,7 @@ use std::ops::Range;
 use similar::{Algorithm, DiffOp, DiffTag, capture_diff_slices};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::document::{Block, Line, Settings};
+use crate::document::{Block, Line, Rgb, Settings};
 use crate::markdown::{Section, SectionKind, render_sections};
 
 /// Both diffs take up to the product of the two sides' lengths. Past this many sections, both sides counted, only
@@ -45,7 +45,7 @@ pub enum SectionChange {
 pub fn sections(old: &str, new: &str, settings: &Settings) -> Vec<SectionChange> {
     let old = render_sections(old, settings);
     let new = render_sections(new, settings);
-    let ops = section_ops(&old, &new);
+    let ops = section_ops(&old, &new, settings);
     paired(&ops, old, new)
 }
 
@@ -59,18 +59,20 @@ struct Key<'a> {
 }
 
 impl<'a> Key<'a> {
-    fn of(section: &'a Section) -> Self {
+    fn of(section: &'a Section, settings: &Settings) -> Self {
         let pictures =
             section.blocks.iter().filter_map(|block| if let Block::Picture(picture) = block { Some(&picture.png[..]) } else { None });
-        let keeps_spacing = keeps_spacing(&section.kind);
-        let lines = lines(section).map(|line| written(line, keeps_spacing)).collect();
+        let surface = settings.theme.palette.surface;
+        let lines = lines(section).map(|line| written(line, keeps_spacing(&section.kind, line, surface))).collect();
         Self { kind: &section.kind, lines, pictures: pictures.collect() }
     }
 }
 
-/// Code, Mermaid source, front matter and HTML show the input's spacing; elsewhere a run of spaces is the layout's.
-fn keeps_spacing(kind: &SectionKind) -> bool {
-    matches!(kind, SectionKind::Code { .. } | SectionKind::Mermaid | SectionKind::FrontMatter | SectionKind::Html)
+/// Code, wherever it sits, Mermaid source, front matter and HTML show the input's spacing; elsewhere a run of spaces is
+/// the layout's. A code panel is told by its surface, since a list item or a quote holds one among its other lines.
+fn keeps_spacing(kind: &SectionKind, line: &Line, surface: Rgb) -> bool {
+    matches!(kind, SectionKind::Mermaid | SectionKind::FrontMatter | SectionKind::Html)
+        || line.spans.iter().any(|span| !span.is_frame && span.style.bg == Some(surface))
 }
 
 fn lines(section: &Section) -> impl Iterator<Item = &Line> {
@@ -83,9 +85,9 @@ fn written(line: &Line, keeps_spacing: bool) -> String {
     if keeps_spacing { text } else { text.split_whitespace().collect::<Vec<_>>().join(" ") }
 }
 
-fn section_ops(old: &[Section], new: &[Section]) -> Vec<DiffOp> {
-    let old_keys: Vec<Key> = old.iter().map(Key::of).collect();
-    let new_keys: Vec<Key> = new.iter().map(Key::of).collect();
+fn section_ops(old: &[Section], new: &[Section], settings: &Settings) -> Vec<DiffOp> {
+    let old_keys: Vec<Key> = old.iter().map(|section| Key::of(section, settings)).collect();
+    let new_keys: Vec<Key> = new.iter().map(|section| Key::of(section, settings)).collect();
     if old_keys.len() + new_keys.len() > MAX_SECTIONS {
         return ends_only(&old_keys, &new_keys);
     }
@@ -343,6 +345,15 @@ mod tests {
     #[test]
     fn spacing_in_code_is_a_change() {
         assert_eq!(outcomes(&diff("```\nif a:\n  b\n```\n", "```\nif a:\n    b\n```\n")), ["changed"]);
+    }
+
+    #[test]
+    fn spacing_in_code_inside_a_list_item_or_a_quote_is_a_change() {
+        let item = |indent: &str| format!("- x\n\n  ```\n  if a:\n  {indent}b\n  ```\n");
+        let quote = |indent: &str| format!("> ```\n> if a:\n> {indent}b\n> ```\n");
+        for code in [item, quote] {
+            assert_eq!(outcomes(&diff(&code("  "), &code("    "))), ["changed"], "{}", code("  "));
+        }
     }
 
     #[test]
