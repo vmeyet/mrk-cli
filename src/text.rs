@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(plain_lines(&lines), ["漢字", "漢字", "漢字"]);
     }
 
-    const MERGING_ONCE_SANITIZED: [&str; 3] = ["❤\u{200b}\u{fe0f}", "1\u{200b}\u{fe0f}\u{20e3}", "❤\x1b\u{fe0f}"];
+    const MERGING_ONCE_SANITIZED: [&str; 4] = ["❤\u{200b}\u{fe0f}", "1\u{200b}\u{fe0f}\u{20e3}", "❤\x1b\u{fe0f}", "❤\u{2063}\u{fe0f}"];
 
     #[test]
     fn a_text_is_as_wide_as_what_sanitize_prints() {

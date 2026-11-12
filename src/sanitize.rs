@@ -7,7 +7,8 @@ const WEB_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 const LOCAL_FILE_PREFIXES: [&str; 2] = ["file:///", "file://localhost/"];
 
 /// The text with every character a terminal could interpret or that disguises text removed: C0 and C1 controls, DEL,
-/// bidi marks, overrides and isolates, the zero-width space, the word joiner, the byte order mark and tag characters.
+/// bidi marks, overrides and isolates, the zero-width space, the word joiner and the invisible format characters around
+/// it, the byte order mark and tag characters.
 /// A tab becomes spaces, the line and paragraph separators a space.
 pub fn text(raw: &str) -> String {
     clean(raw, false)
@@ -27,8 +28,9 @@ fn clean(raw: &str, keeps_newlines: bool) -> String {
 }
 
 /// Overrides, isolates and the marks (LRM, RLM, ALM) reorder what a line shows; the zero-width space, the word joiner,
-/// the byte order mark and tag characters hide inside a name. The joiners stay: emoji sequences and Persian or Indic
-/// words need them.
+/// the invisible operators, the deprecated format characters, the Mongolian vowel separator, the interlinear
+/// annotation marks, the musical format characters, the byte order mark and tag characters hide inside a name. The
+/// joiners stay: emoji sequences and Persian or Indic words need them.
 fn is_invisible_control(character: char) -> bool {
     matches!(
         character,
@@ -38,7 +40,11 @@ fn is_invisible_control(character: char) -> bool {
             | '\u{200e}'
             | '\u{200f}'
             | '\u{061c}'
-            | '\u{2060}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{206a}'..='\u{206f}'
+            | '\u{180e}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{1d173}'..='\u{1d17a}'
             | '\u{feff}'
             | '\u{e0000}'..='\u{e007f}'
     )
@@ -178,6 +184,13 @@ mod tests {
     #[test]
     fn invisible_joiners_marks_and_tags_are_removed() {
         assert_eq!(text("a\u{2060}b\u{feff}c\u{e0001}d\u{e0041}\u{e007f}e"), "abcde");
+    }
+
+    #[test]
+    fn invisible_operators_deprecated_formats_and_musical_formats_are_removed() {
+        let invisible = ["\u{2061}", "\u{2064}", "\u{206a}", "\u{206f}", "\u{180e}", "\u{fff9}", "\u{fffb}", "\u{1d173}", "\u{1d17a}"];
+
+        assert_eq!(text(&format!("rm{}", invisible.concat())), "rm");
     }
 
     #[test]
