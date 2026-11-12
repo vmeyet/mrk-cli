@@ -5,6 +5,8 @@ use std::os::fd::AsFd;
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 use rustix::process::getpgrp;
 use rustix::termios::{OptionalActions, Termios, tcgetattr, tcgetpgrp, tcsetattr};
+use signal_hook::consts::SIGTTOU;
+use signal_hook::low_level;
 
 /// The terminal mrk runs in, whatever its standard streams are.
 pub fn open() -> io::Result<File> {
@@ -22,6 +24,13 @@ pub fn open_nonblocking() -> io::Result<File> {
 /// changes them under the shell when it ignores the signal.
 pub fn is_foreground(tty: impl AsFd) -> bool {
     tcgetpgrp(tty).is_ok_and(|group| group == getpgrp())
+}
+
+/// Whether mrk is the tty's foreground job, a background job first stopped until the shell brings it there (`fg`), as
+/// `SIGTTOU` stops `less` or `vim`. A job that ignores the signal, or that no shell can bring back (an orphaned process
+/// group, whose stop signals are discarded), goes on at once, still in the background.
+pub fn wait_until_foreground(tty: impl AsFd) -> bool {
+    is_foreground(&tty) || (low_level::raise(SIGTTOU).is_ok() && is_foreground(&tty))
 }
 
 /// A tty in raw mode until dropped. Restoring with `TCSAFLUSH` discards the input left unread in the same step, so the

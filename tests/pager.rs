@@ -5,21 +5,23 @@ use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use rustix::fs::{Mode, OFlags};
-use rustix::process::{Pid, Signal, ioctl_tiocsctty, kill_process, setsid};
+use rustix::process::{Pid, Signal, WaitOptions, ioctl_tiocsctty, kill_process, setsid, waitpid};
 use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
-use rustix::termios::{LocalModes, Winsize, tcgetattr, tcsetwinsize};
+use rustix::termios::{LocalModes, Winsize, tcgetattr, tcsetpgrp, tcsetwinsize};
 
 /// Names the pty the test binary, run again as `launcher`, takes as its controlling terminal before it runs mrk.
 const PTY: &str = "MRK_TEST_PTY";
-/// Set, the launcher runs mrk as a background job of its own that ignores `SIGTTOU` and `SIGTTIN`, as
-/// `trap '' TTOU TTIN; mrk -p … &` in a shell would.
+/// Set, the launcher runs mrk as a background job of its own: `IGNORING` as `trap '' TTOU TTIN; mrk -p … &` in a shell
+/// would, `RESUMED` as `mrk -p … &` then `fg` once it stopped.
 const BACKGROUND: &str = "MRK_TEST_BACKGROUND";
+const IGNORING: &str = "ignoring";
+const RESUMED: &str = "resumed";
 /// Marks the lines the launcher reports on, among the test runner's.
 const REPORT: &str = "launcher: ";
 const DOCUMENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/showcase.md");
@@ -44,14 +46,14 @@ fn launcher() {
     setsid().unwrap();
     let tty = open(pty);
     ioctl_tiocsctty(&tty).unwrap();
-    let is_background = env::var_os(BACKGROUND).is_some();
-    let mut mrk = if is_background { Command::new("sh") } else { Command::new(env!("CARGO_BIN_EXE_mrk")) };
-    if is_background {
-        mrk.args(["-c", "trap '' TTOU TTIN; exec \"$0\" -p \"$1\"", env!("CARGO_BIN_EXE_mrk"), DOCUMENT]).process_group(0);
-    } else {
-        mrk.args(["-p", DOCUMENT]);
+    let background = env::var(BACKGROUND).ok();
+    let script = if background.as_deref() == Some(IGNORING) { "trap '' TTOU TTIN; exec \"$0\" -p \"$1\"" } else { "exec \"$0\" -p \"$1\"" };
+    let mut mrk = Command::new("sh");
+    if background.is_some() {
+        mrk.process_group(0);
     }
     let mut mrk = mrk
+        .args(["-c", script, env!("CARGO_BIN_EXE_mrk"), DOCUMENT])
         .env_remove(PTY)
         .env_remove(BACKGROUND)
         .env_remove("TMUX")
@@ -66,9 +68,22 @@ fn launcher() {
         .spawn()
         .unwrap();
     println!("{REPORT}pid {}", mrk.id());
-    let status = mrk.wait().unwrap();
+    let status = if background.as_deref() == Some(RESUMED) { resume_in_the_foreground(&tty, &mut mrk) } else { mrk.wait().unwrap() };
     let ended = status.code().map_or_else(|| format!("signal {}", status.signal().unwrap_or_default()), |code| format!("code {code}"));
     println!("{REPORT}{ended}, cooked {}", is_cooked(&tty));
+}
+
+/// Once the background job stopped, gives it the tty and resumes it, as a shell's `fg` does; a job that ended instead
+/// is reported as it ended.
+fn resume_in_the_foreground(tty: &File, mrk: &mut Child) -> ExitStatus {
+    let pid = Pid::from_child(mrk);
+    let (_, status) = waitpid(Some(pid), WaitOptions::UNTRACED).unwrap().unwrap();
+    if !status.stopped() {
+        return ExitStatus::from_raw(status.as_raw());
+    }
+    tcsetpgrp(tty, pid).unwrap();
+    kill_process(pid, Signal::CONT).unwrap();
+    mrk.wait().unwrap()
 }
 
 fn position(bytes: &[u8], part: &[u8]) -> Option<usize> {
@@ -86,14 +101,14 @@ struct Pager {
 
 impl Pager {
     fn start() -> Self {
-        Self::launch(false)
+        Self::launch(None)
     }
 
-    fn start_in_the_background() -> Self {
-        Self::launch(true)
+    fn start_in_the_background(background: &str) -> Self {
+        Self::launch(Some(background))
     }
 
-    fn launch(is_background: bool) -> Self {
+    fn launch(background: Option<&str>) -> Self {
         let pty = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
         grantpt(&pty).unwrap();
         unlockpt(&pty).unwrap();
@@ -101,8 +116,8 @@ impl Pager {
         tcsetwinsize(open(path.as_c_str()), Winsize { ws_row: 24, ws_col: 80, ws_xpixel: 800, ws_ypixel: 480 }).unwrap();
         let mut launcher = Command::new(env::current_exe().unwrap());
         launcher.args(["--exact", "launcher", "--nocapture", "--test-threads=1"]).env(PTY, path.to_str().unwrap());
-        if is_background {
-            launcher.env(BACKGROUND, "1");
+        if let Some(background) = background {
+            launcher.env(BACKGROUND, background);
         }
         let mut launcher = launcher.stdout(Stdio::piped()).spawn().unwrap();
         let mut reports = BufReader::new(launcher.stdout.take().unwrap());
@@ -221,8 +236,19 @@ fn quitting_gives_the_terminal_back() {
 }
 
 #[test]
-fn a_background_job_leaves_the_terminal_alone() {
-    let mut pager = Pager::start_in_the_background();
+fn a_background_job_stops_until_brought_to_the_foreground_then_pages() {
+    let mut pager = Pager::start_in_the_background(RESUMED);
+    pager.wait_for_the_first_frame();
+
+    pager.press(b"q");
+
+    assert!(pager.wrote_after(FRAME_END, ALTERNATE_SCREEN_LEFT));
+    assert_eq!(pager.ending(), "code 0, cooked true");
+}
+
+#[test]
+fn a_background_job_that_ignores_sigttou_leaves_the_terminal_alone() {
+    let mut pager = Pager::start_in_the_background(IGNORING);
 
     assert_eq!(pager.ending(), "code 1, cooked true");
     let written = pager.written.lock().unwrap();
