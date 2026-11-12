@@ -1,6 +1,7 @@
 //! Pairs the sections of two versions of a Markdown file and marks the words that changed.
 
 use std::collections::VecDeque;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem::discriminant;
 use std::ops::Range;
 
@@ -52,8 +53,11 @@ pub fn sections(old: &str, new: &str, settings: &Settings) -> Vec<SectionChange>
 
 /// What a section is compared by: its kind, the input's text of each line, a line the layout wrapped joined to the
 /// one before it, and the pixels of its pictures, since a picture's alt text only names the kind of diagram.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Key<'a> {
+    /// The hash of the fields below, compared first: keys that differ after a long shared prefix (paragraphs opening
+    /// alike) are told apart without reading it.
+    hash: u64,
     kind: &'a SectionKind,
     lines: Vec<String>,
     pictures: Vec<&'a [u8]>,
@@ -61,9 +65,25 @@ struct Key<'a> {
 
 impl<'a> Key<'a> {
     fn of(section: &'a Section, settings: &Settings) -> Self {
-        let pictures =
-            section.blocks.iter().filter_map(|block| if let Block::Picture(picture) = block { Some(&picture.png[..]) } else { None });
-        Self { kind: &section.kind, lines: written_lines(section, settings), pictures: pictures.collect() }
+        let pictures: Vec<&[u8]> = section
+            .blocks
+            .iter()
+            .filter_map(|block| if let Block::Picture(picture) = block { Some(&picture.png[..]) } else { None })
+            .collect();
+        let lines = written_lines(section, settings);
+        Self { hash: hash_of(&(&section.kind, &lines, &pictures)), kind: &section.kind, lines, pictures }
+    }
+}
+
+fn hash_of(value: &impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+impl Hash for Key<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
     }
 }
 
@@ -73,15 +93,15 @@ fn written_lines(section: &Section, settings: &Settings) -> Vec<String> {
     let lines: Vec<&Line> = lines(section).collect();
     let wrapped = std::iter::once(false).chain(lines.windows(2).map(|pair| is_wrapped(&section.kind, pair[0], pair[1], settings)));
     let surface = settings.theme.palette.surface;
-    let mut written_lines: Vec<String> = Vec::new();
+    let mut joined: Vec<String> = Vec::new();
     for (line, wrapped) in lines.iter().zip(wrapped) {
         let text = written(line, keeps_spacing(&section.kind, line, surface));
-        match written_lines.last_mut() {
+        match joined.last_mut() {
             Some(previous) if wrapped => *previous = format!("{previous} {text}"),
-            _ => written_lines.push(text),
+            _ => joined.push(text),
         }
     }
-    written_lines
+    joined
 }
 
 /// Whether the layout ended `line` because the first word of `next` did not fit on it, in flowing text: a table's
