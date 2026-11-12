@@ -118,10 +118,10 @@ src/
   `document::MIN_WIDTH` (8) is the narrowest the renderers lay out, enough for a code panel's padding, its continuation marker and a wide grapheme: a narrower width lays out at 8.
   A list item, quote or footnote whose indent would leave less than 12 cells stops indenting: its blocks keep the container's width, a marker opening the first paragraph (or on a line of its own), a quote or alert without its bar.
   Past 32 nested containers, a container renders as its bare text: bounded recursion on hostile input.
-- Every width is `text::display_width`: counted per grapheme (at most two cells), a tab up to the next tab stop, the characters `sanitize` removes as none.
+- Every width is `text::display_width`: counted per grapheme of the text as `sanitize` prints it (at most two cells), a tab up to the next tab stop, the characters `sanitize` removes as none, so `❤`, U+200B, U+FE0F is one emoji two cells wide, as printed.
   `text::expand_tabs` is the one tab rule: a tab is the spaces up to the next column that is a multiple of four, counted from the start of the line, so `ab\tc` puts `c` in column 4.
   `hard_wrap` (code, source), `wrap_literal` (HTML, front matter: it breaks at spaces but keeps runs of spaces) and `sanitize` expand tabs this way, `sanitize` once the characters it removes are gone; `wrap` breaks at a tab as at a space, except on a background (inline code), where the tab stops on the line it lands on.
-  Every cut to a width goes through `text::cut`, which never splits a grapheme.
+  Every cut to a width goes through `text::cut`, which never splits a grapheme, nor two graphemes that merge once `sanitize` removes what stands between them.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 
 ## Performance

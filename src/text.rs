@@ -37,28 +37,50 @@ pub fn expand_tabs(text: &str, column: usize) -> Cow<'_, str> {
 
 /// The cells `text` takes once sanitized, counted one grapheme at a time, its tabs expanded from the start of a line.
 pub fn display_width(text: &str) -> usize {
-    if text.bytes().all(|byte| byte == b' ' || byte.is_ascii_graphic()) {
+    if is_printable_ascii(text) {
         return text.len();
     }
     if text.contains('\t') {
         return display_width(&expand_tabs(text, 0));
     }
-    text.graphemes(true).map(grapheme_width).sum()
+    printed_graphemes(text).map(|(_, width)| width).sum()
 }
 
-/// Measured as printed: a tag character that sanitize removes still joins the grapheme before it.
-fn grapheme_width(grapheme: &str) -> usize {
-    let is_printed_as_written = grapheme.chars().all(|character| printed(character) == Some(character));
-    let width = if is_printed_as_written { grapheme.width() } else { grapheme.chars().filter_map(printed).collect::<String>().width() };
-    width.min(WIDEST_GRAPHEME)
+/// Each byte one character one cell wide, which `sanitize` prints as written.
+fn is_printable_ascii(text: &str) -> bool {
+    text.bytes().all(|byte| byte == b' ' || byte.is_ascii_graphic())
 }
 
-/// The longest start of `text` that fits in `width` cells, and the rest; a grapheme is never split. `text` holds no
-/// tab: `expand_tabs` first.
+/// Where each grapheme of `text` as `sanitize` prints it starts in `text`, and its cells. A character `sanitize` removes
+/// joins the grapheme before it, so the two it stood between merge as they will on screen (`❤`, U+200B, U+FE0F is
+/// one emoji two cells wide). `text` holds no tab: `expand_tabs` first.
+fn printed_graphemes(text: &str) -> Box<dyn Iterator<Item = (usize, usize)> + '_> {
+    if is_printable_ascii(text) {
+        return Box::new((0..text.len()).map(|index| (index, 1)));
+    }
+    let cells = |grapheme: &str| grapheme.width().min(WIDEST_GRAPHEME);
+    if text.chars().all(|character| printed(character) == Some(character)) {
+        return Box::new(text.grapheme_indices(true).map(move |(index, grapheme)| (index, cells(grapheme))));
+    }
+    let kept: Vec<(usize, char)> = text.char_indices().filter_map(|(index, character)| Some((index, printed(character)?))).collect();
+    let shown: String = kept.iter().map(|&(_, character)| character).collect();
+    let graphemes: Vec<(usize, usize)> = shown
+        .graphemes(true)
+        .scan(0, |first_char, grapheme| {
+            let (origin, _) = kept[*first_char];
+            *first_char += grapheme.chars().count();
+            Some((origin, cells(grapheme)))
+        })
+        .collect();
+    Box::new(graphemes.into_iter())
+}
+
+/// The longest start of `text` that fits in `width` cells, and the rest; a grapheme is never split, nor are two that
+/// merge once `sanitize` removes what stands between them. `text` holds no tab: `expand_tabs` first.
 pub fn cut(text: &str, width: usize) -> (&str, &str) {
     let mut used = 0;
-    let end = text.grapheme_indices(true).find_map(|(index, grapheme)| {
-        used += grapheme_width(grapheme);
+    let end = printed_graphemes(text).find_map(|(index, width_of)| {
+        used += width_of;
         (used > width).then_some(index)
     });
     text.split_at(end.unwrap_or(text.len()))
@@ -147,9 +169,8 @@ impl Piece<'_> {
         display_width(self.text)
     }
 
-    fn split_at(self, index: usize) -> (Self, Self) {
-        let (head, tail) = self.text.split_at(index);
-        (Self { text: head, ..self }, Self { text: tail, ..self })
+    fn part(self, start: usize, end: usize) -> Self {
+        Self { text: &self.text[start..end], ..self }
     }
 }
 
@@ -171,21 +192,17 @@ fn cut_rows<'a>(pieces: impl IntoIterator<Item = Piece<'a>>, first: usize, rest:
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut free = first;
-    for mut left in pieces {
-        while !left.text.is_empty() {
-            match cut(left.text, free) {
-                ("", _) => {
-                    rows.push(std::mem::take(&mut row));
-                    free = rest;
-                }
-                (head, _) => {
-                    let (head, tail) = left.split_at(head.len());
-                    free -= head.width();
-                    row.push(head);
-                    left = tail;
-                }
+    for piece in pieces {
+        let mut start = 0;
+        for (index, width) in printed_graphemes(piece.text) {
+            if width > free {
+                row.extend((index > start).then(|| piece.part(start, index)));
+                rows.push(std::mem::take(&mut row));
+                (start, free) = (index, rest);
             }
+            free -= width;
         }
+        row.extend((start < piece.text.len()).then(|| piece.part(start, piece.text.len())));
     }
     rows.push(row);
     rows
@@ -433,6 +450,30 @@ mod tests {
         let lines = wrap(&[Span::plain("漢字漢字漢字")], 5, &[]);
 
         assert_eq!(plain_lines(&lines), ["漢字", "漢字", "漢字"]);
+    }
+
+    const MERGING_ONCE_SANITIZED: [&str; 3] = ["❤\u{200b}\u{fe0f}", "1\u{200b}\u{fe0f}\u{20e3}", "❤\x1b\u{fe0f}"];
+
+    #[test]
+    fn a_text_is_as_wide_as_what_sanitize_prints() {
+        for raw in MERGING_ONCE_SANITIZED {
+            assert_eq!((display_width(raw), display_width(&crate::sanitize::text(raw))), (2, 2), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn cut_keeps_together_graphemes_that_merge_once_sanitized() {
+        for raw in MERGING_ONCE_SANITIZED {
+            let text = format!("{raw}a");
+
+            assert_eq!(cut(&text, 1), ("", text.as_str()), "{raw:?}");
+            assert_eq!(cut(&text, 2), (raw, "a"), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_removed_character_opening_a_text_stays_with_the_first_grapheme() {
+        assert_eq!(cut("\x1bab", 1), ("\x1ba", "b"));
     }
 
     #[test]

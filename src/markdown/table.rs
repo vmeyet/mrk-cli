@@ -196,6 +196,14 @@ mod tests {
     }
 
     #[test]
+    fn a_cell_is_as_wide_as_the_emoji_its_removed_characters_merge_into() {
+        insta::assert_snapshot!(plain_at(
+            "| a | b |\n|---|---|\n| ❤\u{200b}\u{fe0f}❤\u{200b}\u{fe0f}❤\u{200b}\u{fe0f} | x |\n| abc | y |",
+            40
+        ));
+    }
+
+    #[test]
     fn a_record_cuts_a_header_name_wider_than_the_line_to_one_line() {
         let header = format!("{} | {}", "word ".repeat(10), "c | ".repeat(9));
         let source = format!("| {header}\n|{}\n| v1 | v2 |", "---|".repeat(10));

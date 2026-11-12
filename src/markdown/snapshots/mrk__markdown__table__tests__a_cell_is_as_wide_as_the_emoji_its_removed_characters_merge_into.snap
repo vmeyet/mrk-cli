@@ -1,0 +1,10 @@
+---
+source: src/markdown/table.rs
+expression: "plain_at(\"| a | b |\\n|---|---|\\n| ❤\\u{200b}\\u{fe0f}❤\\u{200b}\\u{fe0f}❤\\u{200b}\\u{fe0f} | x |\\n| abc | y |\",\n40)"
+---
+╭────────┬───╮
+│ a      │ b │
+├────────┼───┤
+│ ❤​️❤​️❤​️ │ x │
+│ abc    │ y │
+╰────────┴───╯
