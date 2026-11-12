@@ -18,7 +18,7 @@ pub use self::blocks::{Section, SectionKind};
 use self::context::Context;
 use self::layout::Spacing;
 use crate::document::{Block, Document, Settings, Span, Style};
-use crate::{mermaid, text};
+use crate::{code, mermaid, text};
 
 /// Renders GitHub-flavoured Markdown into a document at `settings.width`; images and links are never fetched.
 pub fn render(source: &str, settings: &Settings) -> Document {
@@ -38,7 +38,8 @@ fn groups(source: &str, settings: &Settings) -> Vec<Group> {
     let arena = Arena::new();
     let root = parse_document(&arena, source, &options());
     let diagrams = mermaid::Allowance::new(raw::diagrams(root), settings.cell.is_some());
-    blocks::groups(root, source, &Context::new(settings, &diagrams))
+    let highlights = code::Allowance::new(raw::highlighted(root));
+    blocks::groups(root, source, &Context::new(settings, &diagrams, &highlights))
 }
 
 fn options() -> Options<'static> {
@@ -90,7 +91,7 @@ fn block<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
         NodeValue::List(list) => list::render(node, list, context),
         NodeValue::BlockQuote => quote::render(node, context),
         NodeValue::Alert(alert) => quote::alert(node, alert, context),
-        NodeValue::CodeBlock(code) => raw::code(code, context),
+        NodeValue::CodeBlock(code) => raw::code(node, code, context),
         NodeValue::HtmlBlock(html) => layout::lines(raw::html(&html.literal, context)),
         NodeValue::ThematicBreak => layout::lines(vec![rule::thematic(context)]),
         NodeValue::Table(table) => layout::lines(table::render(node, table, context)),

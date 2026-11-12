@@ -55,6 +55,7 @@ src/
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)
     blocks.rs      Section, SectionKind: the top-level sections both render and render_sections are built from
   code/            syntect + two-face: highlight a fenced block into a surface panel
+    budget.rs      how much of a block and of a document is highlighted (`02-security.md` rule 4)
   mermaid/         mermaid-rs-renderer SVG ─▶ raster PNG ─▶ Picture; mermaid-text fallback
     budget.rs      the size and subgraph limits of both engines, then each engine's own count
     cache.rs       every diagram a document's budget lets through, drawings (or timeouts) by source and palette, texts by width too
@@ -126,7 +127,7 @@ src/
 
 ## Performance
 
-- syntect's syntax and theme sets load lazily, once, on the first code block that names a language other than plain text (`text`, `txt`, `plain`, `plaintext`, `none`) (`std::sync::LazyLock`).
+- syntect's syntax and theme sets load lazily, once, on the first code block highlighted, one that names a language other than plain text (`text`, `txt`, `plain`, `plaintext`, `none`) (`std::sync::LazyLock`).
 - The mermaid engine loads lazily on the first diagram, the font database on the first diagram or title picture; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; every font file in the font directories (`02-security.md` rule 3) loads only when those fallbacks miss a glyph.
   What a label needs is read off the text between the SVG's tags, never the diagram source, so a comment in another script loads nothing more.
   Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.

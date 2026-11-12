@@ -20,12 +20,31 @@ pub(super) fn flat<'a>(node: &'a AstNode<'a>, context: &Context) -> Vec<Block> {
 }
 
 /// A fenced or indented code block: a Mermaid diagram or a code panel, both at the current width.
-pub(super) fn code(block: &NodeCodeBlock, context: &Context) -> Vec<Block> {
+pub(super) fn code<'a>(node: &'a AstNode<'a>, block: &NodeCodeBlock, context: &Context) -> Vec<Block> {
     let language = language(block);
     match language.as_deref() {
         Some(MERMAID) => vec![crate::mermaid::render_in_document(&block.literal, &context.settings, context.diagrams)],
-        language => layout::lines(crate::code::render(&block.literal, language, &context.settings)),
+        language => {
+            let key = start_line(node);
+            layout::lines(crate::code::render_in_document(&block.literal, language, key, context.highlights, &context.settings))
+        }
     }
+}
+
+/// Where a block starts, which no other code block shares: the key of its highlighting budget.
+fn start_line<'a>(node: &'a AstNode<'a>) -> usize {
+    node.data().sourcepos.start.line
+}
+
+/// Every code block under `root` but Mermaid's, in reading order: its key and what highlighting it costs.
+pub(super) fn highlighted<'a>(root: &'a AstNode<'a>) -> impl Iterator<Item = (usize, usize)> + 'a {
+    root.descendants().filter_map(|node| match &node.data().value {
+        NodeValue::CodeBlock(block) => match language(block).as_deref() {
+            Some(MERMAID) => None,
+            language => Some((start_line(node), crate::code::highlighted_len(&block.literal, language))),
+        },
+        _ => None,
+    })
 }
 
 /// The source of every Mermaid block under `root`, in reading order.
@@ -46,11 +65,21 @@ pub(super) fn language(block: &NodeCodeBlock) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use comrak::nodes::NodeCodeBlock;
+    use comrak::{Arena, parse_document};
 
     use crate::markdown::plain_at;
 
     fn language(info: &str) -> Option<String> {
         super::language(&NodeCodeBlock { info: info.to_owned(), ..NodeCodeBlock::default() })
+    }
+
+    #[test]
+    fn every_code_block_but_mermaid_counts_toward_highlighting_by_the_line_it_starts_on() {
+        let source = "```rust\na\n```\n\n- item\n\n  ```js\n  bc\n  ```\n\n```mermaid\ngraph TD\n```\n\n    indented\n";
+        let arena = Arena::new();
+        let root = parse_document(&arena, source, &crate::markdown::options());
+
+        assert_eq!(super::highlighted(root).collect::<Vec<_>>(), [(1, 2), (7, 3), (15, 0)]);
     }
 
     #[test]
