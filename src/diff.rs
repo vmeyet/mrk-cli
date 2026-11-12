@@ -9,6 +9,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::{Block, Line, Rgb, Settings};
 use crate::markdown::{Section, SectionKind, render_sections};
+use crate::text::display_width;
 
 /// Both diffs take up to the product of the two sides' lengths. Past this many sections, both sides counted, only
 /// the equal sections at the start and the end pair as `Same`.
@@ -22,7 +23,7 @@ const MAX_DIFFED_WORDS: usize = 50_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SectionChange {
-    /// Same kind and same text on both sides, but for the frame and the width of runs of spaces.
+    /// Same kind and same text on both sides, but for the frame, the width of runs of spaces and where the layout wraps.
     Same {
         old: Section,
         new: Section,
@@ -49,8 +50,8 @@ pub fn sections(old: &str, new: &str, settings: &Settings) -> Vec<SectionChange>
     paired(&ops, old, new)
 }
 
-/// What a section is compared by: its kind, the input's text of each line, and the pixels of its pictures, since a
-/// picture's alt text only names the kind of diagram.
+/// What a section is compared by: its kind, the input's text of each line, a line the layout wrapped joined to the
+/// one before it, and the pixels of its pictures, since a picture's alt text only names the kind of diagram.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Key<'a> {
     kind: &'a SectionKind,
@@ -62,10 +63,46 @@ impl<'a> Key<'a> {
     fn of(section: &'a Section, settings: &Settings) -> Self {
         let pictures =
             section.blocks.iter().filter_map(|block| if let Block::Picture(picture) = block { Some(&picture.png[..]) } else { None });
-        let surface = settings.theme.palette.surface;
-        let lines = lines(section).map(|line| written(line, keeps_spacing(&section.kind, line, surface))).collect();
-        Self { kind: &section.kind, lines, pictures: pictures.collect() }
+        Self { kind: &section.kind, lines: written_lines(section, settings), pictures: pictures.collect() }
     }
+}
+
+/// Each line's input text, a line the layout wrapped joined to the one before it: a list renumbered wider wraps its
+/// items again, while a break the input forced stays a line end.
+fn written_lines(section: &Section, settings: &Settings) -> Vec<String> {
+    let lines: Vec<&Line> = lines(section).collect();
+    let wrapped = std::iter::once(false).chain(lines.windows(2).map(|pair| is_wrapped(&section.kind, pair[0], pair[1], settings)));
+    let surface = settings.theme.palette.surface;
+    let mut written_lines: Vec<String> = Vec::new();
+    for (line, wrapped) in lines.iter().zip(wrapped) {
+        let text = written(line, keeps_spacing(&section.kind, line, surface));
+        match written_lines.last_mut() {
+            Some(previous) if wrapped => *previous = format!("{previous} {text}"),
+            _ => written_lines.push(text),
+        }
+    }
+    written_lines
+}
+
+/// Whether the layout ended `line` because the first word of `next` did not fit on it, in flowing text: a table's
+/// cells and the input's spacing never flow from one line to the next.
+fn is_wrapped(kind: &SectionKind, line: &Line, next: &Line, settings: &Settings) -> bool {
+    let surface = settings.theme.palette.surface;
+    let flows = *kind != SectionKind::Table && !keeps_spacing(kind, line, surface) && !keeps_spacing(kind, next, surface);
+    flows && first_word_width(next).is_some_and(|word| text_end(line) + 1 + word > settings.width)
+}
+
+/// The column after the last of the input's text on a line, the frame before it counted.
+fn text_end(line: &Line) -> usize {
+    let end = line.spans.iter().rposition(|span| !span.is_frame).map_or(0, |last| last + 1);
+    display_width(line.spans[..end].iter().map(|span| span.text.as_str()).collect::<String>().trim_end())
+}
+
+/// The width of the first word of the input's text on a line, after the frame that opens it.
+fn first_word_width(line: &Line) -> Option<usize> {
+    let text: String =
+        line.spans.iter().skip_while(|span| span.is_frame).take_while(|span| !span.is_frame).map(|span| span.text.as_str()).collect();
+    text.split_whitespace().next().map(display_width)
 }
 
 /// Code, wherever it sits, Mermaid source, front matter and HTML show the input's spacing; elsewhere a run of spaces is
@@ -340,6 +377,37 @@ mod tests {
         let ten = format!("{nine}10. item\n");
 
         assert_eq!(outcomes(&diff(&nine, &ten)), [vec!["same"; 9], vec!["added"]].concat());
+    }
+
+    #[test]
+    fn a_list_renumbered_wider_keeps_an_item_that_wraps_again_the_same() {
+        let long = format!("5. {}\n", "word ".repeat(14) + "seventy");
+        let nine: String = (1..=9).map(|number| if number == 5 { long.clone() } else { format!("{number}. item\n") }).collect();
+        let ten = format!("{nine}10. x\n");
+
+        assert_eq!(outcomes(&diff(&nine, &ten)), [vec!["same"; 9], vec!["added"]].concat());
+    }
+
+    #[test]
+    fn text_the_layout_wraps_in_any_container_is_compared_as_one_line() {
+        let text = "The quick brown fox jumps over the lazy dog, then runs far into the woods and over the hills.";
+        let containers = ["", "# ", "- ", "10. ", "> ", "> [!NOTE]\n> ", "- a\n  - ", "> - ", "Note[^1]\n\n[^1]: "];
+        for width in [20, 33, 47, 80] {
+            let settings = Settings { width, ..test_settings() };
+            for container in containers {
+                let sections = render_sections(&format!("{container}{text}\n"), &settings);
+                let key = Key::of(sections.last().unwrap(), &settings);
+
+                assert!(key.lines.iter().any(|line| line.ends_with(text)), "{container:?} at {width}: {:?}", key.lines);
+            }
+        }
+    }
+
+    #[test]
+    fn a_break_the_input_forced_in_wrapped_text_is_a_change() {
+        let text = "The quick brown fox jumps over the lazy dog";
+
+        assert_eq!(outcomes(&diff_at(&format!("- {text} end\n"), &format!("- {text}\\\nend\n"), 30)), ["changed"]);
     }
 
     #[test]
