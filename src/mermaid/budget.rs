@@ -5,6 +5,7 @@ use mermaid_rs_renderer::{DiagramKind, Edge, Graph};
 
 use super::DiagramError;
 use super::catch::caught;
+use super::text;
 
 /// Mermaid blocks above this size are shown as source.
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
@@ -17,6 +18,9 @@ const MAX_ELEMENTS: usize = 600;
 const MAX_EDGES: usize = 100;
 /// mermaid-text lays class diagrams out far slower than any other kind: 40 relations took it 2.8 s.
 const MAX_RELATIONS: usize = 32;
+/// mermaid-text draws every row across all of a sequence's participants or a git graph's branches, each at least six
+/// columns wide: more than this many never fit the widest text, 1,000 columns.
+const MAX_LANES: usize = 200;
 /// What a document's diagrams may cost together, in milliseconds of layout at the slowest rate measured for what
 /// each one counts; a diagram that does not fit what is left shows as source.
 pub const MAX_DOCUMENT_COST_MS: usize = 12_000;
@@ -42,6 +46,8 @@ pub enum Load {
     Edges,
     /// Relations of a class diagram, whose members cost mermaid-text little.
     Relations,
+    /// Participants of a sequence diagram or branches of a git graph, the columns mermaid-text draws every row across.
+    Lanes,
 }
 
 impl Load {
@@ -52,6 +58,7 @@ impl Load {
             Self::Elements => MAX_ELEMENTS,
             Self::Edges => MAX_EDGES,
             Self::Relations => MAX_RELATIONS,
+            Self::Lanes => MAX_LANES,
         }
     }
 
@@ -62,6 +69,7 @@ impl Load {
             Self::Elements => "elements",
             Self::Edges => "edges",
             Self::Relations => "relations",
+            Self::Lanes => "participants or branches",
         }
     }
 
@@ -72,7 +80,7 @@ impl Load {
             Self::Links => count * count / 7,
             Self::Edges => count * count / 8,
             Self::Relations => count * count * 7 / 4,
-            Self::Messages | Self::Elements => count,
+            Self::Messages | Self::Elements | Self::Lanes => count,
         }
     }
 
@@ -175,12 +183,13 @@ fn picture_cost(graph: &Graph) -> Result<usize, DiagramError> {
     load.within(count)
 }
 
-/// The kinds mermaid-text draws in one pass, row after row, cost it only their fixed work: 64 KiB of any of them took
-/// it under 30 ms.
+/// The kinds mermaid-text draws in one pass, row after row, cost it their lanes, else only their fixed work: 64 KiB of
+/// any kind without lanes took it under 30 ms.
 fn text_cost(source: &str, graph: Option<&Graph>) -> Result<usize, DiagramError> {
-    let load = match graph {
-        Some(graph) => graph_text_load(graph),
-        None => scanned_text_load(source),
+    let load = match (text::lanes(source), graph) {
+        (Some(lanes), _) => Some((Load::Lanes, lanes)),
+        (None, Some(graph)) => graph_text_load(graph),
+        (None, None) => scanned_text_load(source),
     };
     load.map_or(Ok(MIN_COST_MS), |(load, count)| load.within(count))
 }
@@ -514,6 +523,25 @@ mod tests {
 
         assert_eq!(picture_graph(&fanned).unwrap_err(), DiagramError::OverBudget(Load::Links));
         assert_eq!(admit_text(&fanned), Err(DiagramError::OverBudget(Load::Edges)));
+    }
+
+    #[test]
+    fn the_text_engine_counts_the_lanes_every_row_crosses() {
+        fn participants(count: usize) -> String {
+            format!("sequenceDiagram\n{}", (1..count).map(|index| format!("  p{} ->> p{index}: m\n", index - 1)).collect::<String>())
+        }
+        fn boxed(count: usize) -> String {
+            participants(count).replace("sequenceDiagram\n", "sequenceDiagram\n  box Front\n    participant p0\n  end\n")
+        }
+        fn branches(count: usize) -> String {
+            format!("gitGraph\n{}", (1..count).map(|index| format!("  branch b{index}\n  commit\n")).collect::<String>())
+        }
+
+        for lanes in [participants, boxed, branches] {
+            assert_eq!(admit_text(&lanes(MAX_LANES)), Ok(()));
+            assert_eq!(admit_text(&lanes(MAX_LANES + 1)), Err(DiagramError::OverBudget(Load::Lanes)));
+        }
+        assert_eq!(cost(&participants(MAX_LANES), false), MAX_LANES);
     }
 
     #[test]

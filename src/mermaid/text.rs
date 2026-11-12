@@ -1,6 +1,9 @@
 use mermaid_text::RenderOptions;
+use mermaid_text::detect::DiagramKind;
+use mermaid_text::parser;
 
 use super::DiagramError;
+use super::catch::caught;
 use crate::document::{Line, Rgb, Span, Style};
 use crate::text::{display_width, expand_tabs};
 use crate::theme::Palette;
@@ -24,6 +27,18 @@ pub fn render(source: &str, width: usize, palette: &Palette) -> Result<Vec<Line>
     }
 
     Ok(lines.into_iter().map(|line| coloured(line, palette)).collect())
+}
+
+/// The participants of a sequence diagram or the branches of a git graph as mermaid-text reads them, every row drawn
+/// across all of them; `None` for any other diagram or one it cannot read.
+pub fn lanes(source: &str) -> Option<usize> {
+    caught(|| match mermaid_text::detect::detect(source).ok()? {
+        DiagramKind::Sequence => parser::sequence::parse(source).ok().map(|diagram| diagram.participants.len()),
+        DiagramKind::GitGraph => parser::git_graph::parse(source).ok().map(|graph| graph.branches.len()),
+        _ => None,
+    })
+    .ok()
+    .flatten()
 }
 
 fn draw(source: &str, width: usize) -> Result<String, DiagramError> {
