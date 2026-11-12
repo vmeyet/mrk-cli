@@ -12,7 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 
 pub(crate) use self::budget::Allowance;
-use self::budget::Load;
+use self::budget::{Diagram, Load};
 use self::cache::Recent;
 use self::catch::caught;
 pub use self::catch::is_catching;
@@ -80,28 +80,27 @@ impl From<RasterError> for DiagramError {
 
 /// A ```mermaid block on its own: a picture when `settings.cell` is set and the diagram renders, text otherwise.
 pub fn render(source: &str, settings: &Settings) -> Block {
-    drawn(source, settings).unwrap_or_else(|error| as_source(source, &error, settings))
+    Diagram::new(source).and_then(|diagram| drawn(source, &diagram, settings)).unwrap_or_else(|error| as_source(source, &error, settings))
 }
 
 /// A ```mermaid block of a document, shown as source when the document's budget does not let it through.
 pub(crate) fn render_in_document(source: &str, settings: &Settings, allowance: &Allowance) -> Block {
-    allowance.admit(source).and_then(|()| drawn(source, settings)).unwrap_or_else(|error| as_source(source, &error, settings))
+    allowance.admit(source).and_then(|diagram| drawn(source, diagram, settings)).unwrap_or_else(|error| as_source(source, &error, settings))
 }
 
-fn drawn(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
-    budget::admit(source)?;
-    match settings.cell.map(|cell| picture(source, cell, settings)) {
+fn drawn(source: &str, diagram: &Diagram, settings: &Settings) -> Result<Block, DiagramError> {
+    match settings.cell.map(|cell| picture(source, diagram, cell, settings)) {
         Some(Ok(picture)) => Ok(Block::Picture(picture)),
         // Given up on at the deadline, the picture left its text no time; kept, it starts neither engine again.
         Some(Err(DiagramError::TimedOut)) => Err(DiagramError::TimedOut),
-        _ => as_text(source, settings),
+        _ => as_text(source, diagram, settings),
     }
 }
 
 /// Laid out and turned into a tree once per source and palette, a timeout included: only the fit and the raster
 /// depend on the width.
-fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture, DiagramError> {
-    let drawing = DRAWINGS.find(source, &settings.theme.palette).unwrap_or_else(|| drawing_kept(source, settings))?;
+fn picture(source: &str, diagram: &Diagram, cell: CellSize, settings: &Settings) -> Result<Picture, DiagramError> {
+    let drawing = DRAWINGS.find(source, &settings.theme.palette).unwrap_or_else(|| drawing_kept(source, diagram, settings))?;
     let (width, height) = drawing.size();
     let frame = frame::fit(width, height, svg::FONT_SIZE_PX, cell, settings.width).ok_or(DiagramError::TooLarge)?;
     let png = caught(|| drawing.draw(frame.scale, frame.width_px, frame.height_px))??;
@@ -109,8 +108,8 @@ fn picture(source: &str, cell: CellSize, settings: &Settings) -> Result<Picture,
     Ok(Picture { png, cols: frame.cols, rows: frame.rows, alt, indent: Line::blank(), concealed_text: None })
 }
 
-fn drawing_kept(source: &str, settings: &Settings) -> Drawing {
-    let drawing = drawing(source, settings);
+fn drawing_kept(source: &str, diagram: &Diagram, settings: &Settings) -> Drawing {
+    let drawing = drawing(diagram, settings);
     if is_worth_keeping(&drawing) {
         DRAWINGS.keep(source, &settings.theme.palette, drawing.clone());
     }
@@ -119,31 +118,31 @@ fn drawing_kept(source: &str, settings: &Settings) -> Drawing {
 
 /// Only the layout runs against the deadline, so the fonts the tree loads on first use are never left to a thread
 /// given up on.
-fn drawing(source: &str, settings: &Settings) -> Drawing {
-    let (graph, palette) = (budget::picture_graph(source)?, settings.theme.palette);
+fn drawing(diagram: &Diagram, settings: &Settings) -> Drawing {
+    let (graph, palette) = (diagram.picture_graph()?, settings.theme.palette);
     let svg = worker::run(settings.diagram_deadline, move || Ok(svg::render(&graph, &palette)))?;
     Ok(Arc::new(caught(|| Svg::parse(&svg))??))
 }
 
 /// mermaid-text lays out for the width, so it runs again after a resize, unless it once ran out of time.
-fn as_text(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
+fn as_text(source: &str, diagram: &Diagram, settings: &Settings) -> Result<Block, DiagramError> {
     let text = match TEXTS.find(source, &settings.theme.palette) {
         Some((width, text)) if width == settings.width || text == Err(DiagramError::TimedOut) => text,
-        _ => text_kept(source, settings),
+        _ => text_kept(source, diagram, settings),
     };
     text.map(|lines| Block::Lines(lines.to_vec()))
 }
 
-fn text_kept(source: &str, settings: &Settings) -> DrawnText {
-    let text = drawn_text(source, settings);
+fn text_kept(source: &str, diagram: &Diagram, settings: &Settings) -> DrawnText {
+    let text = drawn_text(source, diagram, settings);
     if is_worth_keeping(&text) {
         TEXTS.keep(source, &settings.theme.palette, (settings.width, text.clone()));
     }
     text
 }
 
-fn drawn_text(source: &str, settings: &Settings) -> DrawnText {
-    budget::admit_text(source)?;
+fn drawn_text(source: &str, diagram: &Diagram, settings: &Settings) -> DrawnText {
+    diagram.admit_text()?;
     let (owned, width, palette) = (source.to_owned(), settings.width, settings.theme.palette);
     worker::run(settings.diagram_deadline, move || text::render(&owned, width, &palette)).map(Arc::new)
 }
@@ -270,7 +269,7 @@ mod tests {
     fn the_deepest_subgraphs_the_budget_admits_lay_out_on_a_default_thread_stack() {
         let opening: String = (0..16).map(|level| format!(" subgraph s{level}\n")).collect();
         let source = format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(16));
-        assert_eq!(budget::admit(&source), Ok(()));
+        assert!(budget::Diagram::new(&source).is_ok());
 
         let drawn = std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
@@ -334,7 +333,7 @@ mod tests {
     fn a_document_lays_out_each_diagram_that_fits_what_is_left_of_its_budget() {
         let chain = |diagram: usize| (0..99).map(|node| format!("  d{diagram}n{node} --> d{diagram}n{}\n", node + 1)).collect::<String>();
         let diagram = |index: usize| format!("graph TD\n{}", chain(index));
-        let fitting = budget::MAX_DOCUMENT_COST_MS / budget::cost(&diagram(0), false);
+        let fitting = budget::MAX_DOCUMENT_COST_MS / Diagram::new(&diagram(0)).unwrap().cost(false);
         let document: String = (0..=fitting).map(|index| format!("```mermaid\n{}```\n\n", diagram(index))).collect();
         let document = format!("{document}```mermaid\ngraph TD\n  small --> one\n```\n");
 

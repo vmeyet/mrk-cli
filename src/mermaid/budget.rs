@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use mermaid_rs_renderer::{DiagramKind, Edge, Graph};
 
@@ -80,68 +81,86 @@ impl Load {
     }
 }
 
-/// The diagram as mermaid-rs-renderer parses it, refused before any layout when it is too large to read, its
-/// subgraphs would overflow mermaid-text's stack, or it is over its load: layout time grows much faster than the
-/// source, which its 64 KiB cap alone does not bound.
-pub fn picture_graph(source: &str) -> Result<Graph, DiagramError> {
-    let graph = parsed(source)?;
-    picture_cost(&graph)?;
-    Ok(graph)
+/// A diagram parsed once, with what each engine's count says of it: layout time grows much faster than the source,
+/// which its 64 KiB cap alone does not bound.
+pub struct Diagram {
+    /// mermaid-rs-renderer's graph and what it costs as a picture, or why the picture is refused.
+    picture: Result<(Arc<Graph>, usize), DiagramError>,
+    /// What it costs as mermaid-text's text, or why the text is refused.
+    text: Result<usize, DiagramError>,
 }
 
-/// Refuses what mermaid-text would take too long to lay out: counted on mermaid-rs-renderer's graph when it parses the
-/// diagram, else on a scan of the source, since mermaid-text reads syntax mermaid-rs-renderer refuses.
-pub fn admit_text(source: &str) -> Result<(), DiagramError> {
-    admit(source)?;
-    text_cost(source, parsed(source).ok().as_ref()).map(|_| ())
-}
-
-/// What drawing a diagram costs its document: as a picture when pictures are drawn and its count allows one, else as
-/// text; nothing when it is refused before any layout.
-pub fn cost(source: &str, pictures: bool) -> usize {
-    if admit(source).is_err() {
-        return 0;
+impl Diagram {
+    /// Refuses, for both engines and before parsing, a block too large to read or whose subgraphs would overflow
+    /// mermaid-text's stack.
+    pub fn new(source: &str) -> Result<Self, DiagramError> {
+        readable(source)?;
+        let graph = parsed(source);
+        let text = text_cost(source, graph.as_ref().ok());
+        let picture = graph.and_then(|graph| picture_cost(&graph).map(|cost| (Arc::new(graph), cost)));
+        Ok(Self { picture, text })
     }
-    let graph = parsed(source).ok();
-    let picture = graph.as_ref().filter(|_| pictures).and_then(|graph| picture_cost(graph).ok()).map(|cost| cost + PICTURE_COST_MS);
-    picture.or_else(|| text_cost(source, graph.as_ref()).ok()).map_or(0, |cost| cost.max(MIN_COST_MS))
+
+    /// The graph to lay out as a picture, unless its count refuses one.
+    pub fn picture_graph(&self) -> Result<Arc<Graph>, DiagramError> {
+        self.picture.as_ref().map(|(graph, _)| Arc::clone(graph)).map_err(Clone::clone)
+    }
+
+    /// Refuses what mermaid-text would take too long to lay out: counted on mermaid-rs-renderer's graph when it parses
+    /// the diagram, else on a scan of the source, since mermaid-text reads syntax mermaid-rs-renderer refuses.
+    pub fn admit_text(&self) -> Result<(), DiagramError> {
+        self.text.as_ref().map(|_| ()).map_err(Clone::clone)
+    }
+
+    /// What drawing it costs its document: as a picture when pictures are drawn and its count allows one, else as
+    /// text; nothing when both counts refuse it.
+    pub fn cost(&self, pictures: bool) -> usize {
+        let picture = self.picture.as_ref().ok().filter(|_| pictures).map(|(_, cost)| cost + PICTURE_COST_MS);
+        picture.or_else(|| self.text.as_ref().ok().copied()).map_or(0, |cost| cost.max(MIN_COST_MS))
+    }
 }
 
 /// The diagrams of one document its budget lets through, in reading order, each distinct source counted once since
-/// the cache keeps what a repeated one costs: each that fits what is left of the budget.
-pub struct Allowance(HashSet<String>);
+/// the cache keeps what a repeated one costs: each that fits what is left of the budget, none read once nothing can
+/// fit. A block refused before parsing costs nothing and keeps its refusal.
+pub struct Allowance(HashMap<String, Result<Diagram, DiagramError>>);
 
 impl Allowance {
     pub fn new(sources: impl IntoIterator<Item = String>, pictures: bool) -> Self {
-        let mut admitted = HashSet::new();
+        let mut diagrams = HashMap::new();
         let mut left = MAX_DOCUMENT_COST_MS;
-        for source in sources {
-            if admitted.contains(&source) {
+        let mut sources = sources.into_iter();
+        while left >= MIN_COST_MS
+            && let Some(source) = sources.next()
+        {
+            if diagrams.contains_key(&source) {
                 continue;
             }
-            let cost = cost(&source, pictures);
-            if cost <= left {
+            let diagram = Diagram::new(&source);
+            let cost = diagram.as_ref().map_or(0, |diagram| diagram.cost(pictures));
+            let admitted = if cost <= left {
                 left -= cost;
-                admitted.insert(source);
-            }
+                diagram
+            } else {
+                Err(DiagramError::OverDocumentBudget)
+            };
+            diagrams.insert(source, admitted);
         }
-        Self(admitted)
+        Self(diagrams)
     }
 
-    pub fn admit(&self, source: &str) -> Result<(), DiagramError> {
-        if self.0.contains(source) { Ok(()) } else { Err(DiagramError::OverDocumentBudget) }
+    pub fn admit(&self, source: &str) -> Result<&Diagram, DiagramError> {
+        self.0.get(source).ok_or(DiagramError::OverDocumentBudget)?.as_ref().map_err(Clone::clone)
     }
 }
 
 fn parsed(source: &str) -> Result<Graph, DiagramError> {
-    admit(source)?;
     let parsed = caught(|| mermaid_rs_renderer::parse_mermaid_strict(source))?
         .map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
     Ok(parsed.graph)
 }
 
-/// Refuses, for both engines, a block too large to read or whose subgraphs would overflow mermaid-text's stack.
-pub fn admit(source: &str) -> Result<(), DiagramError> {
+fn readable(source: &str) -> Result<(), DiagramError> {
     if source.len() > MAX_SOURCE_BYTES {
         return Err(DiagramError::Oversized);
     }
@@ -328,6 +347,18 @@ mod tests {
         picture_load(&graph(source))
     }
 
+    fn picture_graph(source: &str) -> Result<Arc<Graph>, DiagramError> {
+        Diagram::new(source)?.picture_graph()
+    }
+
+    fn admit_text(source: &str) -> Result<(), DiagramError> {
+        Diagram::new(source)?.admit_text()
+    }
+
+    fn cost(source: &str, pictures: bool) -> usize {
+        Diagram::new(source).map_or(0, |diagram| diagram.cost(pictures))
+    }
+
     fn admitted(allowance: &Allowance, sources: &[String]) -> Vec<bool> {
         sources.iter().map(|source| allowance.admit(source).is_ok()).collect()
     }
@@ -360,7 +391,7 @@ mod tests {
 
         let expected: Vec<bool> = (0..=fitting).map(|index| index < fitting).chain([true]).collect();
         assert_eq!(admitted(&allowance, &sources), expected);
-        assert_eq!(allowance.admit(&large("z")), Err(DiagramError::OverDocumentBudget));
+        assert_eq!(allowance.admit(&large("z")).err(), Some(DiagramError::OverDocumentBudget));
     }
 
     #[test]
@@ -378,7 +409,17 @@ mod tests {
     fn a_document_lets_through_at_most_its_diagram_count() {
         let allowance = Allowance::new((0..2 * MAX_DOCUMENT_DIAGRAMS).map(|index| format!("pie\n  \"n{index}\" : 1")), false);
 
-        assert_eq!(allowance.0.len(), MAX_DOCUMENT_DIAGRAMS);
+        assert_eq!(allowance.0.values().filter(|diagram| diagram.is_ok()).count(), MAX_DOCUMENT_DIAGRAMS);
+    }
+
+    #[test]
+    fn a_spent_budget_reads_no_further_diagram() {
+        let spending = (0..MAX_DOCUMENT_DIAGRAMS).map(|index| format!("pie\n  \"n{index}\" : 1"));
+        let unread = std::iter::from_fn(|| -> Option<String> { panic!("a diagram read after the budget was spent") });
+
+        let allowance = Allowance::new(spending.chain(unread), false);
+
+        assert_eq!(allowance.0.values().filter(|diagram| diagram.is_ok()).count(), MAX_DOCUMENT_DIAGRAMS);
     }
 
     #[test]
@@ -396,7 +437,7 @@ mod tests {
 
     #[test]
     fn oversized_source_is_refused_before_parsing() {
-        assert_eq!(admit(&"%%\n".repeat(MAX_SOURCE_BYTES)), Err(DiagramError::Oversized));
+        assert_eq!(readable(&"%%\n".repeat(MAX_SOURCE_BYTES)), Err(DiagramError::Oversized));
     }
 
     #[test]
@@ -494,7 +535,7 @@ mod tests {
         ];
 
         for source in sources {
-            assert_eq!(admit(source), Err(DiagramError::UnsafeSubgraphs), "{source:?}");
+            assert_eq!(readable(source), Err(DiagramError::UnsafeSubgraphs), "{source:?}");
         }
     }
 
@@ -505,8 +546,8 @@ mod tests {
             format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(depth))
         };
 
-        assert_eq!(admit(&nested(MAX_SUBGRAPH_DEPTH)), Ok(()));
-        assert_eq!(admit(&nested(MAX_SUBGRAPH_DEPTH + 1)), Err(DiagramError::UnsafeSubgraphs));
+        assert_eq!(readable(&nested(MAX_SUBGRAPH_DEPTH)), Ok(()));
+        assert_eq!(readable(&nested(MAX_SUBGRAPH_DEPTH + 1)), Err(DiagramError::UnsafeSubgraphs));
     }
 
     #[test]
