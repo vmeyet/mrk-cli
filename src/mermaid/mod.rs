@@ -90,9 +90,11 @@ pub(crate) fn render_in_document(source: &str, settings: &Settings, allowance: &
 
 fn drawn(source: &str, settings: &Settings) -> Result<Block, DiagramError> {
     budget::admit(source)?;
-    match settings.cell.and_then(|cell| picture(source, cell, settings).ok()) {
-        Some(picture) => Ok(Block::Picture(picture)),
-        None => as_text(source, settings),
+    match settings.cell.map(|cell| picture(source, cell, settings)) {
+        Some(Ok(picture)) => Ok(Block::Picture(picture)),
+        // Given up on at the deadline, the picture left its text no time; kept, it starts neither engine again.
+        Some(Err(DiagramError::TimedOut)) => Err(DiagramError::TimedOut),
+        _ => as_text(source, settings),
     }
 }
 
@@ -299,6 +301,18 @@ mod tests {
 
         assert_eq!(out_of_time[0].plain(), "mermaid: out of time for the document's diagrams");
         assert!(matches!(next, Block::Picture(_)), "{next:?}");
+    }
+
+    #[test]
+    fn a_picture_given_up_on_at_the_deadline_is_too_slow_and_a_resize_starts_no_engine() {
+        let source = tangled(20, 43);
+        DRAWINGS.keep(&source, &with_cell().theme.palette, Err(DiagramError::TimedOut));
+
+        let given_up = lines(render(&source, &Settings { diagram_deadline: Some(Instant::now()), ..with_cell() }));
+        let resized = lines(render(&source, &Settings { width: 60, ..with_cell() }));
+
+        assert_eq!(given_up[0].plain(), "mermaid: too slow to lay out");
+        assert_eq!(resized[0].plain(), "mermaid: too slow to lay out");
     }
 
     #[test]
