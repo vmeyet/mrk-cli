@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::sanitize;
@@ -70,7 +71,8 @@ impl Style {
 pub struct Span {
     pub text: String,
     pub style: Style,
-    pub link: Option<String>,
+    /// The target `sanitize::link` gives, shared by every span the link's text wraps into.
+    pub link: Option<Arc<str>>,
     /// Drawn by mrk around the input's text (a bar, a border, a marker, padding), never written by the input: what a
     /// diff leaves out.
     pub is_frame: bool,
@@ -85,7 +87,7 @@ impl Span {
         Self::new(text, Style::default())
     }
 
-    pub fn linked(self, target: impl Into<String>) -> Self {
+    pub fn linked(self, target: impl Into<Arc<str>>) -> Self {
         Self { link: Some(target.into()), ..self }
     }
 
