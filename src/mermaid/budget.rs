@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use mermaid_rs_renderer::{DiagramKind, Edge, Graph};
 
 use super::DiagramError;
+use super::catch::caught;
 
 /// Mermaid blocks above this size are shown as source.
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
@@ -133,8 +134,8 @@ impl Allowance {
 
 fn parsed(source: &str) -> Result<Graph, DiagramError> {
     admit(source)?;
-    let parsed =
-        mermaid_rs_renderer::parse_mermaid_strict(source).map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
+    let parsed = caught(|| mermaid_rs_renderer::parse_mermaid_strict(source))?
+        .map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
     Ok(parsed.graph)
 }
 
@@ -202,9 +203,9 @@ fn scanned_text_load(source: &str) -> Option<(Load, usize)> {
     if LINEAR_KINDS.iter().any(|kind| header.starts_with(kind)) {
         None
     } else if header.starts_with("classDiagram") {
-        Some((Load::Relations, statements(source).map(|statement| edges_in(statement, &CLASS_ARROWS)).sum()))
+        Some((Load::Relations, statements(source).map(|statement| edges_in(&statement, &CLASS_ARROWS)).sum()))
     } else {
-        Some((Load::Edges, statements(source).skip(1).map(|statement| edges_in(statement, &ARROWS).max(1)).sum()))
+        Some((Load::Edges, statements(source).skip(1).map(|statement| edges_in(&statement, &ARROWS).max(1)).sum()))
     }
 }
 
@@ -220,8 +221,16 @@ fn edges_in(statement: &str, arrows: &[&str]) -> usize {
     sides.windows(2).map(|pair| pair[0] * pair[1]).sum()
 }
 
-fn statements(source: &str) -> impl Iterator<Item = &str> {
-    source.split(['\n', ';']).map(str::trim).filter(|statement| !statement.is_empty() && !statement.starts_with("%%"))
+/// The statements as mermaid-text reads them: split on newlines and semicolons, with every carriage return deleted.
+fn statements(source: &str) -> impl Iterator<Item = String> {
+    let statements: Vec<String> = source
+        .replace('\r', "")
+        .split(['\n', ';'])
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty() && !statement.starts_with("%%"))
+        .map(str::to_owned)
+        .collect();
+    statements.into_iter()
 }
 
 fn first_line(message: &str) -> String {
@@ -247,7 +256,6 @@ fn doublings(edges: &[Edge]) -> usize {
 }
 
 /// mermaid-text recurses without end on a subgraph that reuses an id, and a stack overflow aborts past `catch_unwind`.
-/// Statements are split the way mermaid-text splits them: on newlines and semicolons.
 fn has_safe_subgraphs(source: &str) -> bool {
     let mut ids = HashSet::new();
     let mut depth = 0_usize;
@@ -255,7 +263,7 @@ fn has_safe_subgraphs(source: &str) -> bool {
         match statement.split_whitespace().next() {
             Some("subgraph") => {
                 depth += 1;
-                if depth > MAX_SUBGRAPH_DEPTH || !ids.insert(subgraph_id(statement)) {
+                if depth > MAX_SUBGRAPH_DEPTH || !ids.insert(subgraph_id(&statement).to_owned()) {
                     return false;
                 }
             }
@@ -266,9 +274,15 @@ fn has_safe_subgraphs(source: &str) -> bool {
     true
 }
 
-/// `subgraph id`, `subgraph id [label]`, or `subgraph [label]` where the label stands for the id.
+/// The id mermaid-text gives a bare `subgraph`.
+const BARE_SUBGRAPH_ID: &str = "__sg__";
+
+/// `subgraph id`, `subgraph id [label]`, `subgraph [label]` where the label stands for the id, or a bare `subgraph`.
 fn subgraph_id(statement: &str) -> &str {
-    let header = statement.trim().trim_start_matches("subgraph").trim();
+    let header = statement.trim_start_matches("subgraph").trim();
+    if header.is_empty() {
+        return BARE_SUBGRAPH_ID;
+    }
     match header.split_once('[') {
         Some((id, _)) if !id.trim().is_empty() => id.trim(),
         Some((_, label)) => label.split_once(']').map_or(label, |(inside, _)| inside).trim(),
@@ -357,6 +371,14 @@ mod tests {
     }
 
     #[test]
+    fn a_parser_panic_is_a_crash() {
+        let panicking = "architecture-beta\n group )g(cloud)[G]";
+
+        assert_eq!(picture_graph(panicking).unwrap_err(), DiagramError::Crashed);
+        assert_eq!(cost(panicking, true), MIN_COST_MS);
+    }
+
+    #[test]
     fn oversized_source_is_refused_before_parsing() {
         assert_eq!(admit(&"%%\n".repeat(MAX_SOURCE_BYTES)), Err(DiagramError::Oversized));
     }
@@ -434,6 +456,9 @@ mod tests {
             "graph TD\n subgraph a [One]\n end\n subgraph b\n subgraph a[Two]\n end\n end",
             "graph TD\n subgraph [Same]\n subgraph [Same]\n end\n end",
             "graph TD\n subgraph\n subgraph\n end\n end",
+            "graph TD\n subgraph\n subgraph __sg__\n end\n end",
+            "graph TD\n subgraph\n subgraph __sg__\n A-->B\n end\n end",
+            "graph TD\n sub\rgraph a\n sub\rgraph a\n end\n end",
         ];
 
         for source in sources {
