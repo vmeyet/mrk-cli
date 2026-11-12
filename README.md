@@ -22,6 +22,11 @@ cargo install --locked --git https://github.com/vmeyet/mrk-cli
 
 Prebuilt binaries cover macOS and Linux, on x86_64 and arm64.
 On Alpine or an old glibc, the shell installer picks a static musl build.
+From the next release on, each release archive carries a GitHub build attestation; check a downloaded one with:
+
+```sh
+gh attestation verify mrk-cli-aarch64-apple-darwin.tar.xz --repo vmeyet/mrk-cli
+```
 
 ## Quick start
 

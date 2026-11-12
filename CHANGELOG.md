@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Library: `Palette::colors` lists a palette's colours.
+- Release archives carry a GitHub build attestation, checked with `gh attestation verify`.
 
 ### Changed
 
