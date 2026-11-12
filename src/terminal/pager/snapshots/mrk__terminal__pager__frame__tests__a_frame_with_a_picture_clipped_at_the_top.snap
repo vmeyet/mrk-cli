@@ -5,9 +5,9 @@ expression: "readable(&drawn(&sample(), Some(Protocol::Kitty)))"
 
 ␛[?2026h␛_Ga=d,d=i,i=1836215040,q=2␛\
 ␛[1;1H
-␛[2K
+␛[2K  
 ␛[2;1H
-␛[2K
+␛[2K  
 ␛[3;1H
 ␛[2K  
 ␛[38;2;212;215;224mgamma
