@@ -28,10 +28,12 @@ pub struct Config {
     pub jumbo_title: Option<bool>,
 }
 
+/// Only absolute directories: an empty or relative home would name one under the current directory.
 fn candidates(xdg: Option<OsString>, home: Option<PathBuf>, platform: Option<PathBuf>) -> Vec<PathBuf> {
     let xdg = xdg.map(PathBuf::from).filter(|path| path.is_absolute());
     let terminal_style = xdg.or_else(|| home.map(|home| home.join(".config")));
-    let mut paths: Vec<PathBuf> = [terminal_style, platform].into_iter().flatten().map(|dir| dir.join(FILE)).collect();
+    let directories = [terminal_style, platform].into_iter().flatten().filter(|dir| dir.is_absolute());
+    let mut paths: Vec<PathBuf> = directories.map(|dir| dir.join(FILE)).collect();
     paths.dedup();
     paths
 }
@@ -98,6 +100,15 @@ mod tests {
     fn xdg_config_home_replaces_dot_config_when_absolute() {
         assert_eq!(candidates(Some("/xdg".into()), home(), None), [PathBuf::from("/xdg/mrk/config.toml")]);
         assert_eq!(candidates(Some("relative".into()), home(), None), [PathBuf::from("/Users/nina/.config/mrk/config.toml")]);
+    }
+
+    #[test]
+    fn without_an_absolute_home_no_config_is_looked_for_relative_to_the_current_directory() {
+        for home in [PathBuf::new(), PathBuf::from("nina")] {
+            let platform = home.join("Library/Application Support");
+
+            assert_eq!(candidates(None, Some(home.clone()), Some(platform)), Vec::<PathBuf>::new(), "{home:?}");
+        }
     }
 
     #[test]
