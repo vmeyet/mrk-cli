@@ -6,7 +6,6 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use mrk::sanitize;
-use signal_hook::consts::{SIGINT, SIGTERM};
 
 use crate::cli::signals::{self, Held};
 use crate::version;
@@ -173,12 +172,12 @@ fn install_with_brew(release: Version, force: bool) -> Result<()> {
 }
 
 /// Builds the release's commit in a temporary folder, whatever `CARGO_TARGET_DIR` says, removed once done, also when
-/// Ctrl-C or `SIGTERM` stops the build; installs it where the running mrk is, then checks what was installed and
+/// a signal that would end mrk stops the build; installs it where the running mrk is, then checks what was installed and
 /// which `mrk` the `PATH` finds.
 fn install_with_cargo(release: &Release) -> Result<()> {
     println!("→ installing mrk {} from {REPO}…", release.label());
     let root = install_root().context("finding where to install mrk")?;
-    let held = Held::hold(&[SIGINT, SIGTERM]).context("holding Ctrl-C during the build")?;
+    let held = Held::hold(&signals::ENDING_SIGNALS).context("holding Ctrl-C during the build")?;
     let build = tempfile::Builder::new().prefix("mrk-update-").tempdir().context("creating a build folder")?;
     let mut cargo = Command::new("cargo");
     cargo

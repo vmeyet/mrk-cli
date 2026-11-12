@@ -43,7 +43,7 @@ fn sections() -> [Section; 4] {
                 ("2", "a usage mistake: a bad flag, environment value or config file, or an unknown theme"),
                 (
                     "128 + signal",
-                    "a signal stopped a command mrk ran: Ctrl-C (130) or Ctrl-\\ (131) ending MRK_PAGER, Ctrl-C (130) or SIGTERM (143) stopping mrk update",
+                    "a signal stopped a command mrk ran: Ctrl-C (130) or Ctrl-\\ (131) ending MRK_PAGER, Ctrl-C (130), Ctrl-\\ (131), a closed terminal (129) or SIGTERM (143) stopping mrk update",
                 ),
             ]),
         },
