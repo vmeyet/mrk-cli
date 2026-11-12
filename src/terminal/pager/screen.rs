@@ -15,20 +15,27 @@ use crate::{mermaid, sanitize};
 
 /// Alternate screen, cursor hidden, and no line wrap so a line never spills onto the next row.
 const ENTER: &str = "\x1b[?1049h\x1b[?25l\x1b[?7l";
-const LEAVE: &str = "\x1b[?2026l\x1b[?7h\x1b[?25h\x1b[?1049l";
+/// The end of a frame a give-back cut short, so the terminal shows what follows.
+const END_SYNCHRONIZED: &str = "\x1b[?2026l";
+const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
+/// The modes the pager changes, saved first (XTSAVE) and restored on leaving (XTRESTORE).
+const SAVE_MODES: &str = "\x1b[?7s\x1b[?25s\x1b[?1007s";
+const RESTORE_MODES: &str = "\x1b[?7r\x1b[?25r\x1b[?1007r";
+/// Line wrap and the cursor on, as every terminal starts, where they cannot be restored.
+const WRAP_AND_CURSOR_ON: &str = "\x1b[?7h\x1b[?25h";
 /// The wheel sent as arrow keys (alternate scroll), so it scrolls without capturing the mouse, which would break text
-/// selection; saved first (XTSAVE), so leaving restores it (XTRESTORE).
-const SAVE_ALTERNATE_SCROLL: &str = "\x1b[?1007s\x1b[?1007h";
-const RESTORE_ALTERNATE_SCROLL: &str = "\x1b[?1007r";
+/// selection; only where it can be restored.
+const ALTERNATE_SCROLL: &str = "\x1b[?1007h";
 
 type Hook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send>;
 
-/// What takes the terminal's modes, and what gives them back: alternate scroll only where the terminal restores it.
+/// What takes the terminal's modes, and what gives them back: restored where the terminal can, else wrap and cursor
+/// set back on and alternate scroll left alone.
 fn modes(saves_modes: bool) -> (String, String) {
     if saves_modes {
-        (format!("{ENTER}{SAVE_ALTERNATE_SCROLL}"), format!("{RESTORE_ALTERNATE_SCROLL}{LEAVE}"))
+        (format!("{SAVE_MODES}{ENTER}{ALTERNATE_SCROLL}"), format!("{END_SYNCHRONIZED}{RESTORE_MODES}{LEAVE_ALTERNATE_SCREEN}"))
     } else {
-        (ENTER.to_owned(), LEAVE.to_owned())
+        (ENTER.to_owned(), format!("{END_SYNCHRONIZED}{WRAP_AND_CURSOR_ON}{LEAVE_ALTERNATE_SCREEN}"))
     }
 }
 
@@ -193,10 +200,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn alternate_scroll_is_saved_and_restored_only_where_the_terminal_restores_modes() {
-        assert_eq!(modes(true), (format!("{ENTER}\x1b[?1007s\x1b[?1007h"), format!("\x1b[?1007r{LEAVE}")));
-        assert_eq!(modes(false), (ENTER.to_owned(), LEAVE.to_owned()));
-        assert!(!modes(false).1.contains("1007"));
+    fn where_the_terminal_restores_modes_wrap_cursor_and_alternate_scroll_are_saved_then_restored_never_forced() {
+        assert_eq!(
+            modes(true),
+            (
+                "\x1b[?7s\x1b[?25s\x1b[?1007s\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1007h".to_owned(),
+                "\x1b[?2026l\x1b[?7r\x1b[?25r\x1b[?1007r\x1b[?1049l".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn elsewhere_wrap_and_cursor_are_set_back_on_and_alternate_scroll_left_alone() {
+        assert_eq!(modes(false), ("\x1b[?1049h\x1b[?25l\x1b[?7l".to_owned(), "\x1b[?2026l\x1b[?7h\x1b[?25h\x1b[?1049l".to_owned()));
     }
 
     #[test]

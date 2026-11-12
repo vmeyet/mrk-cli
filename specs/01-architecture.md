@@ -100,6 +100,8 @@ src/
   Alt-modified keys do nothing. A terminal reply that came too late reads as Alt and its introducer (`ESC ]`, `P`, `_`, `^`, `X`), then its text: those keys are dropped up to its end (BEL or `ST`), a key no reply holds, or a pause of 20 ms, since a reply arrives in one burst, so the reader's own keys are never held back.
 - The mouse is not captured, so text selection keeps working; the pager turns on alternate scroll mode (`?1007`), so terminals that honour it send the wheel as arrow keys and scroll the pager with it.
   Only where the environment names a terminal known to restore a saved mode (`environment::saves_modes`: xterm, Ghostty, foot, outside a multiplexer) does it save the mode first (XTSAVE, `CSI ?1007s`) and restore it on exit (XTRESTORE, `CSI ?1007r`); elsewhere it leaves `?1007` alone, since a terminal that ignores XTRESTORE would keep the mode the pager set and one that drops the `?` would read `CSI 1007 r` as a scroll region. Asking with DECRQM would cost a round trip before the first frame.
+  Autowrap (`?7`) and the cursor (`?25`) are saved and restored the same way on those terminals (xterm saves every DEC mode, Ghostty every mode it knows, foot lists both); elsewhere leaving sets both back on (`CSI ?7h`, `CSI ?25h`), assuming the shell had them on, as every terminal starts.
+  Leaving also ends synchronized output (`CSI ?2026l`), which only a frame the give-back cut short left on.
 
 ## Contracts
 
