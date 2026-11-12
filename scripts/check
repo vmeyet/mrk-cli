@@ -5,10 +5,10 @@ cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test --no-default-features
 cargo test --all-targets
-cargo deny check --hide-inclusion-graph
+cargo deny --all-features check --hide-inclusion-graph
 cargo machete
 
-msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+msrv=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')
 if rustup toolchain list | grep -q "^$msrv-"; then
   cargo "+$msrv" check --all-targets --locked
   cargo "+$msrv" check --no-default-features --locked
@@ -19,6 +19,7 @@ fi
 target=x86_64-unknown-linux-musl
 if command -v musl-gcc >/dev/null && rustup target list --installed | grep -qx "$target"; then
   cargo build --profile dist --target "$target" --locked
+  "target/$target/dist/mrk" --version
 else
   echo "skipped the $target release build: needs musl-gcc and \`rustup target add $target\`" >&2
 fi

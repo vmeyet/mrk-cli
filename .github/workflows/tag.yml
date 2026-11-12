@@ -1,11 +1,17 @@
 name: Tag
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths: [Cargo.toml]
 permissions: {}
 jobs:
   tag:
+    # `branches` also matches a fork's pull request from a branch named main: only a push to this repository counts.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -13,6 +19,7 @@ jobs:
       # The deploy key stays persisted: the tag push below authenticates with it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           ssh-key: ${{ secrets.RELEASE_TAGGER_KEY }}
           fetch-tags: true
       - run: |

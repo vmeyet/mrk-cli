@@ -16,9 +16,19 @@ Everything `mrk --help` and `man mrk` say, in one page.
 |                              | `MRK_PAGER` |            | a command `-p` pipes into instead of the built-in pager, diagrams as text; it never turns paging on |
 | `--completions SHELL`        |             |            | prints the completion script for `bash`, `elvish`, `fish`, `powershell` or `zsh`                    |
 | `--list-themes`              |             |            | names with a swatch in a Dark and a Light group, the terminal background's group marked; one name per line when piped |
+| `--man`                      |             |            | prints the man page as roff; hidden from `--help`                                                    |
 
 Piped output is never centred, paged, given pictures or jumbo titles; output sent to `MRK_PAGER` gets neither pictures nor jumbo titles.
 Without colour there are no hyperlinks, so links print their target as ` <url>` after the text.
+
+## Commands
+
+| Command                    | What it does                                                                                                                             |
+| :------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- |
+| `mrk update`               | installs the latest release when it is newer: through brew when brew installed mrk, else with `cargo install`; the only command that uses the network |
+| `mrk update -f`, `--force` | installs it even when the running mrk is already the latest release                                                                      |
+
+A file named `update` renders as `mrk ./update`.
 
 ## Config file
 

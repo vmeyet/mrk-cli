@@ -22,6 +22,11 @@ cargo install --locked --git https://github.com/vmeyet/mrk-cli
 
 Prebuilt binaries cover macOS and Linux, on x86_64 and arm64.
 On Alpine or an old glibc, the shell installer picks a static musl build.
+From the next release on, each release archive carries a GitHub build attestation; check a downloaded one with:
+
+```sh
+gh attestation verify mrk-cli-aarch64-apple-darwin.tar.xz --repo vmeyet/mrk-cli
+```
 
 ## Quick start
 
@@ -115,7 +120,7 @@ mrk update          # install the latest release when it is newer
 mrk update --force  # reinstall it anyway
 ```
 
-When Homebrew installed mrk, this runs `brew upgrade vmeyet/tap/mrk`.
+When Homebrew installed mrk, this runs `brew update` (unless `HOMEBREW_NO_AUTO_UPDATE` is set), then `brew upgrade vmeyet/tap/mrk`.
 Otherwise it rebuilds the release with cargo, so it needs git and a Rust toolchain.
 It is the only command that uses the network.
 
