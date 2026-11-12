@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use comrak::nodes::{AstNode, NodeValue};
 
 use super::context::Context;
@@ -86,15 +88,20 @@ fn linked(spans: Vec<Span>, url: &str, target: Target, base: Style, context: &Co
     if url.is_empty() {
         return spans;
     }
-    let target = shown_target(&spans, url, target, base, context);
-    spans.into_iter().map(|span| span.linked(url)).chain(target).collect()
+    let clickable: Option<Arc<str>> = sanitize::link(url).map(Arc::from);
+    let shown = shown_target(&spans, url, target, clickable.is_some(), base, context);
+    let spans = spans.into_iter().map(|span| match &clickable {
+        Some(clickable) => span.linked(Arc::clone(clickable)),
+        None => span,
+    });
+    spans.chain(shown).collect()
 }
 
 /// ` <url>` for a link that cannot be clicked, unless its text already reads as the URL. Without hyperlinks every
 /// target shows; with them, only a link's target that `sanitize::link` refuses (a relative path, another scheme), and
 /// never an image's source or a `#fragment`, which means nothing outside the document.
-fn shown_target(spans: &[Span], url: &str, target: Target, base: Style, context: &Context) -> Option<Span> {
-    let is_unclickable = !context.settings.hyperlinks || (target == Target::Link && sanitize::link(url).is_none());
+fn shown_target(spans: &[Span], url: &str, target: Target, is_clickable: bool, base: Style, context: &Context) -> Option<Span> {
+    let is_unclickable = !context.settings.hyperlinks || (target == Target::Link && !is_clickable);
     if !is_unclickable || url.starts_with('#') {
         return None;
     }
@@ -111,7 +118,9 @@ fn reads_as(text: &str, url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::document::{Settings, Span, Style, plain, test_settings};
+    use std::sync::Arc;
+
+    use crate::document::{Block, Settings, Span, Style, plain, test_settings};
     use crate::markdown::{plain_at, render, styled};
     use crate::theme::MRK_DARK;
 
@@ -209,6 +218,30 @@ mod tests {
         let muted = Style::fg(MRK_DARK.palette.muted);
 
         assert_eq!(styled("![a cat](https://x.y/cat.png)"), [[Span::new("▣ a cat", muted).linked("https://x.y/cat.png")]]);
+    }
+
+    fn links_at(source: &str, width: usize) -> Vec<Option<Arc<str>>> {
+        let document = render(source, &Settings { width, ..test_settings() });
+        let lines = document.blocks.iter().flat_map(Block::lines);
+        lines.flat_map(|line| &line.spans).map(|span| span.link.clone()).collect()
+    }
+
+    #[test]
+    fn a_link_no_terminal_would_open_links_nothing() {
+        let too_long = format!("https://x.y/{}", "a".repeat(3000));
+
+        for source in [too_long.as_str(), "[guide](docs/guide.md)", "[x](javascript:alert(1))"] {
+            assert!(links_at(source, 80).iter().all(Option::is_none), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_wrapped_link_shares_one_target() {
+        let links = links_at(&format!("https://x.y/{}", "a".repeat(200)), 40);
+        let targets: Vec<&Arc<str>> = links.iter().flatten().collect();
+
+        assert_eq!((links.len(), targets.len()), (6, 6));
+        assert!(targets.iter().all(|target| Arc::ptr_eq(target, targets[0])));
     }
 
     #[test]

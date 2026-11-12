@@ -26,10 +26,15 @@ const ALIASES: &[(&str, &str)] = &[
     ("hcl", "terraform"),
 ];
 
+/// Whether `language` names plain text, which is never highlighted.
+pub(super) fn is_plain(language: &str) -> bool {
+    PLAIN.iter().any(|plain| plain.eq_ignore_ascii_case(language))
+}
+
 /// The syntax a fence language names, by token, extension or alias, in any case; `None` for plain text, which never
 /// loads `SYNTAXES`, and unknown names.
 pub fn find(language: &str) -> Option<&'static SyntaxReference> {
-    if PLAIN.iter().any(|plain| plain.eq_ignore_ascii_case(language)) {
+    if is_plain(language) {
         return None;
     }
     let token = ALIASES.iter().find(|(alias, _)| alias.eq_ignore_ascii_case(language)).map_or(language, |(_, target)| target);

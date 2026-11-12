@@ -60,7 +60,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Blockquote | `│ ` bar in `subtle`, text italic `muted` |
 | Alert (`> [!NOTE]`) | bar and title (`● Note`, `◆ Tip`, `▲ Warning`, …) in the alert colour, body in `text` |
 | Code block | panel on `surface` spanning the content width, two columns of padding, language label right-aligned in `muted` on the first row, syntax colours from the theme |
-| Table | rounded box (`╭┬╮ ├┼┤ ╰┴╯`) in `subtle`, bold header in `accent`, column alignment honoured, cells wrap when the table is too wide. When even three cells per column cannot fit, each row is a record instead: one `header: value` line per cell, records a blank line apart; a table with only a header lists its names one per line |
+| Table | rounded box (`╭┬╮ ├┼┤ ╰┴╯`) in `subtle`, bold header in `accent`, column alignment honoured, cells wrap when the table is too wide. When even three cells per column cannot fit, each row is a record instead: one `header: value` line per cell, records a blank line apart, a header name cut with an ellipsis to the one line it shares with `: `, since every record repeats it; a table with only a header lists its names one per line |
 | Rule | `─` in `subtle` across the width, with a centred `◆` |
 | Footnote | `¹`-style marker in `accent`; notes listed at the end under a short rule |
 | Front matter | its lines in `muted`, wrapped at spaces with their runs of spaces kept, each behind its indent (at most half the width), then a rule |

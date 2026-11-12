@@ -1,6 +1,6 @@
 use crate::document::{MIN_WIDTH, Settings, Style};
-use crate::mermaid::Allowance;
 use crate::theme::Palette;
+use crate::{code, mermaid};
 
 /// A container indents its blocks only while that leaves them this wide.
 const MIN_NESTED_WIDTH: usize = 12;
@@ -8,14 +8,15 @@ const MIN_NESTED_WIDTH: usize = 12;
 const MAX_NESTING: usize = 32;
 
 /// Where a block is being rendered: the settings at the current width, the paragraph style, how deep it sits, and
-/// which of the document's diagrams its budget lets through.
+/// which of the document's diagrams and code blocks its budgets let through.
 #[derive(Clone, Copy)]
 pub(super) struct Context<'a> {
     pub settings: Settings,
     pub style: Style,
     pub nesting: usize,
     pub list_depth: usize,
-    pub diagrams: &'a Allowance,
+    pub diagrams: &'a mermaid::Allowance,
+    pub highlights: &'a code::Allowance,
 }
 
 /// How a container lays out its blocks.
@@ -30,9 +31,9 @@ pub(super) enum Nested<'a> {
 
 impl<'a> Context<'a> {
     /// The context of the whole document, at least `MIN_WIDTH` wide.
-    pub fn new(settings: &Settings, diagrams: &'a Allowance) -> Self {
+    pub fn new(settings: &Settings, diagrams: &'a mermaid::Allowance, highlights: &'a code::Allowance) -> Self {
         let settings = Settings { width: settings.width.max(MIN_WIDTH), ..*settings };
-        Self { settings, style: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0, diagrams }
+        Self { settings, style: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0, diagrams, highlights }
     }
 
     pub fn palette(&self) -> &Palette {

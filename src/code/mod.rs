@@ -1,14 +1,30 @@
+mod budget;
 mod highlight;
 mod language;
 mod panel;
 
+pub(crate) use self::budget::{Allowance, highlighted_len};
 use crate::document::{Line, MIN_WIDTH, Settings};
 
 /// A fenced code block as a panel: every line exactly `settings.width` cells, at least `MIN_WIDTH`, highlighted
-/// when the language is known. `language` is a language name (`rust`, `ts`), not a whole fence info string.
+/// when the language is known, within the bounds of `budget.rs`. `language` is a language name (`rust`, `ts`), not a
+/// whole fence info string.
 pub fn render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line> {
-    let rows = highlight::highlight(code, language, &settings.theme);
-    panel::panel(rows, language, settings.width.max(MIN_WIDTH), &settings.theme.palette)
+    let alone = Allowance::new([(0, highlighted_len(code, language))]);
+    render_in_document(code, language, 0, &alone, settings)
+}
+
+/// `render` for a block of a document, highlighted only when the document's `allowance` admits its `key`.
+pub(crate) fn render_in_document(code: &str, language: Option<&str>, key: usize, allowance: &Allowance, settings: &Settings) -> Vec<Line> {
+    panel(code, language, allowance.highlighted(key), settings)
+}
+
+/// The panel of `code`, its first `highlighted` bytes highlighted and the rest plain.
+fn panel(code: &str, language: Option<&str>, highlighted: usize, settings: &Settings) -> Vec<Line> {
+    let (head, tail) = code.split_at(highlighted);
+    let theme = &settings.theme;
+    let rows = highlight::highlight(head, language.filter(|_| !head.is_empty()), theme).chain(highlight::highlight(tail, None, theme));
+    panel::panel(rows, language, settings.width.max(MIN_WIDTH), &theme.palette)
 }
 
 #[cfg(test)]
@@ -24,6 +40,25 @@ mod tests {
 
     fn framed(lines: &[Line]) -> String {
         lines.iter().map(|line| format!("│{}│\n", line.plain())).collect()
+    }
+
+    #[test]
+    fn highlighting_stops_at_the_first_line_too_long_to_highlight() {
+        let code = format!("let a = 1;\nlet b = \"{}\";\nlet c = 2;\n", "x".repeat(600));
+        let (rust, text) = (render(&code, Some("rust"), &at_width(40)), render(&code, Some("text"), &at_width(40)));
+
+        assert_ne!(rust[1], text[1]);
+        assert_eq!(rust[2..], text[2..]);
+    }
+
+    #[test]
+    fn a_block_its_document_does_not_admit_is_plain() {
+        let settings = test_settings();
+        let (rust, text) = (render(RUST, Some("rust"), &settings), render(RUST, Some("text"), &settings));
+        let in_document = |allowance: &Allowance| render_in_document(RUST, Some("rust"), 1, allowance, &settings);
+
+        assert_eq!(in_document(&Allowance::new([(1, RUST.len())])), rust);
+        assert_eq!(in_document(&Allowance::new([(2, RUST.len())]))[1..], text[1..]);
     }
 
     #[test]

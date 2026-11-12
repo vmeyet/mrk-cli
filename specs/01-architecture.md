@@ -55,6 +55,7 @@ src/
   markdown/        comrak AST ─▶ Document; one file per block family (inline, list, table, quote, …)
     blocks.rs      Section, SectionKind: the top-level sections both render and render_sections are built from
   code/            syntect + two-face: highlight a fenced block into a surface panel
+    budget.rs      how much of a block and of a document is highlighted (`02-security.md` rule 4)
   mermaid/         mermaid-rs-renderer SVG ─▶ raster PNG ─▶ Picture; mermaid-text fallback
     budget.rs      the size and subgraph limits of both engines, then each engine's own count
     cache.rs       every diagram a document's budget lets through, drawings (or timeouts) by source and palette, texts by width too
@@ -113,19 +114,20 @@ src/
   A picture is drawn after its rows scrolled into view, the cursor sent back up to the first; one taller than the window is drawn in runs one row shorter than the window, each a crop of its PNG (kitty receives the PNG once per run), since the cursor cannot climb above the top row. A Sixel run's last band is padded with transparent rows, so no pixel row goes missing between runs and none is drawn twice.
 - Escape sequences are produced only inside `terminal/`: `ansi.rs` for styled lines, `write` for documents, `pager/frame.rs` and `pager/screen.rs` for the pager, `kitty.rs`, `sixel.rs` and `tmux.rs` for pictures, `query.rs` for the capability queries, `error_report` for dimmed error causes.
 - `settings.hyperlinks` mirrors `Capabilities::hyperlinks`: when links cannot be clicked, or `sanitize::link` refuses the target (a relative path), `markdown` adds their target as a span so it wraps and counts toward the width; `terminal::write` still sanitizes it like any span text.
+  A span carries a link only when `sanitize::link` accepts its target, and then the target it gives (2,048 bytes at most), shared (`Arc<str>`) by every span its text wraps into.
 - A `Line` never exceeds `settings.width` cells, for any width from `document::MIN_WIDTH` up; the renderer that builds it guarantees it, `text::wrap` and `text::hard_wrap` help.
   `document::MIN_WIDTH` (8) is the narrowest the renderers lay out, enough for a code panel's padding, its continuation marker and a wide grapheme: a narrower width lays out at 8.
   A list item, quote or footnote whose indent would leave less than 12 cells stops indenting: its blocks keep the container's width, a marker opening the first paragraph (or on a line of its own), a quote or alert without its bar.
   Past 32 nested containers, a container renders as its bare text: bounded recursion on hostile input.
-- Every width is `text::display_width`: counted per grapheme (at most two cells), a tab up to the next tab stop, the characters `sanitize` removes as none.
+- Every width is `text::display_width`: counted per grapheme of the text as `sanitize` prints it (at most two cells), a tab up to the next tab stop, the characters `sanitize` removes as none, so `❤`, U+200B, U+FE0F is one emoji two cells wide, as printed.
   `text::expand_tabs` is the one tab rule: a tab is the spaces up to the next column that is a multiple of four, counted from the start of the line, so `ab\tc` puts `c` in column 4.
   `hard_wrap` (code, source), `wrap_literal` (HTML, front matter: it breaks at spaces but keeps runs of spaces) and `sanitize` expand tabs this way, `sanitize` once the characters it removes are gone; `wrap` breaks at a tab as at a space, except on a background (inline code), where the tab stops on the line it lands on.
-  Every cut to a width goes through `text::cut`, which never splits a grapheme.
+  Every cut to a width goes through `text::cut`, which never splits a grapheme, nor two graphemes that merge once `sanitize` removes what stands between them.
 - Blank lines between blocks are explicit empty `Line`s emitted by `markdown`.
 
 ## Performance
 
-- syntect's syntax and theme sets load lazily, once, on the first code block that names a language other than plain text (`text`, `txt`, `plain`, `plaintext`, `none`) (`std::sync::LazyLock`).
+- syntect's syntax and theme sets load lazily, once, on the first code block highlighted, one that names a language other than plain text (`text`, `txt`, `plain`, `plaintext`, `none`) (`std::sync::LazyLock`).
 - The mermaid engine loads lazily on the first diagram, the font database on the first diagram or title picture; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; every font file in the font directories (`02-security.md` rule 3) loads only when those fallbacks miss a glyph.
   What a label needs is read off the text between the SVG's tags, never the diagram source, so a comment in another script loads nothing more.
   Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.
