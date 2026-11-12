@@ -1,6 +1,6 @@
 //! Signals that would end mrk, held off while a child program runs, so mrk outlives the child and cleans up after it.
 use std::fmt;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -20,8 +20,20 @@ const GRACE: Duration = Duration::from_secs(5);
 /// No signal arrived.
 const NONE: usize = 0;
 
-/// The signals that end mrk by default: Ctrl-C, Ctrl-\\, a closed terminal and a parent program stopping it.
-pub const ENDING_SIGNALS: [i32; 4] = [SIGHUP, SIGINT, SIGQUIT, SIGTERM];
+/// The signals that end mrk by default: Ctrl-C, Ctrl-\\, a closed terminal and a parent program stopping it. The
+/// pager holds the same ones (`terminal::pager::signals`), since it only runs with stdout on a terminal.
+const ENDING_ON_A_TERMINAL: [i32; 4] = [SIGHUP, SIGINT, SIGQUIT, SIGTERM];
+const ENDING_OFF_A_TERMINAL: [i32; 3] = [SIGINT, SIGQUIT, SIGTERM];
+
+/// The ending signals mrk may hold. `nohup` ignores `SIGHUP` and sends stdout and stderr away from the terminal; whether
+/// a signal was ignored cannot be read without `unsafe`, so `SIGHUP` is left as it was when neither is a terminal.
+pub fn ending_not_ignored() -> &'static [i32] {
+    ending_for(io::stdout().is_terminal() || io::stderr().is_terminal())
+}
+
+fn ending_for(on_a_terminal: bool) -> &'static [i32] {
+    if on_a_terminal { &ENDING_ON_A_TERMINAL } else { &ENDING_OFF_A_TERMINAL }
+}
 
 /// Per signal, the flag of an action that ends mrk as the default disposition would, armed whenever no `Held` holds
 /// that signal: signal-hook cannot give the default disposition back once it handled a signal.
@@ -168,13 +180,19 @@ mod tests {
 
     #[test]
     fn a_closed_terminal_and_ctrl_backslash_are_held_like_ctrl_c() {
-        let held = Held::hold(&ENDING_SIGNALS).unwrap();
+        let held = Held::hold(&ENDING_ON_A_TERMINAL).unwrap();
 
         for signal in [SIGHUP, SIGQUIT] {
             low_level::raise(signal).unwrap();
 
             assert_eq!(held.arrived(), Some(Interrupted(signal)));
         }
+    }
+
+    #[test]
+    fn a_closed_terminal_is_left_alone_when_neither_stdout_nor_stderr_is_a_terminal_as_under_nohup() {
+        assert_eq!(ending_for(true), [SIGHUP, SIGINT, SIGQUIT, SIGTERM]);
+        assert_eq!(ending_for(false), [SIGINT, SIGQUIT, SIGTERM]);
     }
 
     #[test]

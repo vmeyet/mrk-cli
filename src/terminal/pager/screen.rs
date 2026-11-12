@@ -51,10 +51,10 @@ struct Taken {
 }
 
 impl Taken {
-    /// The terminal taken, and how to force it back; refused, with nothing changed, to a background job.
+    /// The terminal taken, and how to force it back; refused, with nothing changed, to a job left in the background.
     fn enter() -> io::Result<(Self, Forced)> {
         let tty = tty::open()?;
-        if !tty::is_foreground(&tty) {
+        if !tty::wait_until_foreground(&tty) {
             return Err(io::Error::other("not the terminal's foreground job"));
         }
         let raw = RawMode::enable(tty)?;
