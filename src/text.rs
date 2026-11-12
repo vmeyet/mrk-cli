@@ -117,6 +117,24 @@ pub fn hard_wrap(spans: &[Span], width: usize, indent: &[Span]) -> Vec<Line> {
     lines.map(line_of).collect()
 }
 
+/// `spans` on one line of at most `width` cells: when wider, cut where the line is full and ended with an ellipsis in the
+/// style of the span it cuts. Tabs stop every four columns from the first span; `width` is taken as at least
+/// `WIDEST_GRAPHEME`.
+pub(crate) fn fit(spans: &[Span], width: usize) -> Line {
+    let width = width.max(WIDEST_GRAPHEME);
+    let texts = expanded_texts(spans);
+    let pieces: Vec<Piece> = spans.iter().zip(&texts).map(|(span, text)| Piece { span, text }).collect();
+    if pieces_width(&pieces) <= width {
+        return line_of(pieces);
+    }
+    let mut rows = cut_rows(pieces, width - display_width(ELLIPSIS), width).into_iter();
+    let kept = rows.next().unwrap_or_default();
+    let ellipsis = rows.next().and_then(|row| row.first().map(|piece| Span::new(ELLIPSIS, piece.span.style))).unwrap_or_default();
+    Line::joined(kept.into_iter().map(|piece| (piece.text, piece.span)).chain([(ELLIPSIS, &ellipsis)]))
+}
+
+const ELLIPSIS: &str = "…";
+
 /// A slice of a span's text in the span's style: lines are built from these, and own their text only once closed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Piece<'a> {
@@ -415,6 +433,21 @@ mod tests {
         let lines = wrap(&[Span::plain("漢字漢字漢字")], 5, &[]);
 
         assert_eq!(plain_lines(&lines), ["漢字", "漢字", "漢字"]);
+    }
+
+    #[test]
+    fn fit_keeps_spans_that_fit() {
+        let spans = [Span::plain("ab"), Span::new("cd", Style::default().bold())];
+
+        assert_eq!(fit(&spans, 4).spans, spans);
+    }
+
+    #[test]
+    fn fit_cuts_a_wider_line_and_ends_it_with_an_ellipsis_in_the_cut_style() {
+        let bold = Style::default().bold();
+        let line = fit(&[Span::plain("ab"), Span::new("cd漢", bold)], 4);
+
+        assert_eq!(line.spans, [Span::plain("ab"), Span::new("c…", bold)]);
     }
 
     #[test]

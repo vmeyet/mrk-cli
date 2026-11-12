@@ -10,6 +10,7 @@ const MIN_COLUMN_WIDTH: usize = 3;
 /// `│ ` before each cell and ` │` after the last: three cells of frame per column, plus one.
 const FRAME_PER_COLUMN: usize = 3;
 const RECORD_INDENT: &str = "  ";
+const RECORD_SEPARATOR: &str = ": ";
 
 type Cell = Vec<Span>;
 
@@ -149,16 +150,19 @@ fn aligned(line: Line, width: usize, alignment: TableAlignment) -> Vec<Span> {
         .collect()
 }
 
-/// One `header: value` line per cell, rows a blank line apart; a table with no body row lists its header names.
+/// One `header: value` line per cell, rows a blank line apart, each header name cut to one line since every record
+/// repeats it; a table with no body row lists its header names.
 fn records(rows: &[Row], context: &Context) -> Vec<Line> {
     let Some((header, body)) = rows.split_first() else { return Vec::new() };
     let wrap = |spans: &[Span]| text::wrap(spans, context.width(), &[Span::plain(RECORD_INDENT).framed()]);
     if body.is_empty() {
         return header.cells.iter().flat_map(|name| wrap(name)).collect();
     }
-    let separator = [Span::new(": ", header_style(context)).framed()];
+    let separator = [Span::new(RECORD_SEPARATOR, header_style(context)).framed()];
+    let name_width = context.width().saturating_sub(text::display_width(RECORD_SEPARATOR));
+    let names: Vec<Line> = header.cells.iter().map(|name| text::fit(name, name_width)).collect();
     let record = |row: &Row| -> Vec<Line> {
-        header.cells.iter().zip(&row.cells).flat_map(|(name, cell)| wrap(&[name, &separator[..], cell].concat())).collect()
+        names.iter().zip(&row.cells).flat_map(|(name, cell)| wrap(&[&name.spans, &separator[..], cell].concat())).collect()
     };
     body.iter().map(record).collect::<Vec<_>>().join(&Line::blank())
 }
@@ -189,6 +193,15 @@ mod tests {
         let source = format!("| {header} |\n|{}\n| {row} |\n| {row} |", "---|".repeat(12));
 
         insta::assert_snapshot!(plain_at(&source, 30));
+    }
+
+    #[test]
+    fn a_record_cuts_a_header_name_wider_than_the_line_to_one_line() {
+        let header = format!("{} | {}", "word ".repeat(10), "c | ".repeat(9));
+        let source = format!("| {header}\n|{}\n| v1 | v2 |", "---|".repeat(10));
+        let plain = plain_at(&source, 20);
+
+        assert_eq!(plain.lines().take(3).collect::<Vec<_>>(), ["word word word wo…:", "  v1", "c: v2"]);
     }
 
     #[test]
