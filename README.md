@@ -120,7 +120,7 @@ mrk update          # install the latest release when it is newer
 mrk update --force  # reinstall it anyway
 ```
 
-When Homebrew installed mrk, this runs `brew upgrade vmeyet/tap/mrk`.
+When Homebrew installed mrk, this runs `brew update` (unless `HOMEBREW_NO_AUTO_UPDATE` is set), then `brew upgrade vmeyet/tap/mrk`.
 Otherwise it rebuilds the release with cargo, so it needs git and a Rust toolchain.
 It is the only command that uses the network.
 

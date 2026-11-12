@@ -44,7 +44,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Mermaid: a document's diagrams share 12 s of layout, charged at the slowest rate measured for what each one counts; a diagram that does not fit what is left shows as source.
 - Mermaid: each render gives its diagrams 10 s; a diagram still laying out then shows as source.
 - A pager resize lays no picture out again.
-- Pager pictures through tmux need true colour.
+- Pager pictures through tmux get collision-free ids with true colour; without it two pagers may share one.
 
 **Breaking** for library users:
 

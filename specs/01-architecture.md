@@ -56,8 +56,8 @@ src/
   text.rs          display_width, cut, wrap (at spaces), hard_wrap (where a line is full, for code and source), expand_tabs
   theme.rs         Theme, Palette, Appearance, SyntaxTheme, built-in presets, names, find
   update.rs        `mrk update`: the latest release tag and its commit from `git ls-remote --tags`, compared with the running version;
-                   `brew update` then `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
-                   else `cargo install --rev <commit> --target-dir <temporary folder>` under the cargo root holding the running mrk (`.crates.toml`)
+                   `brew update` (unless `HOMEBREW_NO_AUTO_UPDATE` is set) then `brew upgrade` (`brew reinstall` when forced) when brew installed mrk, checked against `brew list --versions`,
+                   else `cargo install --rev <commit> --force --locked --target-dir <temporary folder>` under the cargo root (`--root`) holding the running mrk (`.crates.toml`)
                    or cargo's default, checked writable first, the folder removed afterwards, also on SIGHUP, SIGINT, SIGQUIT or SIGTERM;
                    then the installed binary's `--version` and the `mrk` the PATH finds checked
   version.rs       the commit the binary was built from, `mrk --version`'s `0.2.0 (a1b2c3d)` label
@@ -146,7 +146,7 @@ src/
 - syntect's syntax and theme sets load lazily, once, on the first code block highlighted, one that names a language other than plain text (`text`, `txt`, `plain`, `plaintext`, `none`) (`std::sync::LazyLock`).
 - The mermaid engine loads lazily on the first diagram, the font database on the first diagram or title picture; fonts are the label families the SVG asks for, plus a short list of per-script fallbacks (CJK, Arabic, Hebrew, Devanagari, Thai) when a label goes beyond Latin; every font file in the font directories (`02-security.md` rule 3) loads only when those fallbacks miss a glyph.
   What a label needs is read off the text between the SVG's tags, never the diagram source, so a comment in another script loads nothing more.
-  Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 65 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.
+  Every font set ends on `mrk Sans`, an embedded Latin subset of DejaVu Sans (about 68 KiB of binary): usvg closes every font list with the generic `serif`, which points at it, so labels render on a system without fonts.
   Renamed, it never shadows a system family the SVG lists.
 - A diagram's parsed SVG, or its timeout, is kept by source and palette (`mermaid/cache.rs`, the last 2,400, as many as a document's budget lets through): a pager resize renders the document again, and a diagram is only parsed to count it, fitted and rasterised again, never laid out again (the showcase flowchart: 40 ms, then 12 ms); mermaid-text lays out for the width, so it runs again when the width changes, its text for the last width kept, unless it once ran out of time.
 - Terminal queries (kitty graphics support, the cell size, background colour) share one round trip ended by a DA1 request, with a 100 ms timeout, and only run when stdout is a tty, mrk is the terminal's foreground job (a background job would be stopped by `SIGTTOU`) and the answer is not already known from the environment.
