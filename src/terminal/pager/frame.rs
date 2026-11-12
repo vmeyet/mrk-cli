@@ -11,8 +11,8 @@ use crate::terminal::sixel::Image;
 use crate::terminal::{self, Capabilities, ColorDepth, Protocol, ansi, kitty, tmux};
 use crate::theme::Palette;
 
-const BEGIN_SYNCHRONIZED: &str = "\x1b[?2026h";
-const END_SYNCHRONIZED: &str = "\x1b[?2026l";
+pub(super) const BEGIN_SYNCHRONIZED: &str = "\x1b[?2026h";
+pub(super) const END_SYNCHRONIZED: &str = "\x1b[?2026l";
 const CLEAR_LINE: &str = "\x1b[2K";
 
 /// How the pager looks, besides what it shows.

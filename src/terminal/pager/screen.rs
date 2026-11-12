@@ -4,7 +4,7 @@ use std::panic::{self, PanicHookInfo};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 
-use super::frame::Pictures;
+use super::frame::{END_SYNCHRONIZED, Pictures};
 use super::page::Page;
 use rustix::termios::{OptionalActions, Termios, tcsetattr};
 
@@ -15,8 +15,6 @@ use crate::{mermaid, sanitize};
 
 /// Alternate screen, cursor hidden, and no line wrap so a line never spills onto the next row.
 const ENTER: &str = "\x1b[?1049h\x1b[?25l\x1b[?7l";
-/// The end of a frame a give-back cut short, so the terminal shows what follows.
-const END_SYNCHRONIZED: &str = "\x1b[?2026l";
 const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
 /// The modes the pager changes, saved first (XTSAVE) and restored on leaving (XTRESTORE).
 const SAVE_MODES: &str = "\x1b[?7s\x1b[?25s\x1b[?1007s";
@@ -30,7 +28,7 @@ const ALTERNATE_SCROLL: &str = "\x1b[?1007h";
 type Hook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send>;
 
 /// What takes the terminal's modes, and what gives them back: restored where the terminal can, else wrap and cursor
-/// set back on and alternate scroll left alone.
+/// set back on and alternate scroll left alone. Leaving first ends a frame the give-back cut short.
 fn modes(saves_modes: bool) -> (String, String) {
     if saves_modes {
         (format!("{SAVE_MODES}{ENTER}{ALTERNATE_SCROLL}"), format!("{END_SYNCHRONIZED}{RESTORE_MODES}{LEAVE_ALTERNATE_SCREEN}"))

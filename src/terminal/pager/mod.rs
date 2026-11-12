@@ -107,9 +107,9 @@ impl<R: Fn(u16) -> Rendered> Reader<'_, R> {
 
     /// `fitted`, with the pictures of a new render stored before any frame shows them.
     fn resized(&self, canvas: &mut impl Canvas, view: View, size: (u16, u16)) -> io::Result<View> {
-        let width = view.columns;
+        let renders = size.0 != view.columns;
         let view = self.fitted(view, size);
-        if view.columns != width {
+        if renders {
             canvas.store(&view.pictures, &view.pager.page)?;
         }
         Ok(view)
@@ -178,13 +178,13 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    use super::frame::BEGIN_SYNCHRONIZED;
     use super::*;
     use crate::document::{Block, CellSize, Line, Picture, Span};
     use crate::terminal::{ColorDepth, Graphics, Protocol};
     use crate::theme::MRK_DARK;
 
     const FIRST_SIZE: (u16, u16) = (40, 10);
-    const BEGIN_SYNCHRONIZED: &str = "\x1b[?2026h";
 
     const TEXT_ONLY: Capabilities = Capabilities {
         color: ColorDepth::TrueColor,
@@ -239,8 +239,12 @@ mod tests {
         }
     }
 
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> Scripted {
+        Scripted::Event(Event::Key(KeyEvent::new(code, modifiers)))
+    }
+
     fn press(character: char) -> Scripted {
-        Scripted::Event(Event::Key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE)))
+        key(KeyCode::Char(character), KeyModifiers::NONE)
     }
 
     fn resize(columns: u16, rows: u16) -> Scripted {
@@ -299,8 +303,8 @@ mod tests {
 
     #[test]
     fn keys_after_a_late_reply_opened_are_dropped_until_a_pause_gives_them_back() {
-        let reply = || Scripted::Event(Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT)));
-        let escape = Scripted::Event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        let reply = || key(KeyCode::Char(']'), KeyModifiers::ALT);
+        let escape = key(KeyCode::Esc, KeyModifiers::NONE);
 
         let (dropped, _) = paged(&TEXT_ONLY, FIRST_SIZE, vec![reply(), press('j'), escape]);
         let (kept, _) = paged(&TEXT_ONLY, FIRST_SIZE, vec![reply(), Scripted::Pause, press('j'), press('q')]);

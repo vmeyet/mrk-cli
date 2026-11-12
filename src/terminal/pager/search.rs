@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::ops::Range;
 
 use super::page::Row;
@@ -30,11 +31,16 @@ fn folded(text: &str) -> Vec<char> {
 /// into two spans, which the terminal draws as two.
 fn line_matches(row: usize, line: &Line, query: &[char]) -> Vec<Match> {
     let plain = line.plain();
-    let (text, bounds) = (folded(&plain), text::grapheme_bounds(&plain));
+    let text = folded(&plain);
+    let bounds = OnceCell::new();
+    let is_whole = |start: usize, end: usize| {
+        let bounds = bounds.get_or_init(|| text::grapheme_bounds(&plain));
+        bounds[start] && bounds[end]
+    };
     let mut matches = Vec::new();
     let mut start = 0;
     while start + query.len() <= text.len() {
-        if text[start..start + query.len()] == *query && bounds[start] && bounds[start + query.len()] {
+        if text[start..start + query.len()] == *query && is_whole(start, start + query.len()) {
             matches.push(Match { row, start, end: start + query.len() });
             start += query.len();
         } else {

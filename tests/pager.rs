@@ -44,15 +44,13 @@ fn launcher() {
     setsid().unwrap();
     let tty = open(pty);
     ioctl_tiocsctty(&tty).unwrap();
-    let mut mrk = if env::var_os(BACKGROUND).is_some() {
-        let mut job = Command::new("sh");
-        job.args(["-c", "trap '' TTOU TTIN; exec \"$0\" -p \"$1\"", env!("CARGO_BIN_EXE_mrk"), DOCUMENT]).process_group(0);
-        job
+    let is_background = env::var_os(BACKGROUND).is_some();
+    let mut mrk = if is_background { Command::new("sh") } else { Command::new(env!("CARGO_BIN_EXE_mrk")) };
+    if is_background {
+        mrk.args(["-c", "trap '' TTOU TTIN; exec \"$0\" -p \"$1\"", env!("CARGO_BIN_EXE_mrk"), DOCUMENT]).process_group(0);
     } else {
-        let mut job = Command::new(env!("CARGO_BIN_EXE_mrk"));
-        job.args(["-p", DOCUMENT]);
-        job
-    };
+        mrk.args(["-p", DOCUMENT]);
+    }
     let mut mrk = mrk
         .env_remove(PTY)
         .env_remove(BACKGROUND)
@@ -88,26 +86,25 @@ struct Pager {
 
 impl Pager {
     fn start() -> Self {
-        Self::start_with(&[])
+        Self::launch(false)
     }
 
     fn start_in_the_background() -> Self {
-        Self::start_with(&[(BACKGROUND, "1")])
+        Self::launch(true)
     }
 
-    fn start_with(variables: &[(&str, &str)]) -> Self {
+    fn launch(is_background: bool) -> Self {
         let pty = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
         grantpt(&pty).unwrap();
         unlockpt(&pty).unwrap();
         let path = ptsname(&pty, Vec::new()).unwrap();
         tcsetwinsize(open(path.as_c_str()), Winsize { ws_row: 24, ws_col: 80, ws_xpixel: 800, ws_ypixel: 480 }).unwrap();
-        let mut launcher = Command::new(env::current_exe().unwrap())
-            .args(["--exact", "launcher", "--nocapture", "--test-threads=1"])
-            .env(PTY, path.to_str().unwrap())
-            .envs(variables.iter().copied())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut launcher = Command::new(env::current_exe().unwrap());
+        launcher.args(["--exact", "launcher", "--nocapture", "--test-threads=1"]).env(PTY, path.to_str().unwrap());
+        if is_background {
+            launcher.env(BACKGROUND, "1");
+        }
+        let mut launcher = launcher.stdout(Stdio::piped()).spawn().unwrap();
         let mut reports = BufReader::new(launcher.stdout.take().unwrap());
         let pid = Pid::from_raw(report(&mut reports).strip_prefix("pid ").unwrap().parse().unwrap()).unwrap();
         let mut terminal = File::from(pty);
