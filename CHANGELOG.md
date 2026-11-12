@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `terminal::ColorChoice`, `ImagesMode` and `Align` no longer implement clap's `ValueEnum` nor serde's `Deserialize`.
 - `Settings`, `Style`, `Span`, `Picture`, `JumboTitle`, `Theme`, `Palette`, `SyntaxTheme`, `terminal::Capabilities`, `Graphics`, `Protocol`, `ColorDepth` and `Preferences` are `#[non_exhaustive]`: build `Settings` and `Preferences` from `Default`, then set their fields.
 
+### Fixed
+
+- `nohup mrk update &` keeps building when the terminal closes: `SIGHUP` is left alone when neither stdout nor stderr is a terminal.
+
 ## [0.8.0] - 2026-10-16
 
 ### Added

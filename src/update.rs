@@ -191,7 +191,7 @@ fn install_with_cargo(release: &Release) -> Result<()> {
     println!("→ installing mrk {} from {REPO}…", release.label());
     let root = install_root().context("finding where to install mrk")?;
     check_writable(&root)?;
-    let held = Held::hold(&signals::ENDING_SIGNALS).context("holding the ending signals during the build")?;
+    let held = Held::hold(signals::ending_not_ignored()).context("holding the ending signals during the build")?;
     let build = tempfile::Builder::new().prefix("mrk-update-").tempdir().context("creating a build folder")?;
     let mut cargo = Command::new("cargo");
     cargo
