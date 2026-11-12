@@ -97,7 +97,10 @@ fn written_lines(section: &Section, settings: &Settings) -> Vec<String> {
     for (line, wrapped) in lines.iter().zip(wrapped) {
         let text = written(line, keeps_spacing(&section.kind, line, surface));
         match joined.last_mut() {
-            Some(previous) if wrapped => *previous = format!("{previous} {text}"),
+            Some(previous) if wrapped => {
+                previous.push(' ');
+                previous.push_str(&text);
+            }
             _ => joined.push(text),
         }
     }
@@ -421,6 +424,16 @@ mod tests {
                 assert!(key.lines.iter().any(|line| line.ends_with(text)), "{container:?} at {width}: {:?}", key.lines);
             }
         }
+    }
+
+    #[test]
+    fn a_paragraph_wrapped_over_many_rows_is_compared_as_its_whole_text() {
+        let text = (0..2_000).map(|index| format!("w{index}")).collect::<Vec<_>>().join(" ");
+        let settings = Settings { width: 20, ..test_settings() };
+
+        let sections = render_sections(&text, &settings);
+
+        assert_eq!(Key::of(&sections[0], &settings).lines, [text]);
     }
 
     #[test]
