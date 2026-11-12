@@ -3,14 +3,14 @@ mod highlight;
 mod language;
 mod panel;
 
-pub(crate) use self::budget::{Allowance, highlighted_len};
+pub(crate) use self::budget::{Allowance, Highlighting, highlighting};
 use crate::document::{Line, MIN_WIDTH, Settings};
 
 /// A fenced code block as a panel: every line exactly `settings.width` cells, at least `MIN_WIDTH`, highlighted
 /// when the language is known, within the bounds of `budget.rs`. `language` is a language name (`rust`, `ts`), not a
 /// whole fence info string.
 pub fn render(code: &str, language: Option<&str>, settings: &Settings) -> Vec<Line> {
-    let alone = Allowance::new([(0, highlighted_len(code, language))]);
+    let alone = Allowance::new([(0, highlighting(code, language))]);
     render_in_document(code, language, 0, &alone, settings)
 }
 
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn highlighting_stops_at_the_first_line_too_long_to_highlight() {
-        let code = format!("let a = 1;\nlet b = \"{}\";\nlet c = 2;\n", "x".repeat(600));
+        let code = format!("let a = 1;\nlet b = \"{}\";\nlet c = 2;\n", "x".repeat(16 * 1024));
         let (rust, text) = (render(&code, Some("rust"), &at_width(40)), render(&code, Some("text"), &at_width(40)));
 
         assert_ne!(rust[1], text[1]);
@@ -57,8 +57,8 @@ mod tests {
         let (rust, text) = (render(RUST, Some("rust"), &settings), render(RUST, Some("text"), &settings));
         let in_document = |allowance: &Allowance| render_in_document(RUST, Some("rust"), 1, allowance, &settings);
 
-        assert_eq!(in_document(&Allowance::new([(1, RUST.len())])), rust);
-        assert_eq!(in_document(&Allowance::new([(2, RUST.len())]))[1..], text[1..]);
+        assert_eq!(in_document(&Allowance::new([(1, highlighting(RUST, Some("rust")))])), rust);
+        assert_eq!(in_document(&Allowance::new([(2, highlighting(RUST, Some("rust")))]))[1..], text[1..]);
     }
 
     #[test]

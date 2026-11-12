@@ -37,11 +37,11 @@ fn start_line<'a>(node: &'a AstNode<'a>) -> usize {
 }
 
 /// Every code block under `root` but Mermaid's, in reading order: its key and what highlighting it costs.
-pub(super) fn highlighted<'a>(root: &'a AstNode<'a>) -> impl Iterator<Item = (usize, usize)> + 'a {
+pub(super) fn highlighted<'a>(root: &'a AstNode<'a>) -> impl Iterator<Item = (usize, crate::code::Highlighting)> + 'a {
     root.descendants().filter_map(|node| match &node.data().value {
         NodeValue::CodeBlock(block) => match language(block).as_deref() {
             Some(MERMAID) => None,
-            language => Some((start_line(node), crate::code::highlighted_len(&block.literal, language))),
+            language => Some((start_line(node), crate::code::highlighting(&block.literal, language))),
         },
         _ => None,
     })
@@ -67,6 +67,7 @@ mod tests {
     use comrak::nodes::NodeCodeBlock;
     use comrak::{Arena, parse_document};
 
+    use crate::code::{Highlighting, highlighting};
     use crate::markdown::plain_at;
 
     fn language(info: &str) -> Option<String> {
@@ -79,7 +80,9 @@ mod tests {
         let arena = Arena::new();
         let root = parse_document(&arena, source, &crate::markdown::options());
 
-        assert_eq!(super::highlighted(root).collect::<Vec<_>>(), [(1, 2), (7, 3), (15, 0)]);
+        let expected = [(1, highlighting("a\n", Some("rust"))), (7, highlighting("bc\n", Some("js"))), (15, Highlighting::default())];
+
+        assert_eq!(super::highlighted(root).collect::<Vec<_>>(), expected);
     }
 
     #[test]
