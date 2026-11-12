@@ -43,20 +43,12 @@ mod tty {
     use std::io::{self, Read, Write};
     use std::time::{Duration, Instant};
 
-    use rustix::process::getpgrp;
-    use rustix::termios::tcgetpgrp;
-
     use super::reply::{self, Replies};
     use crate::terminal::tty::{self, RawMode};
 
     const MAX_REPLY_BYTES: usize = 4096;
     const READ_BYTES: usize = 256;
     const IDLE_WAIT: Duration = Duration::from_millis(2);
-
-    /// A background job that changes the terminal's modes is stopped by `SIGTTOU`.
-    fn is_foreground(tty: &File) -> bool {
-        tcgetpgrp(tty).is_ok_and(|group| group == getpgrp())
-    }
 
     fn read_available(mut source: impl Read, limit: usize) -> io::Result<Vec<u8>> {
         let mut buffer = [0; READ_BYTES];
@@ -89,7 +81,7 @@ mod tty {
         let deadline = Instant::now() + timeout;
         // Non-blocking reads rather than `poll`, which macOS refuses on `/dev/tty`.
         let tty = tty::open_nonblocking()?;
-        if !is_foreground(&tty) {
+        if !tty::is_foreground(&tty) {
             return Ok(Vec::new());
         }
         let _raw = RawMode::enable(&tty)?;

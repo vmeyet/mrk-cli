@@ -4,7 +4,7 @@
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -17,6 +17,9 @@ use rustix::termios::{LocalModes, Winsize, tcgetattr, tcsetwinsize};
 
 /// Names the pty the test binary, run again as `launcher`, takes as its controlling terminal before it runs mrk.
 const PTY: &str = "MRK_TEST_PTY";
+/// Set, the launcher runs mrk as a background job of its own that ignores `SIGTTOU` and `SIGTTIN`, as
+/// `trap '' TTOU TTIN; mrk -p … &` in a shell would.
+const BACKGROUND: &str = "MRK_TEST_BACKGROUND";
 /// Marks the lines the launcher reports on, among the test runner's.
 const REPORT: &str = "launcher: ";
 const DOCUMENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/showcase.md");
@@ -41,9 +44,16 @@ fn launcher() {
     setsid().unwrap();
     let tty = open(pty);
     ioctl_tiocsctty(&tty).unwrap();
-    let mut mrk = Command::new(env!("CARGO_BIN_EXE_mrk"))
-        .args(["-p", DOCUMENT])
+    let is_background = env::var_os(BACKGROUND).is_some();
+    let mut mrk = if is_background { Command::new("sh") } else { Command::new(env!("CARGO_BIN_EXE_mrk")) };
+    if is_background {
+        mrk.args(["-c", "trap '' TTOU TTIN; exec \"$0\" -p \"$1\"", env!("CARGO_BIN_EXE_mrk"), DOCUMENT]).process_group(0);
+    } else {
+        mrk.args(["-p", DOCUMENT]);
+    }
+    let mut mrk = mrk
         .env_remove(PTY)
+        .env_remove(BACKGROUND)
         .env_remove("TMUX")
         .env_remove("XTERM_VERSION")
         .env("TERM", "xterm-256color")
@@ -76,17 +86,25 @@ struct Pager {
 
 impl Pager {
     fn start() -> Self {
+        Self::launch(false)
+    }
+
+    fn start_in_the_background() -> Self {
+        Self::launch(true)
+    }
+
+    fn launch(is_background: bool) -> Self {
         let pty = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
         grantpt(&pty).unwrap();
         unlockpt(&pty).unwrap();
         let path = ptsname(&pty, Vec::new()).unwrap();
         tcsetwinsize(open(path.as_c_str()), Winsize { ws_row: 24, ws_col: 80, ws_xpixel: 800, ws_ypixel: 480 }).unwrap();
-        let mut launcher = Command::new(env::current_exe().unwrap())
-            .args(["--exact", "launcher", "--nocapture", "--test-threads=1"])
-            .env(PTY, path.to_str().unwrap())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut launcher = Command::new(env::current_exe().unwrap());
+        launcher.args(["--exact", "launcher", "--nocapture", "--test-threads=1"]).env(PTY, path.to_str().unwrap());
+        if is_background {
+            launcher.env(BACKGROUND, "1");
+        }
+        let mut launcher = launcher.stdout(Stdio::piped()).spawn().unwrap();
         let mut reports = BufReader::new(launcher.stdout.take().unwrap());
         let pid = Pid::from_raw(report(&mut reports).strip_prefix("pid ").unwrap().parse().unwrap()).unwrap();
         let mut terminal = File::from(pty);
@@ -200,4 +218,13 @@ fn quitting_gives_the_terminal_back() {
 
     assert!(pager.wrote_after(FRAME_END, ALTERNATE_SCREEN_LEFT));
     assert_eq!(pager.ending(), "code 0, cooked true");
+}
+
+#[test]
+fn a_background_job_leaves_the_terminal_alone() {
+    let mut pager = Pager::start_in_the_background();
+
+    assert_eq!(pager.ending(), "code 1, cooked true");
+    let written = pager.written.lock().unwrap();
+    assert!(position(&written, b"\x1b[?1049h").is_none(), "{:?}", String::from_utf8_lossy(&written));
 }

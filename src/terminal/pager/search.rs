@@ -1,7 +1,9 @@
+use std::cell::OnceCell;
 use std::ops::Range;
 
 use super::page::Row;
 use crate::document::{self, Line, Style};
+use crate::text;
 use crate::theme::Palette;
 
 /// A match of the query in one row, in characters of `Line::plain`.
@@ -25,12 +27,20 @@ fn folded(text: &str) -> Vec<char> {
     text.chars().map(|character| character.to_lowercase().next().unwrap_or(character)).collect()
 }
 
+/// The matches in the line, but for one that starts or ends inside a grapheme: painting it would split the grapheme
+/// into two spans, which the terminal draws as two.
 fn line_matches(row: usize, line: &Line, query: &[char]) -> Vec<Match> {
-    let text = folded(&line.plain());
+    let plain = line.plain();
+    let text = folded(&plain);
+    let bounds = OnceCell::new();
+    let is_whole = |start: usize, end: usize| {
+        let bounds = bounds.get_or_init(|| text::grapheme_bounds(&plain));
+        bounds[start] && bounds[end]
+    };
     let mut matches = Vec::new();
     let mut start = 0;
     while start + query.len() <= text.len() {
-        if text[start..start + query.len()] == *query {
+        if text[start..start + query.len()] == *query && is_whole(start, start + query.len()) {
             matches.push(Match { row, start, end: start + query.len() });
             start += query.len();
         } else {
@@ -164,6 +174,13 @@ mod tests {
     #[test]
     fn indices_count_characters_not_bytes() {
         assert_eq!(find(&rows(&["été Été"]), "été"), [Match { row: 0, start: 0, end: 3 }, Match { row: 0, start: 4, end: 7 }]);
+    }
+
+    #[test]
+    fn a_match_that_would_split_a_grapheme_is_skipped() {
+        assert_eq!(find(&rows(&["👩\u{200d}👧 👩"]), "👩"), [Match { row: 0, start: 4, end: 5 }]);
+        assert_eq!(find(&rows(&["e\u{301}e"]), "e"), [Match { row: 0, start: 2, end: 3 }]);
+        assert_eq!(find(&rows(&["e\u{301}e"]), "e\u{301}"), [Match { row: 0, start: 0, end: 2 }]);
     }
 
     #[test]

@@ -75,6 +75,14 @@ fn printed_graphemes(text: &str) -> Box<dyn Iterator<Item = (usize, usize)> + '_
     Box::new(graphemes.into_iter())
 }
 
+/// For each character offset of `text`, its end included, whether it falls between two graphemes, where a span may be
+/// split without changing what the terminal draws.
+#[cfg(feature = "cli")]
+pub fn grapheme_bounds(text: &str) -> Vec<bool> {
+    let inside = |grapheme: &str| std::iter::once(true).chain(std::iter::repeat_n(false, grapheme.chars().count() - 1));
+    text.graphemes(true).flat_map(inside).chain(std::iter::once(true)).collect()
+}
+
 /// The longest start of `text` that fits in `width` cells, and the rest; a grapheme is never split, nor are two that
 /// merge once `sanitize` removes what stands between them. `text` holds no tab: `expand_tabs` first.
 pub fn cut(text: &str, width: usize) -> (&str, &str) {
@@ -581,6 +589,14 @@ mod tests {
         assert_eq!(cut("e\u{301}xyz", 2), ("e\u{301}x", "yz"));
         assert_eq!(cut("漢字", 1), ("", "漢字"));
         assert_eq!(cut("abc", 10), ("abc", ""));
+    }
+
+    #[test]
+    #[cfg(feature = "cli")]
+    fn grapheme_bounds_mark_the_offsets_between_graphemes_and_the_end() {
+        assert_eq!(grapheme_bounds("e\u{301}x"), [true, false, true, true]);
+        assert_eq!(grapheme_bounds("👩\u{200d}👧"), [true, false, false, true]);
+        assert_eq!(grapheme_bounds(""), [true]);
     }
 
     #[test]

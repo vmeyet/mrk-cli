@@ -8,11 +8,11 @@ use super::status;
 use crate::document::Line;
 use crate::terminal::kitty::Placement;
 use crate::terminal::sixel::Image;
-use crate::terminal::{Capabilities, ColorDepth, Protocol, ansi, kitty, tmux};
+use crate::terminal::{self, Capabilities, ColorDepth, Protocol, ansi, kitty, tmux};
 use crate::theme::Palette;
 
-const BEGIN_SYNCHRONIZED: &str = "\x1b[?2026h";
-const END_SYNCHRONIZED: &str = "\x1b[?2026l";
+pub(super) const BEGIN_SYNCHRONIZED: &str = "\x1b[?2026h";
+pub(super) const END_SYNCHRONIZED: &str = "\x1b[?2026l";
 const CLEAR_LINE: &str = "\x1b[2K";
 
 /// How the pager looks, besides what it shows.
@@ -145,7 +145,9 @@ fn drawn_line(line: &Line, look: &Look) -> String {
 fn picture_row(pager: &Pager, picture: usize, row: usize, look: &Look, pictures: &Pictures) -> String {
     let Some(placed) = pager.page.pictures.get(picture) else { return String::new() };
     let concealed = if row == placed.row { ansi::concealed(&placed.picture) } else { String::new() };
-    drawn_line(&placed.picture.indent, look) + &concealed + &pictures.cells(picture, placed, row - placed.row)
+    terminal::picture_indent(&placed.picture, look.capabilities, look.margin)
+        + &concealed
+        + &pictures.cells(picture, placed, row - placed.row)
 }
 
 fn row_text(pager: &Pager, index: usize, look: &Look, pictures: &Pictures) -> String {
@@ -318,6 +320,22 @@ mod tests {
 
         assert_eq!(frame.matches("│ ").count(), 2, "{frame:?}");
         assert!(frame.contains("\x1b[1;5H\x1b_Ga=p,"), "{frame:?}");
+    }
+
+    #[test]
+    fn through_tmux_the_placeholder_cells_of_a_picture_with_no_indent_start_at_the_margin() {
+        let frame = drawn(&sample(), Some(Protocol::KittyThroughTmux));
+
+        assert!(frame.contains(&format!("\x1b[1;1H\x1b[2K  {}", kitty::placeholder_row(ID, 1, 20).unwrap_or_default())), "{frame:?}");
+    }
+
+    #[test]
+    fn a_title_picture_with_no_indent_has_its_concealed_text_at_the_margin_where_it_is_placed() {
+        let title = Picture { concealed_text: Some("Title".to_owned()), ..sample().page.pictures[0].picture.clone() };
+        let frame = drawn(&Pager::new(flatten(Document { blocks: vec![Block::Picture(title)] }), 3), Some(Protocol::Kitty));
+
+        assert!(frame.contains("\x1b[1;1H\x1b[2K  \x1b[8mTitle\x1b[28m"), "{frame:?}");
+        assert!(frame.contains("\x1b[1;3H\x1b_Ga=p,"), "{frame:?}");
     }
 
     #[test]

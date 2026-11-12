@@ -4,7 +4,7 @@ use std::panic::{self, PanicHookInfo};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 
-use super::frame::Pictures;
+use super::frame::{END_SYNCHRONIZED, Pictures};
 use super::page::Page;
 use rustix::termios::{OptionalActions, Termios, tcsetattr};
 
@@ -15,20 +15,25 @@ use crate::{mermaid, sanitize};
 
 /// Alternate screen, cursor hidden, and no line wrap so a line never spills onto the next row.
 const ENTER: &str = "\x1b[?1049h\x1b[?25l\x1b[?7l";
-const LEAVE: &str = "\x1b[?2026l\x1b[?7h\x1b[?25h\x1b[?1049l";
+const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
+/// The modes the pager changes, saved first (XTSAVE) and restored on leaving (XTRESTORE).
+const SAVE_MODES: &str = "\x1b[?7s\x1b[?25s\x1b[?1007s";
+const RESTORE_MODES: &str = "\x1b[?7r\x1b[?25r\x1b[?1007r";
+/// Line wrap and the cursor on, as every terminal starts, where they cannot be restored.
+const WRAP_AND_CURSOR_ON: &str = "\x1b[?7h\x1b[?25h";
 /// The wheel sent as arrow keys (alternate scroll), so it scrolls without capturing the mouse, which would break text
-/// selection; saved first (XTSAVE), so leaving restores it (XTRESTORE).
-const SAVE_ALTERNATE_SCROLL: &str = "\x1b[?1007s\x1b[?1007h";
-const RESTORE_ALTERNATE_SCROLL: &str = "\x1b[?1007r";
+/// selection; only where it can be restored.
+const ALTERNATE_SCROLL: &str = "\x1b[?1007h";
 
 type Hook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send>;
 
-/// What takes the terminal's modes, and what gives them back: alternate scroll only where the terminal restores it.
+/// What takes the terminal's modes, and what gives them back: restored where the terminal can, else wrap and cursor
+/// set back on and alternate scroll left alone. Leaving first ends a frame the give-back cut short.
 fn modes(saves_modes: bool) -> (String, String) {
     if saves_modes {
-        (format!("{ENTER}{SAVE_ALTERNATE_SCROLL}"), format!("{RESTORE_ALTERNATE_SCROLL}{LEAVE}"))
+        (format!("{SAVE_MODES}{ENTER}{ALTERNATE_SCROLL}"), format!("{END_SYNCHRONIZED}{RESTORE_MODES}{LEAVE_ALTERNATE_SCREEN}"))
     } else {
-        (ENTER.to_owned(), LEAVE.to_owned())
+        (ENTER.to_owned(), format!("{END_SYNCHRONIZED}{WRAP_AND_CURSOR_ON}{LEAVE_ALTERNATE_SCREEN}"))
     }
 }
 
@@ -46,9 +51,13 @@ struct Taken {
 }
 
 impl Taken {
-    /// The terminal taken, and how to force it back.
+    /// The terminal taken, and how to force it back; refused, with nothing changed, to a background job.
     fn enter() -> io::Result<(Self, Forced)> {
-        let raw = RawMode::enable(tty::open()?)?;
+        let tty = tty::open()?;
+        if !tty::is_foreground(&tty) {
+            return Err(io::Error::other("not the terminal's foreground job"));
+        }
+        let raw = RawMode::enable(tty)?;
         let (enter, leave) = modes(environment::saves_modes(&Environment::read()));
         let forced = Forced { tty: tty::open_nonblocking()?, saved: raw.saved().clone(), leave: format!("{STRING_END}{leave}") };
         let mut out = io::stdout();
@@ -157,20 +166,41 @@ impl Screen {
         Ok(Self { previous_hook: Some(hold_panics(&held)), held })
     }
 
-    /// Sends the page's pictures once, after freeing the ones stored for the page before.
-    pub fn store(&self, pictures: &Pictures, page: &Page) -> io::Result<()> {
+    /// `write` on the terminal as the pager holds it, holding `taken`; `given_back` once the terminal was given back.
+    fn on_terminal<T>(&self, given_back: T, write: impl FnOnce(&mut Taken) -> io::Result<T>) -> io::Result<T> {
+        lock(&self.held.taken).as_mut().map_or(Ok(given_back), write)
+    }
+}
+
+/// Where the pager draws: frames written to it, and the page's pictures stored once per render.
+pub trait Canvas: Write {
+    /// Sends the page's pictures once, after freeing the ones stored for the page before, and keeps what frees them for
+    /// the give-back.
+    fn store(&mut self, pictures: &Pictures, page: &Page) -> io::Result<()>;
+}
+
+impl Canvas for Screen {
+    fn store(&mut self, pictures: &Pictures, page: &Page) -> io::Result<()> {
         let (free, stored) = (pictures.free(page), pictures.store(page));
-        let mut taken = lock(&self.held.taken);
-        let Some(taken) = taken.as_mut() else { return Ok(()) };
-        let previous = std::mem::replace(&mut taken.free, free);
-        taken.out.write_all((previous + &stored).as_bytes())
+        self.on_terminal((), |taken| {
+            let previous = std::mem::replace(&mut taken.free, free);
+            taken.out.write_all((previous + &stored).as_bytes())
+        })
+    }
+}
+
+/// `write_all` holds `taken` once, so a frame is never cut by the give-back.
+impl Write for Screen {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.on_terminal(bytes.len(), |taken| taken.out.write(bytes))
     }
 
-    pub fn show(&self, frame: &str) -> io::Result<()> {
-        let mut taken = lock(&self.held.taken);
-        let Some(taken) = taken.as_mut() else { return Ok(()) };
-        taken.out.write_all(frame.as_bytes())?;
-        taken.out.flush()
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.on_terminal((), |taken| taken.out.write_all(bytes))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.on_terminal((), |taken| taken.out.flush())
     }
 }
 
@@ -189,10 +219,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn alternate_scroll_is_saved_and_restored_only_where_the_terminal_restores_modes() {
-        assert_eq!(modes(true), (format!("{ENTER}\x1b[?1007s\x1b[?1007h"), format!("\x1b[?1007r{LEAVE}")));
-        assert_eq!(modes(false), (ENTER.to_owned(), LEAVE.to_owned()));
-        assert!(!modes(false).1.contains("1007"));
+    fn where_the_terminal_restores_modes_wrap_cursor_and_alternate_scroll_are_saved_then_restored_never_forced() {
+        assert_eq!(
+            modes(true),
+            (
+                "\x1b[?7s\x1b[?25s\x1b[?1007s\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1007h".to_owned(),
+                "\x1b[?2026l\x1b[?7r\x1b[?25r\x1b[?1007r\x1b[?1049l".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn elsewhere_wrap_and_cursor_are_set_back_on_and_alternate_scroll_left_alone() {
+        assert_eq!(modes(false), ("\x1b[?1049h\x1b[?25l\x1b[?7l".to_owned(), "\x1b[?2026l\x1b[?7h\x1b[?25h\x1b[?1049l".to_owned()));
     }
 
     #[test]

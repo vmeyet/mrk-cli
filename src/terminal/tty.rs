@@ -3,7 +3,8 @@ use std::io;
 use std::os::fd::AsFd;
 
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
-use rustix::termios::{OptionalActions, Termios, tcgetattr, tcsetattr};
+use rustix::process::getpgrp;
+use rustix::termios::{OptionalActions, Termios, tcgetattr, tcgetpgrp, tcsetattr};
 
 /// The terminal mrk runs in, whatever its standard streams are.
 pub fn open() -> io::Result<File> {
@@ -15,6 +16,12 @@ pub fn open_nonblocking() -> io::Result<File> {
     let tty = open()?;
     fcntl_setfl(&tty, fcntl_getfl(&tty)? | OFlags::NONBLOCK)?;
     Ok(tty)
+}
+
+/// Whether mrk is the tty's foreground job: a background job that changes the tty's modes is stopped by `SIGTTOU`, or
+/// changes them under the shell when it ignores the signal.
+pub fn is_foreground(tty: impl AsFd) -> bool {
+    tcgetpgrp(tty).is_ok_and(|group| group == getpgrp())
 }
 
 /// A tty in raw mode until dropped. Restoring with `TCSAFLUSH` discards the input left unread in the same step, so the
