@@ -144,7 +144,7 @@ impl Line {
 
     /// The text as the input wrote it, escape sequences included: for searching and comparing, never for printing.
     pub fn plain(&self) -> String {
-        self.spans.iter().map(|span| span.text.as_str()).collect()
+        crate::text::joined(&self.spans)
     }
 
     /// The text safe to write to a terminal: `plain` through [`sanitize::text`].
