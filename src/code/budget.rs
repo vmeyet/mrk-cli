@@ -9,10 +9,9 @@ const MAX_LINE_BYTES: usize = 512;
 const MAX_DOCUMENT_BYTES: usize = 256 * 1024;
 
 /// How much of the start of `code` is highlighted, what highlighting it costs: up to its first line over
-/// `MAX_LINE_BYTES`, nothing without a language or for a plain text one.
+/// `MAX_LINE_BYTES`, nothing when no syntax is found for its language.
 pub(crate) fn highlighted_len(code: &str, language: Option<&str>) -> usize {
-    let names_syntax = language.is_some_and(|language| !language::is_plain(language));
-    if !names_syntax {
+    if language.and_then(language::find).is_none() {
         return 0;
     }
     let lines = code.split_inclusive('\n');
@@ -53,8 +52,8 @@ mod tests {
     }
 
     #[test]
-    fn plain_code_is_not_highlighted() {
-        for language in [None, Some("text"), Some("TXT")] {
+    fn code_without_a_syntax_is_not_highlighted() {
+        for language in [None, Some("text"), Some("TXT"), Some("output"), Some("rsut")] {
             assert_eq!(highlighted_len("a\n", language), 0, "{language:?}");
         }
     }
