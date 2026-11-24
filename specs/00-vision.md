@@ -66,7 +66,7 @@ An unknown theme gets a "did you mean" only when the closest name is at most one
 | Front matter | its lines in `muted`, wrapped at spaces with their runs of spaces kept, each behind its indent (at most half the width), then a rule |
 | Pager status bar | last row on `surface`: file name in bold `text`, the search prompt or `3/12` in `accent`, `Top`/`Bot`/`42%` in `accent` and a `muted` key hint |
 | Search match | current match `surface` on `accent`, bold; other matches `text` on `subtle` |
-| Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off. In a list or quote the image keeps the indent and bar beside every row, and an item that opens on a diagram has its marker on a line of its own |
+| Mermaid | an image sized to the content width and scaled so diagram text matches the terminal font; box-drawing text when images are off. Labels show their words, as Mermaid does: HTML tags dropped, `<br>` a line break, a markdown string without its backticks and `*`/`_` markers, entities (`&amp;`, `#quot;`, `&#9829;`) decoded inside quotes. In a list or quote the image keeps the indent and bar beside every row, and an item that opens on a diagram has its marker on a line of its own |
 
 ## Vocabulary
 

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use mermaid_text::RenderOptions;
 use mermaid_text::detect::DiagramKind;
 use mermaid_text::parser;
@@ -5,8 +7,13 @@ use mermaid_text::parser;
 use super::DiagramError;
 use super::catch::caught;
 use crate::document::{Line, Rgb, Span, Style};
-use crate::text::{display_width, expand_tabs};
+use crate::text::{display_width, expand_tabs, rewritten};
 use crate::theme::Palette;
+
+const ESC: char = '\u{1b}';
+const BEL: char = '\u{7}';
+/// The string terminator, ESC then a backslash.
+const ST: &str = "\u{1b}\\";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Glyph {
@@ -44,9 +51,30 @@ pub fn lanes(source: &str) -> Option<usize> {
 fn draw(source: &str, width: usize) -> Result<String, DiagramError> {
     let options = RenderOptions { max_width: Some(width), max_width_strict: true, ..RenderOptions::default() };
     match mermaid_text::render_with_options(source, &options) {
-        Ok(drawing) => Ok(expand_tabs(&drawing, 0).into_owned()),
+        Ok(drawing) => Ok(expand_tabs(&without_escapes(&drawing), 0).into_owned()),
         Err(error) => Err(DiagramError::Invalid(error.to_string())),
     }
+}
+
+/// mermaid-text wraps a node a `click` line names in an OSC 8 hyperlink, colour off or not, and lays out its box
+/// without it: each sequence goes whole, as its width count skips it, where `sanitize` would leave all but the ESC
+/// on screen.
+fn without_escapes(drawing: &str) -> Cow<'_, str> {
+    rewritten(drawing, &[ESC], |escape| (Cow::Borrowed(""), escape_length(escape)))
+}
+
+/// The bytes of the sequence `text` opens on with its ESC: a CSI up to its final byte, an OSC up to its BEL or ST, to
+/// the end when unterminated; any other ESC alone.
+fn escape_length(text: &str) -> usize {
+    let opened = &text[ESC.len_utf8()..];
+    let body = if let Some(csi) = opened.strip_prefix('[') {
+        csi.find(|character| ('\u{40}'..='\u{7e}').contains(&character)).map_or(csi.len(), |end| end + 1)
+    } else if let Some(osc) = opened.strip_prefix(']') {
+        osc.find([BEL, ESC]).map_or(osc.len(), |end| end + 1 + usize::from(osc[end..].starts_with(ST)))
+    } else {
+        return ESC.len_utf8();
+    };
+    ESC.len_utf8() + 1 + body
 }
 
 fn glyph(character: char) -> Glyph {
@@ -135,5 +163,21 @@ mod tests {
     #[test]
     fn garbage_is_an_error() {
         assert!(matches!(render("not a diagram at all", 80, &MRK_DARK.palette), Err(DiagramError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_clicked_node_shows_its_label_alone_in_an_aligned_box() {
+        let lines = render("flowchart LR\n a --> b\n click a \"https://x\"", 80, &MRK_DARK.palette).unwrap();
+
+        let plain: Vec<String> = lines.iter().map(Line::plain).collect();
+        assert_eq!(plain, ["┌───┐     ┌───┐", "│ a │────▸│ b │", "└───┘     └───┘"]);
+    }
+
+    #[test]
+    fn every_escape_sequence_goes_whole() {
+        let drawing = "a\u{1b}]8;;https://x\u{1b}\\b\u{1b}]8;;\u{7}c\u{1b}[38;2;1;2;3md\u{1b}xe\u{1b}]8;;unterminated";
+
+        assert_eq!(without_escapes(drawing), "abcdxe");
+        assert_eq!(without_escapes("\u{1b}[31"), "");
     }
 }

@@ -3,6 +3,7 @@ mod cache;
 mod catch;
 mod frame;
 mod kind;
+mod label;
 mod source;
 mod svg;
 mod text;
@@ -134,17 +135,17 @@ fn as_text(source: &str, diagram: &Diagram, settings: &Settings) -> Result<Block
 }
 
 fn text_kept(source: &str, diagram: &Diagram, settings: &Settings) -> DrawnText {
-    let text = drawn_text(source, diagram, settings);
+    let text = drawn_text(diagram, settings);
     if is_worth_keeping(&text) {
         TEXTS.keep(source, &settings.theme.palette, (settings.width, text.clone()));
     }
     text
 }
 
-fn drawn_text(source: &str, diagram: &Diagram, settings: &Settings) -> DrawnText {
+fn drawn_text(diagram: &Diagram, settings: &Settings) -> DrawnText {
     diagram.admit_text()?;
-    let (owned, width, palette) = (source.to_owned(), settings.width, settings.theme.palette);
-    worker::run(settings.diagram_deadline, move || text::render(&owned, width, &palette)).map(Arc::new)
+    let (source, width, palette) = (diagram.source(), settings.width, settings.theme.palette);
+    worker::run(settings.diagram_deadline, move || text::render(&source, width, &palette)).map(Arc::new)
 }
 
 /// A diagram the deadline came before is not kept, so the next render, with a deadline of its own, lays it out.
@@ -195,6 +196,27 @@ mod tests {
 
         assert!(usize::from(picture.cols) <= with_cell().width);
         assert!(drawn.has_ink);
+    }
+
+    const HTML_LABELS: &str =
+        "flowchart TD\n A[\"<b>A. Storage</b>\"] --> B[\"<i>B</i> form<br/>two lines\"]\n A --> C[\"`**bold** md string`\"]\n";
+    const PLAIN_LABELS: &str = "flowchart TD\n A[\"A. Storage\"] --> B[\"B form<br>two lines\"]\n A --> C[\"bold md string\"]\n";
+
+    #[test]
+    fn html_and_markdown_labels_draw_as_their_words_in_text() {
+        let plain = lines(render(HTML_LABELS, &test_settings())).iter().map(Line::plain).collect::<Vec<_>>().join("\n");
+
+        insta::assert_snapshot!(plain);
+    }
+
+    #[test]
+    fn html_and_markdown_labels_draw_as_their_words_in_a_picture() {
+        assert_eq!(picture_of(HTML_LABELS).png, picture_of(PLAIN_LABELS).png);
+    }
+
+    #[test]
+    fn a_clicked_node_draws_the_same_picture() {
+        assert_eq!(picture_of("flowchart LR\n a --> b\n click a \"https://x\"").png, picture_of("flowchart LR\n a --> b").png);
     }
 
     #[test]
