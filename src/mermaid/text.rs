@@ -7,10 +7,13 @@ use mermaid_text::parser;
 use super::DiagramError;
 use super::catch::caught;
 use crate::document::{Line, Rgb, Span, Style};
-use crate::text::{display_width, expand_tabs};
+use crate::text::{display_width, expand_tabs, rewritten};
 use crate::theme::Palette;
 
 const ESC: char = '\u{1b}';
+const BEL: char = '\u{7}';
+/// The string terminator, ESC then a backslash.
+const ST: &str = "\u{1b}\\";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Glyph {
@@ -57,33 +60,21 @@ fn draw(source: &str, width: usize) -> Result<String, DiagramError> {
 /// without it: each sequence goes whole, as its width count skips it, where `sanitize` would leave all but the ESC
 /// on screen.
 fn without_escapes(drawing: &str) -> Cow<'_, str> {
-    if !drawing.contains(ESC) {
-        return Cow::Borrowed(drawing);
-    }
-    let mut kept = String::with_capacity(drawing.len());
-    let mut rest = drawing;
-    while let Some(at) = rest.find(ESC) {
-        kept.push_str(&rest[..at]);
-        rest = after_escape(&rest[at + ESC.len_utf8()..]);
-    }
-    kept.push_str(rest);
-    Cow::Owned(kept)
+    rewritten(drawing, &[ESC], |escape| (Cow::Borrowed(""), escape_length(escape)))
 }
 
-/// What follows the sequence an ESC opens: a CSI up to its final byte, an OSC up to its BEL or ST; anything else
-/// loses only the ESC.
-fn after_escape(text: &str) -> &str {
-    if let Some(csi) = text.strip_prefix('[') {
-        return csi.find(|character| ('\u{40}'..='\u{7e}').contains(&character)).map_or("", |end| &csi[end + 1..]);
-    }
-    if let Some(osc) = text.strip_prefix(']') {
-        return match osc.find(['\u{7}', ESC]) {
-            Some(end) if osc[end..].starts_with(ESC) => osc[end + 1..].strip_prefix('\\').unwrap_or(&osc[end + 1..]),
-            Some(end) => &osc[end + 1..],
-            None => "",
-        };
-    }
-    text
+/// The bytes of the sequence `text` opens on with its ESC: a CSI up to its final byte, an OSC up to its BEL or ST, to
+/// the end when unterminated; any other ESC alone.
+fn escape_length(text: &str) -> usize {
+    let opened = &text[ESC.len_utf8()..];
+    let body = if let Some(csi) = opened.strip_prefix('[') {
+        csi.find(|character| ('\u{40}'..='\u{7e}').contains(&character)).map_or(csi.len(), |end| end + 1)
+    } else if let Some(osc) = opened.strip_prefix(']') {
+        osc.find([BEL, ESC]).map_or(osc.len(), |end| end + 1 + usize::from(osc[end..].starts_with(ST)))
+    } else {
+        return ESC.len_utf8();
+    };
+    ESC.len_utf8() + 1 + body
 }
 
 fn glyph(character: char) -> Glyph {

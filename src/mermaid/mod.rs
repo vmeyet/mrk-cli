@@ -144,8 +144,8 @@ fn text_kept(source: &str, diagram: &Diagram, settings: &Settings) -> DrawnText 
 
 fn drawn_text(diagram: &Diagram, settings: &Settings) -> DrawnText {
     diagram.admit_text()?;
-    let (owned, width, palette) = (diagram.source().to_owned(), settings.width, settings.theme.palette);
-    worker::run(settings.diagram_deadline, move || text::render(&owned, width, &palette)).map(Arc::new)
+    let (source, width, palette) = (diagram.source(), settings.width, settings.theme.palette);
+    worker::run(settings.diagram_deadline, move || text::render(&source, width, &palette)).map(Arc::new)
 }
 
 /// A diagram the deadline came before is not kept, so the next render, with a deadline of its own, lays it out.

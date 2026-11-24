@@ -35,6 +35,24 @@ pub fn expand_tabs(text: &str, column: usize) -> Cow<'_, str> {
     Cow::Owned(expanded)
 }
 
+/// `text` with what `step` reads at each of the `starts` written as `step` says, with how many bytes it read, at least
+/// the start itself; borrowed when no `starts` is in it.
+pub fn rewritten<'a>(text: &'a str, starts: &[char], step: impl Fn(&'a str) -> (Cow<'a, str>, usize)) -> Cow<'a, str> {
+    if !text.contains(starts) {
+        return Cow::Borrowed(text);
+    }
+    let mut written = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(starts) {
+        written.push_str(&rest[..at]);
+        let (replacement, length) = step(&rest[at..]);
+        written.push_str(&replacement);
+        rest = &rest[at + length..];
+    }
+    written.push_str(rest);
+    Cow::Owned(written)
+}
+
 /// The cells `text` takes once sanitized, counted one grapheme at a time, its tabs expanded from the start of a line.
 pub fn display_width(text: &str) -> usize {
     if is_printable_ascii(text) {
@@ -589,6 +607,14 @@ mod tests {
         assert_eq!(expand_tabs("\tc", 2), "  c");
         assert_eq!(expand_tabs("a\nb\tc", 0), "a\nb   c");
         assert!(matches!(expand_tabs("no tab", 0), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn each_start_is_rewritten_as_its_step_says_and_the_rest_kept() {
+        let step = |text: &str| if text.starts_with("<x>") { (Cow::Borrowed("y"), 3) } else { (Cow::Borrowed("<"), 1) };
+
+        assert_eq!(rewritten("a<x>b<c<x>", &['<'], step), "ayb<cy");
+        assert!(matches!(rewritten("none", &['<'], step), Cow::Borrowed(_)));
     }
 
     #[test]

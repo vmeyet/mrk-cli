@@ -89,11 +89,11 @@ impl Load {
     }
 }
 
-/// A diagram parsed once, with what each engine's count says of it: layout time grows much faster than the source,
-/// which its 64 KiB cap alone does not bound.
+/// A diagram cleaned and parsed once, with what each engine's count says of it: layout time grows much faster than
+/// the source, which its 64 KiB cap alone does not bound.
 pub struct Diagram {
     /// The source with its labels cleaned, what both engines read.
-    source: String,
+    source: Arc<str>,
     /// mermaid-rs-renderer's graph and what it costs as a picture, or why the picture is refused.
     picture: Result<(Arc<Graph>, usize), DiagramError>,
     /// What it costs as mermaid-text's text, or why the text is refused.
@@ -102,9 +102,10 @@ pub struct Diagram {
 
 impl Diagram {
     /// Refuses, for both engines and before parsing, a block too large to read or whose subgraphs would overflow
-    /// mermaid-text's stack, both measured on the cleaned labels, since two labels may clean to one subgraph id.
+    /// mermaid-text's stack, the subgraphs read on the cleaned labels, since two labels may clean to one subgraph id.
     pub fn new(source: &str) -> Result<Self, DiagramError> {
-        let source = label::clean(source);
+        sized(source)?;
+        let source: Arc<str> = label::clean(source).into();
         readable(&source)?;
         let graph = parsed(&source);
         let text = text_cost(&source, graph.as_ref().ok());
@@ -112,8 +113,8 @@ impl Diagram {
         Ok(Self { source, picture, text })
     }
 
-    pub fn source(&self) -> &str {
-        &self.source
+    pub fn source(&self) -> Arc<str> {
+        Arc::clone(&self.source)
     }
 
     /// The graph to lay out as a picture, unless its count refuses one.
@@ -175,10 +176,11 @@ fn parsed(source: &str) -> Result<Graph, DiagramError> {
     Ok(parsed.graph)
 }
 
+fn sized(source: &str) -> Result<(), DiagramError> {
+    if source.len() > MAX_SOURCE_BYTES { Err(DiagramError::Oversized) } else { Ok(()) }
+}
+
 fn readable(source: &str) -> Result<(), DiagramError> {
-    if source.len() > MAX_SOURCE_BYTES {
-        return Err(DiagramError::Oversized);
-    }
     if !has_safe_subgraphs(source) {
         return Err(DiagramError::UnsafeSubgraphs);
     }
@@ -519,7 +521,7 @@ mod tests {
 
     #[test]
     fn oversized_source_is_refused_before_parsing() {
-        assert_eq!(readable(&"%%\n".repeat(MAX_SOURCE_BYTES)), Err(DiagramError::Oversized));
+        assert_eq!(sized(&"%%\n".repeat(MAX_SOURCE_BYTES)), Err(DiagramError::Oversized));
     }
 
     #[test]

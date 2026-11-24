@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use crate::text::rewritten;
+
 /// Lines whose `#123;` is a colour, never an entity, as Mermaid itself reads them.
 const STYLING: [&str; 4] = ["style ", "classDef ", "linkStyle ", "%%"];
 const ENTITIES: [(&str, char); 6] = [("amp", '&'), ("lt", '<'), ("gt", '>'), ("quot", '"'), ("apos", '\''), ("nbsp", '\u{a0}')];
@@ -19,7 +21,10 @@ fn cleaned_line(line: &str) -> Cow<'_, str> {
     if is_styling(line) {
         return Cow::Borrowed(line);
     }
-    Cow::Owned(with_strings_cleaned(&without_tags(line)).into_owned())
+    match without_tags(line) {
+        Cow::Borrowed(line) => with_strings_cleaned(line),
+        Cow::Owned(line) => Cow::Owned(with_strings_cleaned(&line).into_owned()),
+    }
 }
 
 fn is_styling(line: &str) -> bool {
@@ -27,35 +32,21 @@ fn is_styling(line: &str) -> bool {
     STYLING.iter().any(|keyword| line.starts_with(keyword))
 }
 
-struct Tag<'a> {
-    name: &'a str,
-}
-
-impl Tag<'_> {
-    fn shown(&self) -> &'static str {
-        if self.name.eq_ignore_ascii_case("br") { BREAK } else { "" }
-    }
-}
-
 fn without_tags(line: &str) -> Cow<'_, str> {
-    if !line.contains('<') {
-        return Cow::Borrowed(line);
-    }
-    let mut kept = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(at) = rest.find('<') {
-        kept.push_str(&rest[..at]);
-        let (shown, length) = tag_at(&rest[at..]).map_or_else(|| angles_at(&rest[at..]), |(tag, length)| (tag.shown(), length));
-        kept.push_str(shown);
-        rest = &rest[at + length..];
-    }
-    kept.push_str(rest);
-    Cow::Owned(kept)
+    rewritten(line, &['<'], |text| match tag_at(text) {
+        Some((name, length)) => (Cow::Borrowed(shown(name)), length),
+        None => angles_at(text),
+    })
 }
 
-/// `<name>`, `</name>`, `<name/>` or `<name attributes>` on one line; an attribute holding `<` is no tag, so each
-/// look ahead stops at the next candidate and the scan stays linear.
-fn tag_at(text: &str) -> Option<(Tag<'_>, usize)> {
+/// What a tag leaves in its label: a line break, or nothing.
+fn shown(name: &str) -> &'static str {
+    if name.eq_ignore_ascii_case("br") { BREAK } else { "" }
+}
+
+/// The name and length of the tag `text` opens on: `<name>`, `</name>`, `<name/>` or `<name attributes>` on one line;
+/// an attribute holding `<` is no tag, so each look ahead stops at the next candidate and the scan stays linear.
+fn tag_at(text: &str) -> Option<(&str, usize)> {
     let opened = text.strip_prefix('<')?;
     let named = opened.strip_prefix('/').unwrap_or(opened);
     let name = &named[..named.find(|character: char| !character.is_ascii_alphanumeric()).unwrap_or(named.len())];
@@ -64,31 +55,31 @@ fn tag_at(text: &str) -> Option<(Tag<'_>, usize)> {
         return None;
     }
     let end = opened.find(['<', '>', '\n']).filter(|&end| opened[end..].starts_with('>'))?;
-    Some((Tag { name }, end + 2))
+    Some((name, end + 2))
 }
 
 /// A run of `<` kept whole, so the `<interface>` of a class annotation `<<interface>>` is never read as a tag.
-fn angles_at(text: &str) -> (&str, usize) {
+fn angles_at(text: &str) -> (Cow<'_, str>, usize) {
     let length = text.len() - text.trim_start_matches('<').len();
-    (&text[..length], length)
+    (Cow::Borrowed(&text[..length]), length)
 }
 
+/// Every quoted string cleaned; a last quote that never closes is kept as written.
 fn with_strings_cleaned(line: &str) -> Cow<'_, str> {
     if !line.contains('"') {
         return Cow::Borrowed(line);
     }
     let parts: Vec<&str> = line.split('"').collect();
-    let is_unclosed = |index: usize| parts.len().is_multiple_of(2) && index == parts.len() - 1;
-    let cleaned = parts.iter().enumerate().map(|(index, part)| {
+    let (closed, unclosed) = if parts.len().is_multiple_of(2) { parts.split_at(parts.len() - 1) } else { (&parts[..], &[][..]) };
+    let strings = closed.iter().enumerate().map(|(index, part)| {
         if index.is_multiple_of(2) {
             Cow::Borrowed(*part)
-        } else if is_unclosed(index) {
-            Cow::Owned(format!("\"{part}"))
         } else {
-            Cow::Owned(string(part, parts[index - 1].ends_with('|') && parts[index + 1].starts_with('|')))
+            Cow::Owned(string(part, closed[index - 1].ends_with('|') && closed[index + 1].starts_with('|')))
         }
     });
-    Cow::Owned(cleaned.collect())
+    let tail = unclosed.iter().map(|part| Cow::Owned(format!("\"{part}")));
+    Cow::Owned(strings.chain(tail).collect())
 }
 
 /// A quoted string, its quotes dropped between the pipes of an edge label where the picture engine would keep them.
@@ -102,33 +93,26 @@ fn string(text: &str, is_edge_label: bool) -> String {
 fn without_markdown(text: &str) -> Cow<'_, str> {
     let Some(markdown) = text.strip_prefix('`').and_then(|text| text.strip_suffix('`')) else { return Cow::Borrowed(text) };
     let characters: Vec<char> = markdown.chars().collect();
-    Cow::Owned((0..characters.len()).filter(|&index| !is_emphasis(&characters, index)).map(|index| characters[index]).collect())
+    Cow::Owned(
+        characters.iter().enumerate().filter(|&(index, _)| !is_emphasis(&characters, index)).map(|(_, character)| character).collect(),
+    )
 }
 
 /// Every `*`, and a `_` unless it joins two parts of a word, as in `snake_case`.
 fn is_emphasis(characters: &[char], index: usize) -> bool {
-    let is_word = |at: Option<usize>| at.and_then(|at| characters.get(at)).is_some_and(|character| character.is_alphanumeric());
+    let is_word = |character: Option<&char>| character.is_some_and(|character| character.is_alphanumeric());
     match characters[index] {
         '*' => true,
-        '_' => !(is_word(index.checked_sub(1)) && is_word(Some(index + 1))),
+        '_' => !(is_word(index.checked_sub(1).and_then(|before| characters.get(before))) && is_word(characters.get(index + 1))),
         _ => false,
     }
 }
 
 fn decoded(text: &str) -> Cow<'_, str> {
-    if !text.contains(['&', '#']) {
-        return Cow::Borrowed(text);
-    }
-    let mut kept = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(['&', '#']) {
-        kept.push_str(&rest[..at]);
-        let (character, length) = entity_at(&rest[at..]).unwrap_or((char::from(rest.as_bytes()[at]), 1));
-        kept.push(character);
-        rest = &rest[at + length..];
-    }
-    kept.push_str(rest);
-    Cow::Owned(kept)
+    rewritten(text, &['&', '#'], |text| match entity_at(text) {
+        Some((character, length)) => (Cow::Owned(character.to_string()), length),
+        None => (Cow::Borrowed(&text[..1]), 1),
+    })
 }
 
 /// `&amp;`, `&#38;` and `&#x26;` as HTML writes them, `#amp;` and `#38;` as Mermaid does; a control character stays
