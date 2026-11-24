@@ -68,6 +68,7 @@ src/
     budget.rs      how much of a block and of a document is highlighted (`02-security.md` rule 4)
   mermaid/         mermaid-rs-renderer SVG ─▶ raster PNG ─▶ Picture; mermaid-text fallback
     budget.rs      the size and subgraph limits of both engines, then each engine's own count
+    label.rs       labels written as Mermaid shows them, before both engines and their counts: tags, `<br>`, markdown strings, entities
     cache.rs       every diagram a document's budget lets through, drawings (or timeouts) by source and palette, texts by width too
     catch.rs       renderer panics caught, `is_catching` telling a panic hook to leave their reports out
     worker.rs      a renderer on the calling thread, or on its own thread given up at the deadline, never started past it
