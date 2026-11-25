@@ -171,6 +171,9 @@ impl Allowance {
 }
 
 fn parsed(source: &str) -> Result<Graph, DiagramError> {
+    if !kind::is_known(source) {
+        return Err(DiagramError::UnknownKind);
+    }
     let parsed = caught(|| mermaid_rs_renderer::parse_mermaid_strict(source))?
         .map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
     Ok(parsed.graph)
@@ -508,7 +511,13 @@ mod tests {
 
     #[test]
     fn invalid_source_is_an_error() {
-        assert!(matches!(picture_graph("hello"), Err(DiagramError::Invalid(_))));
+        assert!(matches!(picture_graph("graph TD\n  A -->"), Err(DiagramError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_kind_mrk_does_not_know_never_reaches_the_picture_parser() {
+        assert_eq!(picture_graph("roadmap-beta\n  step one").err(), Some(DiagramError::UnknownKind));
+        assert_eq!(picture_graph("hello").err(), Some(DiagramError::UnknownKind));
     }
 
     #[test]

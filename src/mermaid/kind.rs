@@ -1,4 +1,4 @@
-const KINDS: [(&str, &str); 22] = [
+const KINDS: [(&str, &str); 24] = [
     ("graph", "flowchart"),
     ("flowchart", "flowchart"),
     ("sequenceDiagram", "sequence diagram"),
@@ -20,14 +20,30 @@ const KINDS: [(&str, &str); 22] = [
     ("packet", "packet diagram"),
     ("kanban", "kanban board"),
     ("architecture", "architecture diagram"),
+    ("radar", "radar chart"),
+    ("treemap", "treemap"),
     ("zenuml", "sequence diagram"),
 ];
 const UNKNOWN: &str = "diagram";
 
 /// What the diagram is, in words, from its opening keyword: `flowchart`, `sequence diagram`, …
 pub fn describe(source: &str) -> &'static str {
-    let Some(keyword) = header(source) else { return UNKNOWN };
-    KINDS.iter().find(|(prefix, _)| keyword.starts_with(prefix)).map_or(UNKNOWN, |(_, name)| name)
+    named(source).unwrap_or(UNKNOWN)
+}
+
+/// Whether the opening keyword names a kind mrk draws: mermaid-rs-renderer reads a keyword it does not know, such as
+/// `venn-beta`, as a flowchart.
+pub(super) fn is_known(source: &str) -> bool {
+    named(source).is_some()
+}
+
+/// Matched ignoring case, as both engines read the keyword.
+fn named(source: &str) -> Option<&'static str> {
+    let keyword = header(source)?;
+    KINDS
+        .iter()
+        .find(|(prefix, _)| keyword.get(..prefix.len()).is_some_and(|start| start.eq_ignore_ascii_case(prefix)))
+        .map(|(_, name)| *name)
 }
 
 /// The line that opens the diagram, after any front matter and comment.
@@ -64,5 +80,18 @@ mod tests {
         assert_eq!(describe(""), "diagram");
         assert_eq!(describe("hello world"), "diagram");
         assert_eq!(describe("---\nunterminated"), "diagram");
+    }
+
+    #[test]
+    fn the_keyword_is_read_ignoring_case() {
+        assert_eq!(describe("Graph LR\n  A --> B"), "flowchart");
+        assert!(is_known("GITGRAPH\n  commit"));
+    }
+
+    #[test]
+    fn a_keyword_naming_no_kind_is_unknown() {
+        assert!(!is_known("venn-beta\n  set A"));
+        assert!(!is_known("roadmap-beta\n  step one"));
+        assert!(is_known("radar-beta\n  axis a, b"));
     }
 }
