@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Mermaid as text is drawn by vt-mermaid instead of mermaid-text: flowchart, sequence, state, class and ER diagrams, with a theme colour per role, the same on every run.
+- Mermaid as text counts up to 150 edges for a flowchart, class, state or ER diagram; class diagrams are no longer capped at 32 relations, and subgraphs that reuse an id or nest deep draw.
+- **Regression**: without pictures, pie, gantt, mindmap, timeline, journey, git graph, kanban and every other kind mermaid-text drew now show as source with a note, until vt-mermaid draws them.
+
 ## [0.9.0] - 2026-11-12
 
 ### Breaking changes for library users

@@ -31,7 +31,6 @@ type DrawnText = Result<Arc<Vec<Line>>, DiagramError>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DiagramError {
     Oversized,
-    UnsafeSubgraphs,
     OverBudget(Load),
     OverDocumentBudget,
     /// Given up on at the deadline while laying out.
@@ -39,6 +38,8 @@ pub(crate) enum DiagramError {
     /// The deadline had passed before it started.
     OutOfTime,
     Invalid(String),
+    /// vt-mermaid refused to draw it as text; its reasons may quote the source, which the note shows as span text.
+    Text(vt_mermaid::Error),
     UnknownKind,
     Crashed,
     Empty,
@@ -52,7 +53,6 @@ impl fmt::Display for DiagramError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Oversized => write!(formatter, "diagram over {} KiB", budget::MAX_SOURCE_BYTES / 1024),
-            Self::UnsafeSubgraphs => write!(formatter, "subgraph id reused or nested too deep"),
             Self::OverBudget(load) => write!(formatter, "over {} {}, too many to lay out", load.limit(), load.unit()),
             Self::OverDocumentBudget => {
                 write!(formatter, "over the {} s of layout a document's diagrams share", budget::MAX_DOCUMENT_COST_MS / 1000)
@@ -60,6 +60,7 @@ impl fmt::Display for DiagramError {
             Self::TimedOut => write!(formatter, "too slow to lay out"),
             Self::OutOfTime => write!(formatter, "out of time for the document's diagrams"),
             Self::Invalid(message) => write!(formatter, "{message}"),
+            Self::Text(error) => write!(formatter, "{}", error.to_string().lines().next().unwrap_or_default()),
             Self::UnknownKind => write!(formatter, "not a kind of diagram mrk draws"),
             Self::Crashed => write!(formatter, "the diagram renderer crashed"),
             Self::Empty => write!(formatter, "nothing to draw"),
@@ -127,7 +128,7 @@ fn drawing(diagram: &Diagram, settings: &Settings) -> Drawing {
     Ok(Arc::new(caught(|| Svg::parse(&svg))??))
 }
 
-/// mermaid-text lays out for the width, so it runs again after a resize, unless it once ran out of time.
+/// vt-mermaid lays out for the width, so it runs again after a resize, unless it once ran out of time.
 fn as_text(source: &str, diagram: &Diagram, settings: &Settings) -> Result<Block, DiagramError> {
     let text = match TEXTS.find(source, &settings.theme.palette) {
         Some((width, text)) if width == settings.width || text == Err(DiagramError::TimedOut) => text,
@@ -258,13 +259,19 @@ mod tests {
     }
 
     #[test]
-    fn a_subgraph_inside_itself_is_shown_as_source_by_both_engines() {
-        for settings in [test_settings(), with_cell()] {
-            let lines = lines(render("graph TD\n subgraph a\n subgraph a\n end\n end", &settings));
+    fn a_subgraph_inside_itself_draws_with_both_engines() {
+        let source = "graph TD\n subgraph a\n subgraph a\n x --> y\n end\n end";
 
-            assert_eq!(lines[0].plain(), "mermaid: subgraph id reused or nested too deep");
-            assert_eq!(lines[1].plain(), "graph TD");
-        }
+        assert!(matches!(render(source, &test_settings()), Block::Lines(text) if !text[0].plain().starts_with("mermaid:")));
+        assert!(matches!(render(source, &with_cell()), Block::Picture(_)));
+    }
+
+    #[test]
+    fn a_kind_vt_mermaid_does_not_draw_shows_as_source_with_its_note() {
+        let lines = lines(render("pie\n  \"a\" : 1", &test_settings()));
+
+        assert_eq!(lines[0].plain(), "mermaid: pie diagrams are not drawn as text yet");
+        assert_eq!(lines[1].plain(), "pie");
     }
 
     #[test]
@@ -285,9 +292,9 @@ mod tests {
     #[test]
     fn diagrams_too_costly_to_lay_out_are_refused_before_either_engine() {
         let costly = [
-            (tangled(100, 500), "mermaid: over 100 edges, too many to lay out"),
-            (tangled(1000, 3500), "mermaid: over 100 edges, too many to lay out"),
-            (format!("classDiagram\n{}", "  A --> B\n".repeat(40)), "mermaid: over 32 relations, too many to lay out"),
+            (tangled(100, 500), "mermaid: over 150 edges, too many to lay out"),
+            (tangled(1000, 3500), "mermaid: over 150 edges, too many to lay out"),
+            (format!("classDiagram\n{}", "  A --> B\n".repeat(151)), "mermaid: over 150 edges, too many to lay out"),
         ];
 
         for (source, note) in &costly {
@@ -298,20 +305,21 @@ mod tests {
         }
     }
 
+    /// x, y, their edge and every subgraph are links: 147 subgraphs is the most a picture's count admits.
     #[test]
     fn the_deepest_subgraphs_the_budget_admits_lay_out_on_a_default_thread_stack() {
-        let opening: String = (0..16).map(|level| format!(" subgraph s{level}\n")).collect();
-        let source = format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(16));
-        assert!(budget::Diagram::new(&source).is_ok());
+        let opening: String = (0..147).map(|level| format!(" subgraph s{level}\n")).collect();
+        let source = format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(147));
+        assert!(budget::Diagram::new(&source).unwrap().picture_graph().is_ok());
 
         let drawn = std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
-            .spawn(move || [test_settings(), with_cell()].map(|settings| render(&source, &settings)))
+            .spawn(move || [Settings { width: 1000, ..test_settings() }, with_cell()].map(|settings| render(&source, &settings)))
             .unwrap()
             .join()
             .unwrap();
 
-        assert!(matches!(&drawn, [Block::Lines(text), Block::Picture(_)] if !text[0].plain().starts_with("mermaid:")), "{drawn:?}");
+        assert!(matches!(&drawn, [Block::Lines(_), Block::Picture(_)]), "{drawn:?}");
     }
 
     #[test]
@@ -378,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn syntax_only_mermaid_text_reads_still_draws_as_text() {
+    fn syntax_mermaid_rs_renderer_refuses_still_draws_as_text() {
         let sources = [
             "classDiagram\n  class Shape {\n    <<interface>>\n    +area() float\n  }\n  Shape <|-- Circle",
             "sequenceDiagram\n  box Purple Front\n    participant A\n  end\n  A->>B: hi\n  B-->>A: ok",
