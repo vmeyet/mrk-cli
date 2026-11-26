@@ -9,7 +9,7 @@ use crate::theme::Palette;
 /// `accent`, group frames in `subtle`, labels in `text`.
 pub fn render(source: &str, width: usize, palette: &Palette) -> Result<Vec<Line>, DiagramError> {
     let max_width = u16::try_from(width).unwrap_or(u16::MAX);
-    let canvas = caught(|| vt_mermaid::render(source, max_width))?.map_err(DiagramError::Text)?;
+    let canvas = caught(|| vt_mermaid::render(source, max_width))?.map_err(|error| DiagramError::invalid(&error))?;
     let lines: Vec<Line> = canvas.rows(GlyphSet::Unicode).map(|runs| line(runs, palette)).collect();
     if lines.is_empty() {
         return Err(DiagramError::Empty);
@@ -78,7 +78,7 @@ mod tests {
         for width in [20, 40, 60, 80, 120] {
             match render(source, width, &MRK_DARK.palette) {
                 Ok(lines) => assert!(lines.iter().all(|line| line.width() <= width), "width {width}"),
-                Err(error) => assert!(matches!(error, DiagramError::Text(vt_mermaid::Error::TooWide { .. })), "{error:?}"),
+                Err(error) => assert!(error.to_string().starts_with("the drawing needs"), "{error:?}"),
             }
         }
     }
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn garbage_is_an_error() {
-        assert!(matches!(render("not a diagram at all", 80, &MRK_DARK.palette), Err(DiagramError::Text(_))));
+        assert!(matches!(render("not a diagram at all", 80, &MRK_DARK.palette), Err(DiagramError::Invalid(_))));
     }
 
     #[test]

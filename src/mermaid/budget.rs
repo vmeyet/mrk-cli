@@ -27,6 +27,13 @@ const MIN_COST_MS: usize = 5;
 pub const MAX_DOCUMENT_DIAGRAMS: usize = MAX_DOCUMENT_COST_MS / MIN_COST_MS;
 /// What a picture costs on top of its layout: fitting and drawing it.
 const PICTURE_COST_MS: usize = 20;
+/// What vt-mermaid's text costs on top of a graph's edges, and what a sequence costs: 990 messages across 50
+/// participants took 33 ms.
+const TEXT_COST_MS: usize = 60;
+/// What a graph as text costs at most: vt-mermaid's routing budget of 6 million steps took at most 0.5 s.
+const MAX_TEXT_COST_MS: usize = 500;
+/// An edge walled in is searched for over the whole grid, so few edges may take long: 8 took 113 ms, 24 took 240 ms.
+const TEXT_EDGE_COST_MS: usize = 8;
 
 /// What a diagram's layout time grows with, counted before an engine lays it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,12 +74,11 @@ impl Load {
     }
 
     /// The slowest layout measured for that many, in milliseconds: the layered engines slow down per unit as the
-    /// diagram grows (145 links between random nodes took 3.1 s, 51 took 0.27 s), the row-by-row ones do not; 150
-    /// edges as text cost the half second vt-mermaid's routing budget allows.
+    /// diagram grows (145 links between random nodes took 3.1 s, 51 took 0.27 s), the row-by-row ones do not.
     fn cost_ms(self, count: usize) -> usize {
         match self {
             Self::Links => count * count / 7,
-            Self::Edges => count * count / 45,
+            Self::Edges => (TEXT_COST_MS + count * TEXT_EDGE_COST_MS).min(MAX_TEXT_COST_MS),
             Self::Messages | Self::Elements | Self::Lanes => count,
         }
     }
@@ -167,8 +173,7 @@ fn parsed(source: &str) -> Result<Graph, DiagramError> {
     if !kind::is_known(source) {
         return Err(DiagramError::UnknownKind);
     }
-    let parsed = caught(|| mermaid_rs_renderer::parse_mermaid_strict(source))?
-        .map_err(|error| DiagramError::Invalid(first_line(&error.to_string())))?;
+    let parsed = caught(|| mermaid_rs_renderer::parse_mermaid_strict(source))?.map_err(|error| DiagramError::invalid(&error))?;
     Ok(parsed.graph)
 }
 
@@ -185,11 +190,11 @@ fn picture_cost(graph: &Graph) -> Result<usize, DiagramError> {
     load.within(count)
 }
 
-/// vt-mermaid spends nearly all its time routing the edges of a flowchart, class, state or ER diagram; it draws a
-/// sequence row after row, under 40 ms at its limits, and refuses any other kind at once.
+/// vt-mermaid spends nearly all its time routing the edges of a flowchart, class, state or ER diagram, draws a sequence
+/// row after row, and refuses any other kind at once.
 fn text_cost(source: &str, graph: Option<&Graph>) -> Result<usize, DiagramError> {
     let edges = graph.map_or_else(|| scanned_edges(source), graph_edges);
-    Load::Edges.within(edges.unwrap_or(0))
+    edges.map_or(Ok(MIN_COST_MS), |edges| Load::Edges.within(edges))
 }
 
 fn picture_load(graph: &Graph) -> (Load, usize) {
@@ -221,14 +226,23 @@ fn chart_marks(graph: &Graph) -> usize {
     graph.pie_slices.len() + timeline + graph.xychart.x_axis_categories.len() + series
 }
 
+/// The edges vt-mermaid routes: those of a graph kind, none for a sequence, `None` for a kind it does not draw.
 fn graph_edges(graph: &Graph) -> Option<usize> {
-    matches!(graph.kind, DiagramKind::Flowchart | DiagramKind::Class | DiagramKind::State | DiagramKind::Er).then_some(graph.edges.len())
+    match graph.kind {
+        DiagramKind::Flowchart | DiagramKind::Class | DiagramKind::State | DiagramKind::Er => Some(graph.edges.len()),
+        DiagramKind::Sequence => Some(0),
+        _ => None,
+    }
 }
 
-/// The edges of a graph kind, `None` for any other, the keyword read as `kind` reads it.
+/// The edges vt-mermaid routes as `graph_edges` counts them, the keyword read by prefix with case ignored, so the
+/// count covers every source vt-mermaid reads as that kind.
 fn scanned_edges(source: &str) -> Option<usize> {
     let keyword = kind::header(source)?.to_ascii_lowercase();
     let opens_on = |kinds: &[&str]| kinds.iter().any(|kind| keyword.starts_with(kind));
+    if opens_on(&["sequencediagram"]) {
+        return Some(0);
+    }
     let arrows: &[&str] = if opens_on(&["classdiagram", "erdiagram"]) {
         &DOTTED_ARROWS
     } else if opens_on(&["graph", "flowchart", "statediagram"]) {
@@ -302,10 +316,6 @@ fn statements(source: &str) -> impl Iterator<Item = String> {
         .map(str::to_owned)
         .collect();
     statements.into_iter()
-}
-
-fn first_line(message: &str) -> String {
-    message.lines().next().unwrap_or("invalid diagram").to_owned()
 }
 
 fn labels(edges: &[Edge]) -> usize {
@@ -384,20 +394,25 @@ mod tests {
 
         assert_eq!(cost(&flowchart, true), Load::Links.cost_ms(41 + 40) + PICTURE_COST_MS);
         assert_eq!(cost(&flowchart, false), Load::Edges.cost_ms(40));
-        assert_eq!(cost(&chain(3, "a"), false), MIN_COST_MS);
+        assert_eq!(cost(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000)), false), TEXT_COST_MS);
         assert_eq!(cost("pie\n  \"a\" : 1", false), MIN_COST_MS);
     }
 
     #[test]
-    fn a_diagram_both_engines_refuse_or_drawn_row_after_row_costs_little() {
+    fn a_graph_as_text_costs_what_its_walled_in_edges_may_take() {
+        assert_eq!(cost(&chain(8, "a"), false), TEXT_COST_MS + 8 * TEXT_EDGE_COST_MS);
+        assert_eq!(cost(&chain(MAX_EDGES, "a"), false), MAX_TEXT_COST_MS);
+    }
+
+    #[test]
+    fn a_diagram_both_engines_refuse_costs_little() {
         assert_eq!(cost(&chain(200, "a"), true), MIN_COST_MS);
         assert_eq!(cost(&"%%\n".repeat(MAX_SOURCE_BYTES), true), 0);
-        assert_eq!(cost(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000)), false), MIN_COST_MS);
     }
 
     #[test]
     fn each_diagram_that_fits_what_is_left_of_the_budget_is_let_through_in_reading_order() {
-        let large = |name: &str| chain(MAX_EDGES - 1, name);
+        let large = |name: &str| chain(40, name);
         let large_cost = cost(&large("a"), false);
         let fitting = MAX_DOCUMENT_COST_MS / large_cost;
         let sources: Vec<String> = (0..=fitting).map(|index| large(&format!("d{index}_"))).chain([chain(1, "small")]).collect();
@@ -525,7 +540,8 @@ mod tests {
         assert_eq!(graph_edges(&graph("graph TD\n  a --> b --> c\n  d; e")), Some(2));
         assert_eq!(graph_edges(&graph("graph TD\n  a & b & c --> d & e & f")), Some(9));
         assert_eq!(graph_edges(&graph("erDiagram\n  A ||--o{ B : has")), Some(1));
-        assert_eq!(graph_edges(&graph("sequenceDiagram\n  a ->> b: hi")), None);
+        assert_eq!(graph_edges(&graph("sequenceDiagram\n  a ->> b: hi")), Some(0));
+        assert_eq!(graph_edges(&graph("pie\n  \"a\" : 1")), None);
         assert_eq!(admit_text(&chain(MAX_EDGES, "n")), Ok(()));
         assert_eq!(admit_text(&chain(MAX_EDGES + 1, "n")), Err(DiagramError::OverBudget(Load::Edges)));
     }
@@ -534,7 +550,7 @@ mod tests {
     fn the_scan_for_syntax_mermaid_rs_renderer_refuses_counts_every_fanned_out_edge() {
         assert_eq!(scanned_edges("graph TD\n  a --> b --> c\n  %% a comment\n  d; e"), Some(2));
         assert_eq!(scanned_edges("graph TD\n  a & b & c --> d & e --> f"), Some(3 * 2 + 2));
-        assert_eq!(scanned_edges(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000))), None);
+        assert_eq!(scanned_edges(&format!("sequenceDiagram\n{}", "  a ->> b: hi\n".repeat(1000))), Some(0));
         assert_eq!(scanned_edges("pie\n  \"a--b\" : 1"), None);
         assert_eq!(scanned_edges("%% why\nclassDiagram\n  class A {\n    +f() int\n  }\n  A & C --> B\n  B ..> C"), Some(3));
     }

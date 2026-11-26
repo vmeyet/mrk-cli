@@ -38,8 +38,6 @@ pub(crate) enum DiagramError {
     /// The deadline had passed before it started.
     OutOfTime,
     Invalid(String),
-    /// vt-mermaid refused to draw it as text; its reasons may quote the source, which the note shows as span text.
-    Text(vt_mermaid::Error),
     UnknownKind,
     Crashed,
     Empty,
@@ -60,7 +58,6 @@ impl fmt::Display for DiagramError {
             Self::TimedOut => write!(formatter, "too slow to lay out"),
             Self::OutOfTime => write!(formatter, "out of time for the document's diagrams"),
             Self::Invalid(message) => write!(formatter, "{message}"),
-            Self::Text(error) => write!(formatter, "{}", error.to_string().lines().next().unwrap_or_default()),
             Self::UnknownKind => write!(formatter, "not a kind of diagram mrk draws"),
             Self::Crashed => write!(formatter, "the diagram renderer crashed"),
             Self::Empty => write!(formatter, "nothing to draw"),
@@ -69,6 +66,14 @@ impl fmt::Display for DiagramError {
             Self::UnreadableSvg(message) => write!(formatter, "unreadable SVG ({message})"),
             Self::PngEncoding(message) => write!(formatter, "PNG encoding failed ({message})"),
         }
+    }
+}
+
+impl DiagramError {
+    /// An engine's reason for refusing a diagram, which may quote the source: the note shows its first line as span
+    /// text.
+    fn invalid(reason: &impl fmt::Display) -> Self {
+        Self::Invalid(reason.to_string().lines().next().unwrap_or("invalid diagram").to_owned())
     }
 }
 
@@ -307,7 +312,7 @@ mod tests {
 
     /// x, y, their edge and every subgraph are links: 147 subgraphs is the most a picture's count admits.
     #[test]
-    fn the_deepest_subgraphs_the_budget_admits_lay_out_on_a_default_thread_stack() {
+    fn the_deepest_subgraphs_the_budget_admits_run_on_a_default_thread_stack() {
         let opening: String = (0..147).map(|level| format!(" subgraph s{level}\n")).collect();
         let source = format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(147));
         assert!(budget::Diagram::new(&source).unwrap().picture_graph().is_ok());
@@ -372,7 +377,7 @@ mod tests {
 
     #[test]
     fn a_document_lays_out_each_diagram_that_fits_what_is_left_of_its_budget() {
-        let chain = |diagram: usize| (0..99).map(|node| format!("  d{diagram}n{node} --> d{diagram}n{}\n", node + 1)).collect::<String>();
+        let chain = |diagram: usize| (0..39).map(|node| format!("  d{diagram}n{node} --> d{diagram}n{}\n", node + 1)).collect::<String>();
         let diagram = |index: usize| format!("graph TD\n{}", chain(index));
         let fitting = budget::MAX_DOCUMENT_COST_MS / Diagram::new(&diagram(0)).unwrap().cost(false);
         let document: String = (0..=fitting).map(|index| format!("```mermaid\n{}```\n\n", diagram(index))).collect();
@@ -381,7 +386,7 @@ mod tests {
         let plain = crate::document::plain(&crate::markdown::render(&document, &test_settings()));
 
         assert_eq!(plain.matches("mermaid: over the 12 s of layout").count(), 1);
-        assert!(plain.contains(&format!("d{fitting}n98 --> d{fitting}n99")), "{plain}");
+        assert!(plain.contains(&format!("d{fitting}n38 --> d{fitting}n39")), "{plain}");
         assert!(!plain.contains("small --> one"), "{plain}");
     }
 
