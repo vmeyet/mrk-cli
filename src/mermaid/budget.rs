@@ -518,6 +518,7 @@ mod tests {
     fn a_kind_mrk_does_not_know_never_reaches_the_picture_parser() {
         assert_eq!(picture_graph("roadmap-beta\n  step one").err(), Some(DiagramError::UnknownKind));
         assert_eq!(picture_graph("hello").err(), Some(DiagramError::UnknownKind));
+        assert_eq!(picture_graph("blocks-beta\n  a").err(), Some(DiagramError::UnknownKind));
     }
 
     #[test]
