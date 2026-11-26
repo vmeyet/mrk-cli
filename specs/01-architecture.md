@@ -180,7 +180,7 @@ src/
 - Pushing a `vX.Y.Z` tag that matches the package version builds `aarch64`/`x86_64` for `apple-darwin`, `unknown-linux-gnu` and `unknown-linux-musl` on native runners with the `dist` profile (the release profile), then publishes a GitHub release with a shell installer and a Homebrew formula pushed to `vmeyet/homebrew-tap`.
   Pull requests never run it (`pr-run-mode = "skip"`), so no pull request gets its `contents: write` token.
   Each build job attests its archives (`github-attestations`), so `gh attestation verify` ties an archive to this workflow.
-- The maintainer publishes the crate to crates.io by hand from the release tag (`cargo publish --locked`); trusted publishing from the release workflow comes later.
+- `.github/workflows/publish.yml` publishes the crate to crates.io on the same `vX.Y.Z` tag with trusted publishing: the `crates-io` environment, limited to `v*` tags, trades the job's OIDC token for a short-lived crates.io token (`rust-lang/crates-io-auth-action`), and the job fails unless the tag is `v` and the package version, before `cargo publish --locked`.
   `cargo publish --dry-run --locked` runs in CI and `scripts/check`, so the package always builds from what it includes.
   `mrk --version` reports the commit whatever the install: from git in a checkout, from `.cargo_vcs_info.json` in a crates.io package.
 - Linux ships twice: glibc for Homebrew, and static musl that the shell installer falls back to on Alpine or an old glibc.
