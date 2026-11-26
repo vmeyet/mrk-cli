@@ -21,6 +21,7 @@
 pub mod code;
 pub mod diff;
 pub mod document;
+pub mod link;
 pub mod markdown;
 pub mod mermaid;
 mod raster;

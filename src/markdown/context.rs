@@ -7,11 +7,12 @@ const MIN_NESTED_WIDTH: usize = 12;
 /// Containers nested deeper than this render their content as bare text: bounded recursion on hostile input.
 const MAX_NESTING: usize = 32;
 
-/// Where a block is being rendered: the settings at the current width, the paragraph style, how deep it sits, and
-/// which of the document's diagrams and code blocks its budgets let through.
+/// Where a block is being rendered: the document's settings, the current width, the paragraph style, how deep it sits,
+/// and which of the document's diagrams and code blocks its budgets let through.
 #[derive(Clone, Copy)]
 pub(super) struct Context<'a> {
-    pub settings: Settings,
+    pub settings: &'a Settings,
+    width: usize,
     pub style: Style,
     pub nesting: usize,
     pub list_depth: usize,
@@ -31,9 +32,9 @@ pub(super) enum Nested<'a> {
 
 impl<'a> Context<'a> {
     /// The context of the whole document, at least `MIN_WIDTH` wide.
-    pub fn new(settings: &Settings, diagrams: &'a mermaid::Allowance, highlights: &'a code::Allowance) -> Self {
-        let settings = Settings { width: settings.width.max(MIN_WIDTH), ..*settings };
-        Self { settings, style: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0, diagrams, highlights }
+    pub fn new(settings: &'a Settings, diagrams: &'a mermaid::Allowance, highlights: &'a code::Allowance) -> Self {
+        let width = settings.width.max(MIN_WIDTH);
+        Self { settings, width, style: Style::fg(settings.theme.palette.text), nesting: 0, list_depth: 0, diagrams, highlights }
     }
 
     pub fn palette(&self) -> &Palette {
@@ -41,7 +42,12 @@ impl<'a> Context<'a> {
     }
 
     pub fn width(&self) -> usize {
-        self.settings.width
+        self.width
+    }
+
+    /// The settings at the current width, for a renderer that lays a block out on its own.
+    pub fn settings_at_width(&self) -> Settings {
+        Settings { width: self.width, ..self.settings.clone() }
     }
 
     /// The context inside a container whose prefix takes `columns` cells.
@@ -51,7 +57,7 @@ impl<'a> Context<'a> {
         }
         let deeper = Self { nesting: self.nesting + 1, ..*self };
         match self.width().checked_sub(columns).filter(|width| *width >= MIN_NESTED_WIDTH) {
-            Some(width) => Nested::Indented(Self { settings: Settings { width, ..self.settings }, ..deeper }),
+            Some(width) => Nested::Indented(Self { width, ..deeper }),
             None => Nested::Unindented(deeper),
         }
     }

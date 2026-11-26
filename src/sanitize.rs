@@ -1,7 +1,7 @@
 //! Text and links made safe to write to a terminal, which interprets the escape sequences an untrusted input can carry.
 use crate::text::expand_tabs;
 
-const MAX_LINK_BYTES: usize = 2048;
+pub(crate) const MAX_LINK_BYTES: usize = 2048;
 const WEB_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 /// Each ends on the slash that starts the path, so a `file:` link names no host but this machine.
 const LOCAL_FILE_PREFIXES: [&str; 2] = ["file:///", "file://localhost/"];
@@ -87,7 +87,7 @@ fn hex_byte(digits: &[u8]) -> Option<u8> {
     u8::from_str_radix(digits, 16).ok()
 }
 
-fn scheme(target: &str) -> Option<&str> {
+pub(crate) fn scheme(target: &str) -> Option<&str> {
     let (scheme, _) = target.split_once(':')?;
     let starts_with_letter = scheme.starts_with(|character: char| character.is_ascii_alphabetic());
     let is_valid = starts_with_letter && scheme.chars().all(|character| character.is_ascii_alphanumeric() || "+-.".contains(character));
