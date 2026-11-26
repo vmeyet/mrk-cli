@@ -266,6 +266,23 @@ mod tests {
     }
 
     #[test]
+    fn with_a_rooted_link_base_a_gitlab_upload_links_under_the_project() {
+        let link_base = LinkBase::new("https://gitlab.example.com/group/project/-/merge_requests/7")
+            .and_then(|base| base.rooted_at("/uploads/", "https://gitlab.example.com/group/project"))
+            .ok();
+        let document = render("[x](/uploads/ab/x.pdf) [y](/group/other)", &Settings { link_base, ..test_settings() });
+
+        assert_eq!(
+            links(&document),
+            [
+                Some(Arc::from("https://gitlab.example.com/group/project/uploads/ab/x.pdf")),
+                None,
+                Some(Arc::from("https://gitlab.example.com/group/other"))
+            ]
+        );
+    }
+
+    #[test]
     fn with_a_link_base_and_no_hyperlinks_the_resolved_target_shows() {
         assert_eq!(
             plain(&with_base("[x](docs/x.md) and [notes](#note_2)", false)),

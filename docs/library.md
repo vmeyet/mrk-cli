@@ -37,7 +37,10 @@ for section in markdown::render_sections(source, &settings) {
 - `diff::sections` pairs the sections of two versions of a file as `Same`, `Added`, `Removed` or `Changed`, a changed pair with the char ranges of its changed words on each side, for `highlight`.
 - Set `cell` to the terminal cell size in pixels to get Mermaid diagrams as PNG pictures instead of text.
 - Mermaid layout runs on the calling thread, bounded by a per-diagram and a per-document budget, so the same input always gives the same pictures and box-drawing text; set `diagram_deadline` to stop laying diagrams out at that moment, each on a thread of its own that keeps running unseen once given up on.
-- Set `link_base` to a `link::LinkBase` to make relative targets clickable: `LinkBase::new("https://gitlab.com/group/project/-/merge_requests/7")` accepts only an absolute http or https URL in printable ASCII, and `/uploads/a.pdf`, `docs/x.md`, `../x`, `?q`, `#f` and `//host/x` resolve against it as a browser resolves the links of that page. Without it they stay unclickable, their target printed after the text.
+- Set `link_base` to a `link::LinkBase` to make relative targets clickable: `LinkBase::new("https://gitlab.com/group/project/-/merge_requests/7")` accepts only an absolute http or https URL in printable ASCII, and `/uploads/a.pdf`, `docs/x.md`, `../x`, `?q`, `#f` and `//host/x` resolve against it as a browser resolves the links of that page.
+  `/a` resolves from the page's host, unless `rooted_at(prefix, root_url)` gives the root-relative targets under `prefix` a root of their own: GitLab writes uploads relative to the project, so `.rooted_at("/uploads/", "https://gitlab.com/group/project")` turns `/uploads/ab/x.pdf` into `https://gitlab.com/group/project/uploads/ab/x.pdf`, and `.rooted_at("/", …)` serves a site under a sub-path.
+  Without a base they stay unclickable, their target printed after the text.
+- `Settings` is `Clone`, not `Copy`, since a `LinkBase` owns its URLs: clone it to change a field for another render.
 - Set `jumbo_title` to draw level-1 headings two rows tall: `Picture` (with `cell` set) gives a picture per line, its text in `concealed_text`; `DoubleHeight` gives `Block::DoubleHeight` lines, for terminals that draw DEC double-height lines.
 
 ## Printing safely

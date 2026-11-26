@@ -4,20 +4,31 @@ use std::fmt;
 
 use crate::sanitize;
 
-/// The absolute `http` or `https` URL a relative link target resolves against, as a browser resolves the links of a
-/// page at that address: `/a` from its host, `a`, `./a` and `../a` from its folder, `?q` and `#f` on the page itself,
-/// `//host/a` with its scheme. Its fragment is dropped.
-///
-/// Held inline rather than as a `String`, so `Settings` stays `Copy`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Where a page's relative link targets resolve, as a browser resolves the links of the page at its address: `a`,
+/// `./a` and `../a` from its folder, `?q` and `#f` on the page itself, `//host/a` with its scheme, and `/a` from its
+/// host, or from a root set with [`LinkBase::rooted_at`].
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkBase {
-    bytes: [u8; sanitize::MAX_LINK_BYTES],
-    len: usize,
+    page: Address,
+    root: Option<Root>,
+}
+
+/// Where the root-relative targets under `prefix` resolve instead of the page's host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Root {
+    prefix: String,
+    address: Address,
+}
+
+/// An absolute `http` or `https` URL without its fragment, cut where its path starts and ends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Address {
+    url: String,
     origin_end: usize,
     path_end: usize,
 }
 
-/// Why a base was refused.
+/// Why a base or a root was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LinkBaseError {
@@ -29,6 +40,8 @@ pub enum LinkBaseError {
     NotHttp,
     /// Names no host, puts credentials before it, or holds a backslash in it.
     BadHost,
+    /// A root's prefix that is not a path of printable ASCII starting with `/`.
+    BadPrefix,
 }
 
 impl fmt::Display for LinkBaseError {
@@ -38,6 +51,7 @@ impl fmt::Display for LinkBaseError {
             Self::Unprintable => formatter.write_str("the link base holds a character outside printable ASCII"),
             Self::NotHttp => formatter.write_str("the link base is not an absolute http or https URL"),
             Self::BadHost => formatter.write_str("the link base names no plain host"),
+            Self::BadPrefix => formatter.write_str("the link root's prefix is not a path starting with /"),
         }
     }
 }
@@ -45,7 +59,55 @@ impl fmt::Display for LinkBaseError {
 impl std::error::Error for LinkBaseError {}
 
 impl LinkBase {
-    pub fn new(url: &str) -> Result<Self, LinkBaseError> {
+    /// The base of the page at `page_url`, an absolute `http` or `https` URL of printable ASCII; its fragment is dropped.
+    pub fn new(page_url: &str) -> Result<Self, LinkBaseError> {
+        Ok(Self { page: Address::new(page_url)?, root: None })
+    }
+
+    /// The base with the root-relative targets whose path starts with `prefix` resolving under `root_url` instead of
+    /// the page's host: with `/uploads/` and `https://gitlab.com/group/project`, `/uploads/a.pdf` becomes
+    /// `https://gitlab.com/group/project/uploads/a.pdf`; `/` roots every such target. Their `..` never climbs above
+    /// the root, whose query and fragment are ignored. A later call replaces the root.
+    pub fn rooted_at(self, prefix: &str, root_url: &str) -> Result<Self, LinkBaseError> {
+        let is_path = prefix.starts_with('/') && prefix.bytes().all(|byte| byte.is_ascii_graphic());
+        if !is_path {
+            return Err(LinkBaseError::BadPrefix);
+        }
+        Ok(Self { root: Some(Root { prefix: prefix.to_owned(), address: Address::new(root_url)? }), ..self })
+    }
+
+    /// The page's URL, without its fragment.
+    pub fn as_str(&self) -> &str {
+        &self.page.url
+    }
+
+    /// `target` made absolute, or as written when it already has a scheme, which `sanitize::link` then judges.
+    pub(crate) fn resolve<'a>(&self, target: &'a str) -> Cow<'a, str> {
+        if sanitize::scheme(target).is_some() {
+            return Cow::Borrowed(target);
+        }
+        let page = &self.page;
+        Cow::Owned(match target.as_bytes() {
+            [b'/', b'/', ..] => format!("{}:{target}", sanitize::scheme(&page.url).unwrap_or_default()),
+            [b'?', ..] => format!("{}{}{target}", page.origin(), page.path()),
+            [b'#', ..] => format!("{}{}{}{target}", page.origin(), page.path(), page.query()),
+            [b'/', ..] => self.root_relative(&without_dot_segments(target)),
+            _ => format!("{}{}", page.origin(), without_dot_segments(&format!("{}{target}", page.folder()))),
+        })
+    }
+
+    fn root_relative(&self, target: &str) -> String {
+        match &self.root {
+            Some(root) if target.starts_with(&root.prefix) => {
+                format!("{}{}{target}", root.address.origin(), root.address.path().trim_end_matches('/'))
+            }
+            _ => format!("{}{target}", self.page.origin()),
+        }
+    }
+}
+
+impl Address {
+    fn new(url: &str) -> Result<Self, LinkBaseError> {
         let url = url.split_once('#').map_or(url, |(page, _)| page);
         if url.len() > sanitize::MAX_LINK_BYTES {
             return Err(LinkBaseError::TooLong);
@@ -61,46 +123,31 @@ impl LinkBase {
         }
         let origin_end = url.len() - after_slashes.len() + host.len();
         let path_end = url.find('?').unwrap_or(url.len());
-        let mut bytes = [0; sanitize::MAX_LINK_BYTES];
-        bytes[..url.len()].copy_from_slice(url.as_bytes());
-        Ok(Self { bytes, len: url.len(), origin_end, path_end })
+        Ok(Self { url: url.to_owned(), origin_end, path_end })
     }
 
-    pub fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.bytes[..self.len]).unwrap_or_default()
+    fn origin(&self) -> &str {
+        &self.url[..self.origin_end]
     }
 
-    /// `target` made absolute, or as written when it already has a scheme, which `sanitize::link` then judges.
-    pub(crate) fn resolve<'a>(&self, target: &'a str) -> Cow<'a, str> {
-        if sanitize::scheme(target).is_some() {
-            return Cow::Borrowed(target);
-        }
-        let base = self.as_str();
-        let (page, query) = base.split_at(self.path_end);
-        let (origin, path) = page.split_at(self.origin_end);
-        let path = if path.is_empty() { "/" } else { path };
-        Cow::Owned(match target.as_bytes() {
-            [b'/', b'/', ..] => format!("{}:{target}", sanitize::scheme(base).unwrap_or_default()),
-            [b'?', ..] => format!("{origin}{path}{target}"),
-            [b'#', ..] => format!("{origin}{path}{query}{target}"),
-            [b'/', ..] => format!("{origin}{}", without_dot_segments(target)),
-            _ => format!("{origin}{}", without_dot_segments(&format!("{}{target}", folder(path)))),
-        })
+    /// The path, `/` for a bare host, as a browser reads it.
+    fn path(&self) -> &str {
+        let path = &self.url[self.origin_end..self.path_end];
+        if path.is_empty() { "/" } else { path }
     }
-}
 
-impl fmt::Debug for LinkBase {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("LinkBase").field(&self.as_str()).finish()
+    fn folder(&self) -> &str {
+        let path = self.path();
+        &path[..=path.rfind('/').unwrap_or(0)]
+    }
+
+    fn query(&self) -> &str {
+        &self.url[self.path_end..]
     }
 }
 
 fn is_http(scheme: &str) -> bool {
     scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
-}
-
-fn folder(path: &str) -> &str {
-    &path[..=path.rfind('/').unwrap_or(0)]
 }
 
 /// An absolute path with its `.` and `..` segments resolved (RFC 3986 § 5.2.4), its query and fragment kept as written.
@@ -217,5 +264,53 @@ mod tests {
 
         assert!(LinkBase::new(&at_limit).is_ok());
         assert_eq!(LinkBase::new(&format!("{at_limit}a")), Err(LinkBaseError::TooLong));
+    }
+
+    const ROOT: &str = "https://gitlab.example.com/group/project";
+
+    fn rooted(prefix: &str, target: &str) -> String {
+        LinkBase::new(BASE).unwrap().rooted_at(prefix, ROOT).unwrap().resolve(target).into_owned()
+    }
+
+    #[test]
+    fn a_gitlab_upload_resolves_under_the_project() {
+        assert_eq!(rooted("/uploads/", "/uploads/ab/x.pdf"), "https://gitlab.example.com/group/project/uploads/ab/x.pdf");
+    }
+
+    #[test]
+    fn a_root_relative_target_outside_the_prefix_starts_at_the_page_host() {
+        assert_eq!(rooted("/uploads/", "/other/group/-/issues/1"), "https://gitlab.example.com/other/group/-/issues/1");
+        assert_eq!(rooted("/uploads/", "/uploads/../secret"), "https://gitlab.example.com/secret");
+    }
+
+    #[test]
+    fn dot_dot_never_climbs_above_the_root() {
+        assert_eq!(rooted("/", "/a/../../../b?x#y"), "https://gitlab.example.com/group/project/b?x#y");
+    }
+
+    #[test]
+    fn a_root_changes_only_root_relative_targets() {
+        for target in ["docs/x.md", "../y", "?tab=diffs", "#note_2", "//cdn.example.org/a", "https://other.test/a"] {
+            assert_eq!(rooted("/", target), resolved(target), "{target}");
+        }
+    }
+
+    #[test]
+    fn a_root_may_sit_on_another_host_and_drops_its_query() {
+        let base = LinkBase::new(BASE).unwrap().rooted_at("/", "https://pages.example.org/site/?v=1#top").unwrap();
+
+        assert_eq!(base.resolve("/a.html"), "https://pages.example.org/site/a.html");
+    }
+
+    #[test]
+    fn a_root_is_checked_like_a_base() {
+        let base = || LinkBase::new(BASE).unwrap();
+
+        assert_eq!(base().rooted_at("/", "javascript:alert(1)"), Err(LinkBaseError::NotHttp));
+        assert_eq!(base().rooted_at("/", "https://h/\x1b]52;c;x\x07"), Err(LinkBaseError::Unprintable));
+        assert_eq!(base().rooted_at("/", "https://u@h/"), Err(LinkBaseError::BadHost));
+        for prefix in ["uploads/", "", "/a b", "/a\nb"] {
+            assert_eq!(base().rooted_at(prefix, ROOT), Err(LinkBaseError::BadPrefix), "{prefix:?}");
+        }
     }
 }

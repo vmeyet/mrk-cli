@@ -5,9 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Breaking changes for library users
+
+- `Settings` is no longer `Copy`: clone it.
+
 ### Added
 
 - `Settings::link_base` makes relative links and images clickable for a library user: a `LinkBase` (an absolute http or https URL) they resolve against as a browser would, the result still passing `sanitize::link`.
+  `LinkBase::rooted_at` sends root-relative targets under a prefix to their own root, such as GitLab's `/uploads/…`, which are relative to the project.
 
 ## [0.10.0] - 2026-11-26
 

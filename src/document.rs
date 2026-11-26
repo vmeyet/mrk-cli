@@ -214,7 +214,7 @@ pub enum JumboTitle {
 /// grapheme side by side. A narrower `Settings::width` is laid out this wide.
 pub const MIN_WIDTH: usize = 8;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Settings {
     pub width: usize,
