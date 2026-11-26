@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-26
+
 ### Breaking changes for library users
 
 - `Settings` is no longer `Copy`: clone it.
@@ -248,6 +250,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.11.0]: https://github.com/vmeyet/mrk-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/vmeyet/mrk-cli/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/vmeyet/mrk-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/vmeyet/mrk-cli/compare/v0.7.0...v0.8.0
