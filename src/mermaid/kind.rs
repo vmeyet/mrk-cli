@@ -1,4 +1,4 @@
-const KINDS: [(&str, &str); 22] = [
+const KINDS: [(&str, &str); 29] = [
     ("graph", "flowchart"),
     ("flowchart", "flowchart"),
     ("sequenceDiagram", "sequence diagram"),
@@ -12,6 +12,11 @@ const KINDS: [(&str, &str); 22] = [
     ("requirementDiagram", "requirement diagram"),
     ("gitGraph", "git graph"),
     ("C4", "C4 diagram"),
+    ("C4Context", "C4 diagram"),
+    ("C4Container", "C4 diagram"),
+    ("C4Component", "C4 diagram"),
+    ("C4Dynamic", "C4 diagram"),
+    ("C4Deployment", "C4 diagram"),
     ("mindmap", "mind map"),
     ("timeline", "timeline"),
     ("sankey", "sankey diagram"),
@@ -20,14 +25,32 @@ const KINDS: [(&str, &str); 22] = [
     ("packet", "packet diagram"),
     ("kanban", "kanban board"),
     ("architecture", "architecture diagram"),
+    ("radar", "radar chart"),
+    ("treemap", "treemap"),
     ("zenuml", "sequence diagram"),
 ];
 const UNKNOWN: &str = "diagram";
 
 /// What the diagram is, in words, from its opening keyword: `flowchart`, `sequence diagram`, …
 pub fn describe(source: &str) -> &'static str {
-    let Some(keyword) = header(source) else { return UNKNOWN };
-    KINDS.iter().find(|(prefix, _)| keyword.starts_with(prefix)).map_or(UNKNOWN, |(_, name)| name)
+    named(source).unwrap_or(UNKNOWN)
+}
+
+/// Whether the opening keyword names a kind mrk draws: mermaid-rs-renderer reads a keyword it does not know, such as
+/// `venn-beta`, as a flowchart.
+pub(super) fn is_known(source: &str) -> bool {
+    named(source).is_some()
+}
+
+fn named(source: &str) -> Option<&'static str> {
+    let header = header(source)?;
+    KINDS.iter().find(|(keyword, _)| opens_on(header, keyword)).map(|(_, name)| *name)
+}
+
+/// As mermaid-rs-renderer reads it: case ignored, and the keyword a whole word, so `pieChart-beta` is no pie chart.
+fn opens_on(header: &str, keyword: &str) -> bool {
+    let Some(rest) = header.get(keyword.len()..) else { return false };
+    header[..keyword.len()].eq_ignore_ascii_case(keyword) && !rest.starts_with(|character: char| character.is_ascii_alphanumeric())
 }
 
 /// The line that opens the diagram, after any front matter and comment.
@@ -64,5 +87,27 @@ mod tests {
         assert_eq!(describe(""), "diagram");
         assert_eq!(describe("hello world"), "diagram");
         assert_eq!(describe("---\nunterminated"), "diagram");
+    }
+
+    #[test]
+    fn the_keyword_is_read_ignoring_case() {
+        assert_eq!(describe("Graph LR\n  A --> B"), "flowchart");
+        assert!(is_known("GITGRAPH\n  commit"));
+    }
+
+    #[test]
+    fn a_keyword_naming_no_kind_is_unknown() {
+        assert!(!is_known("venn-beta\n  set A"));
+        assert!(!is_known("roadmap-beta\n  step one"));
+        assert!(is_known("radar-beta\n  axis a, b"));
+    }
+
+    #[test]
+    fn a_keyword_is_a_whole_word() {
+        assert!(!is_known("pieChart-beta\n  \"a\" : 1"));
+        assert!(!is_known("C4Landscape\n  Person(a, \"A\")"));
+        assert!(is_known("C4Context\n  Person(a, \"A\")"));
+        assert!(is_known("graph\n  A --> B"));
+        assert_eq!(describe("stateDiagram-v2\n  [*] --> A"), "state diagram");
     }
 }

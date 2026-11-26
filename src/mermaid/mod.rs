@@ -39,6 +39,7 @@ pub(crate) enum DiagramError {
     /// The deadline had passed before it started.
     OutOfTime,
     Invalid(String),
+    UnknownKind,
     Crashed,
     Empty,
     TooWide(usize),
@@ -59,6 +60,7 @@ impl fmt::Display for DiagramError {
             Self::TimedOut => write!(formatter, "too slow to lay out"),
             Self::OutOfTime => write!(formatter, "out of time for the document's diagrams"),
             Self::Invalid(message) => write!(formatter, "{message}"),
+            Self::UnknownKind => write!(formatter, "not a kind of diagram mrk draws"),
             Self::Crashed => write!(formatter, "the diagram renderer crashed"),
             Self::Empty => write!(formatter, "nothing to draw"),
             Self::TooWide(width) => write!(formatter, "the diagram is wider than {width} columns"),
@@ -263,6 +265,15 @@ mod tests {
             assert_eq!(lines[0].plain(), "mermaid: subgraph id reused or nested too deep");
             assert_eq!(lines[1].plain(), "graph TD");
         }
+    }
+
+    #[test]
+    fn a_kind_mrk_does_not_know_is_shown_as_source_not_drawn_as_a_flowchart() {
+        let source = "roadmap-beta\n  step one\n  step two";
+
+        let lines = lines(render(source, &with_cell()));
+
+        assert_eq!(lines[1].plain(), "roadmap-beta");
     }
 
     /// Edges between pseudo-random nodes, the shape that took the engines longest to lay out.
