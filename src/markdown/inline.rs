@@ -89,7 +89,7 @@ fn linked(spans: Vec<Span>, url: &str, target: Target, base: Style, context: &Co
     if url.is_empty() {
         return spans;
     }
-    let resolved = context.settings.link_base.as_ref().map_or(Cow::Borrowed(url), |link_base| link_base.resolve(url));
+    let resolved = context.settings.link_base.as_ref().map_or(Cow::Borrowed(url), |link_base| Cow::Owned(link_base.resolve(url)));
     let clickable: Option<Arc<str>> = sanitize::link(&resolved).map(Arc::from);
     let shown = if url.starts_with('#') { None } else { shown_target(&spans, &resolved, target, clickable.is_some(), base, context) };
     let spans = spans.into_iter().map(|span| match &clickable {

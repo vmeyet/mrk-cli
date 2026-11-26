@@ -1,5 +1,4 @@
 //! Relative link targets made absolute against a base address, so a library user can make them clickable.
-use std::borrow::Cow;
 use std::fmt;
 
 use crate::sanitize;
@@ -81,19 +80,23 @@ impl LinkBase {
         &self.page.url
     }
 
-    /// `target` made absolute, or as written when it already has a scheme, which `sanitize::link` then judges.
-    pub(crate) fn resolve<'a>(&self, target: &'a str) -> Cow<'a, str> {
-        if sanitize::scheme(target).is_some() {
-            return Cow::Borrowed(target);
+    /// `target` made absolute, or as written when it already has a scheme, which `sanitize::link` then judges. The
+    /// characters `sanitize::link` removes go first, so `.&#10;.` cannot become a `..` that climbs above a root once
+    /// clicked.
+    pub(crate) fn resolve(&self, target: &str) -> String {
+        let target = sanitize::text(target);
+        if sanitize::scheme(&target).is_some() {
+            return target;
         }
         let page = &self.page;
-        Cow::Owned(match target.as_bytes() {
+        match target.as_bytes() {
+            [] => page.url.clone(),
             [b'/', b'/', ..] => format!("{}:{target}", sanitize::scheme(&page.url).unwrap_or_default()),
             [b'?', ..] => format!("{}{}{target}", page.origin(), page.path()),
             [b'#', ..] => format!("{}{}{}{target}", page.origin(), page.path(), page.query()),
-            [b'/', ..] => self.root_relative(&without_dot_segments(target)),
+            [b'/', ..] => self.root_relative(&without_dot_segments(&target)),
             _ => format!("{}{}", page.origin(), without_dot_segments(&format!("{}{target}", page.folder()))),
-        })
+        }
     }
 
     fn root_relative(&self, target: &str) -> String {
@@ -151,22 +154,34 @@ fn is_http(scheme: &str) -> bool {
 }
 
 /// An absolute path with its `.` and `..` segments resolved (RFC 3986 § 5.2.4), its query and fragment kept as written.
+/// A browser reads an http path's `\` as `/` and `%2e` as `.`, so this does too: otherwise `/uploads/%2e%2e/x` would
+/// pass a root's prefix and climb above the root once clicked.
 fn without_dot_segments(target: &str) -> String {
     let (path, rest) = target.split_at(target.find(['?', '#']).unwrap_or(target.len()));
+    let path = path.replace('\\', "/");
     let mut kept = Vec::new();
     for segment in path.split('/').skip(1) {
-        match segment {
-            "." => {}
-            ".." => {
+        match dot_segment(segment) {
+            Some(".") => {}
+            Some(_) => {
                 kept.pop();
             }
-            _ => kept.push(segment),
+            None => kept.push(segment),
         }
     }
-    if matches!(path.rsplit('/').next(), Some("." | "..")) {
+    if path.rsplit('/').next().and_then(dot_segment).is_some() {
         kept.push("");
     }
     format!("/{}{rest}", kept.join("/"))
+}
+
+/// `.` or `..` when the segment is one of them, each dot written as itself or as `%2e`.
+fn dot_segment(segment: &str) -> Option<&'static str> {
+    match segment.to_ascii_lowercase().replace("%2e", ".").as_str() {
+        "." => Some("."),
+        ".." => Some(".."),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -178,7 +193,7 @@ mod tests {
     const BASE: &str = "https://gitlab.example.com/group/project/-/merge_requests/7?tab=notes#note_1";
 
     fn resolved(target: &str) -> String {
-        LinkBase::new(BASE).unwrap().resolve(target).into_owned()
+        LinkBase::new(BASE).unwrap().resolve(target)
     }
 
     #[test]
@@ -197,6 +212,71 @@ mod tests {
         assert_eq!(resolved("../../blob/main/a.rs#L3"), "https://gitlab.example.com/group/project/blob/main/a.rs#L3");
         assert_eq!(resolved("/a/../../../b"), "https://gitlab.example.com/b");
         assert_eq!(resolved(".."), "https://gitlab.example.com/group/project/-/");
+    }
+
+    #[test]
+    fn the_rfc_3986_examples_resolve_as_the_rfc_says() {
+        let base = LinkBase::new("http://a/b/c/d;p?q").unwrap();
+        let cases = [
+            ("g:h", "g:h"),
+            ("g", "http://a/b/c/g"),
+            ("./g", "http://a/b/c/g"),
+            ("g/", "http://a/b/c/g/"),
+            ("/g", "http://a/g"),
+            ("//g", "http://g"),
+            ("?y", "http://a/b/c/d;p?y"),
+            ("g?y", "http://a/b/c/g?y"),
+            ("#s", "http://a/b/c/d;p?q#s"),
+            ("g#s", "http://a/b/c/g#s"),
+            ("g?y#s", "http://a/b/c/g?y#s"),
+            (";x", "http://a/b/c/;x"),
+            ("g;x", "http://a/b/c/g;x"),
+            ("g;x?y#s", "http://a/b/c/g;x?y#s"),
+            ("", "http://a/b/c/d;p?q"),
+            (".", "http://a/b/c/"),
+            ("./", "http://a/b/c/"),
+            ("..", "http://a/b/"),
+            ("../", "http://a/b/"),
+            ("../g", "http://a/b/g"),
+            ("../..", "http://a/"),
+            ("../../", "http://a/"),
+            ("../../g", "http://a/g"),
+            ("../../../g", "http://a/g"),
+            ("../../../../g", "http://a/g"),
+            ("/./g", "http://a/g"),
+            ("/../g", "http://a/g"),
+            ("g.", "http://a/b/c/g."),
+            (".g", "http://a/b/c/.g"),
+            ("g..", "http://a/b/c/g.."),
+            ("..g", "http://a/b/c/..g"),
+            ("./../g", "http://a/b/g"),
+            ("./g/.", "http://a/b/c/g/"),
+            ("g/./h", "http://a/b/c/g/h"),
+            ("g/../h", "http://a/b/c/h"),
+            ("g;x=1/./y", "http://a/b/c/g;x=1/y"),
+            ("g;x=1/../y", "http://a/b/c/y"),
+            ("g?y/./x", "http://a/b/c/g?y/./x"),
+            ("g?y/../x", "http://a/b/c/g?y/../x"),
+            ("g#s/./x", "http://a/b/c/g#s/./x"),
+            ("g#s/../x", "http://a/b/c/g#s/../x"),
+            ("http:g", "http:g"),
+        ];
+
+        for (target, expected) in cases {
+            assert_eq!(base.resolve(target), expected, "{target:?}");
+        }
+    }
+
+    #[test]
+    fn dot_segments_a_browser_reads_count_as_dot_segments() {
+        for target in ["/a/%2e%2E/%2e/b", "/a/.%2e/b", "/a\\..\\b", "/a/.\n./b"] {
+            assert_eq!(resolved(target), "https://gitlab.example.com/b", "{target:?}");
+        }
+    }
+
+    #[test]
+    fn a_scheme_split_by_a_control_is_still_a_scheme() {
+        assert_eq!(resolved("java\nscript:alert(1)"), "javascript:alert(1)");
     }
 
     #[test]
@@ -269,7 +349,7 @@ mod tests {
     const ROOT: &str = "https://gitlab.example.com/group/project";
 
     fn rooted(prefix: &str, target: &str) -> String {
-        LinkBase::new(BASE).unwrap().rooted_at(prefix, ROOT).unwrap().resolve(target).into_owned()
+        LinkBase::new(BASE).unwrap().rooted_at(prefix, ROOT).unwrap().resolve(target)
     }
 
     #[test]
@@ -286,6 +366,13 @@ mod tests {
     #[test]
     fn dot_dot_never_climbs_above_the_root() {
         assert_eq!(rooted("/", "/a/../../../b?x#y"), "https://gitlab.example.com/group/project/b?x#y");
+    }
+
+    #[test]
+    fn an_encoded_or_split_dot_dot_never_climbs_above_the_root() {
+        for target in ["/uploads/%2e%2e/%2e%2e/%2e%2e/x", "/uploads\\..\\..\\..\\x", "/uploads/.\n./.\n./.\n./x"] {
+            assert_eq!(rooted("/uploads/", target), "https://gitlab.example.com/x", "{target:?}");
+        }
     }
 
     #[test]
