@@ -31,7 +31,6 @@ type DrawnText = Result<Arc<Vec<Line>>, DiagramError>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DiagramError {
     Oversized,
-    UnsafeSubgraphs,
     OverBudget(Load),
     OverDocumentBudget,
     /// Given up on at the deadline while laying out.
@@ -52,7 +51,6 @@ impl fmt::Display for DiagramError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Oversized => write!(formatter, "diagram over {} KiB", budget::MAX_SOURCE_BYTES / 1024),
-            Self::UnsafeSubgraphs => write!(formatter, "subgraph id reused or nested too deep"),
             Self::OverBudget(load) => write!(formatter, "over {} {}, too many to lay out", load.limit(), load.unit()),
             Self::OverDocumentBudget => {
                 write!(formatter, "over the {} s of layout a document's diagrams share", budget::MAX_DOCUMENT_COST_MS / 1000)
@@ -68,6 +66,14 @@ impl fmt::Display for DiagramError {
             Self::UnreadableSvg(message) => write!(formatter, "unreadable SVG ({message})"),
             Self::PngEncoding(message) => write!(formatter, "PNG encoding failed ({message})"),
         }
+    }
+}
+
+impl DiagramError {
+    /// An engine's reason for refusing a diagram, which may quote the source: the note shows its first line as span
+    /// text.
+    fn invalid(reason: &impl fmt::Display) -> Self {
+        Self::Invalid(reason.to_string().lines().next().unwrap_or("invalid diagram").to_owned())
     }
 }
 
@@ -127,7 +133,7 @@ fn drawing(diagram: &Diagram, settings: &Settings) -> Drawing {
     Ok(Arc::new(caught(|| Svg::parse(&svg))??))
 }
 
-/// mermaid-text lays out for the width, so it runs again after a resize, unless it once ran out of time.
+/// vt-mermaid lays out for the width, so it runs again after a resize, unless it once ran out of time.
 fn as_text(source: &str, diagram: &Diagram, settings: &Settings) -> Result<Block, DiagramError> {
     let text = match TEXTS.find(source, &settings.theme.palette) {
         Some((width, text)) if width == settings.width || text == Err(DiagramError::TimedOut) => text,
@@ -258,13 +264,19 @@ mod tests {
     }
 
     #[test]
-    fn a_subgraph_inside_itself_is_shown_as_source_by_both_engines() {
-        for settings in [test_settings(), with_cell()] {
-            let lines = lines(render("graph TD\n subgraph a\n subgraph a\n end\n end", &settings));
+    fn a_subgraph_inside_itself_draws_with_both_engines() {
+        let source = "graph TD\n subgraph a\n subgraph a\n x --> y\n end\n end";
 
-            assert_eq!(lines[0].plain(), "mermaid: subgraph id reused or nested too deep");
-            assert_eq!(lines[1].plain(), "graph TD");
-        }
+        assert!(matches!(render(source, &test_settings()), Block::Lines(text) if !text[0].plain().starts_with("mermaid:")));
+        assert!(matches!(render(source, &with_cell()), Block::Picture(_)));
+    }
+
+    #[test]
+    fn a_kind_vt_mermaid_does_not_draw_shows_as_source_with_its_note() {
+        let lines = lines(render("pie\n  \"a\" : 1", &test_settings()));
+
+        assert_eq!(lines[0].plain(), "mermaid: pie diagrams are not drawn as text yet");
+        assert_eq!(lines[1].plain(), "pie");
     }
 
     #[test]
@@ -285,9 +297,9 @@ mod tests {
     #[test]
     fn diagrams_too_costly_to_lay_out_are_refused_before_either_engine() {
         let costly = [
-            (tangled(100, 500), "mermaid: over 100 edges, too many to lay out"),
-            (tangled(1000, 3500), "mermaid: over 100 edges, too many to lay out"),
-            (format!("classDiagram\n{}", "  A --> B\n".repeat(40)), "mermaid: over 32 relations, too many to lay out"),
+            (tangled(100, 500), "mermaid: over 150 edges, too many to lay out"),
+            (tangled(1000, 3500), "mermaid: over 150 edges, too many to lay out"),
+            (format!("classDiagram\n{}", "  A --> B\n".repeat(151)), "mermaid: over 150 edges, too many to lay out"),
         ];
 
         for (source, note) in &costly {
@@ -298,20 +310,21 @@ mod tests {
         }
     }
 
+    /// x, y, their edge and every subgraph are links: 147 subgraphs is the most a picture's count admits.
     #[test]
-    fn the_deepest_subgraphs_the_budget_admits_lay_out_on_a_default_thread_stack() {
-        let opening: String = (0..16).map(|level| format!(" subgraph s{level}\n")).collect();
-        let source = format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(16));
-        assert!(budget::Diagram::new(&source).is_ok());
+    fn the_deepest_subgraphs_the_budget_admits_run_on_a_default_thread_stack() {
+        let opening: String = (0..147).map(|level| format!(" subgraph s{level}\n")).collect();
+        let source = format!("graph TD\n{opening} x --> y\n{}", " end\n".repeat(147));
+        assert!(budget::Diagram::new(&source).unwrap().picture_graph().is_ok());
 
         let drawn = std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
-            .spawn(move || [test_settings(), with_cell()].map(|settings| render(&source, &settings)))
+            .spawn(move || [Settings { width: 1000, ..test_settings() }, with_cell()].map(|settings| render(&source, &settings)))
             .unwrap()
             .join()
             .unwrap();
 
-        assert!(matches!(&drawn, [Block::Lines(text), Block::Picture(_)] if !text[0].plain().starts_with("mermaid:")), "{drawn:?}");
+        assert!(matches!(&drawn, [Block::Lines(_), Block::Picture(_)]), "{drawn:?}");
     }
 
     #[test]
@@ -364,7 +377,7 @@ mod tests {
 
     #[test]
     fn a_document_lays_out_each_diagram_that_fits_what_is_left_of_its_budget() {
-        let chain = |diagram: usize| (0..99).map(|node| format!("  d{diagram}n{node} --> d{diagram}n{}\n", node + 1)).collect::<String>();
+        let chain = |diagram: usize| (0..39).map(|node| format!("  d{diagram}n{node} --> d{diagram}n{}\n", node + 1)).collect::<String>();
         let diagram = |index: usize| format!("graph TD\n{}", chain(index));
         let fitting = budget::MAX_DOCUMENT_COST_MS / Diagram::new(&diagram(0)).unwrap().cost(false);
         let document: String = (0..=fitting).map(|index| format!("```mermaid\n{}```\n\n", diagram(index))).collect();
@@ -373,12 +386,12 @@ mod tests {
         let plain = crate::document::plain(&crate::markdown::render(&document, &test_settings()));
 
         assert_eq!(plain.matches("mermaid: over the 12 s of layout").count(), 1);
-        assert!(plain.contains(&format!("d{fitting}n98 --> d{fitting}n99")), "{plain}");
+        assert!(plain.contains(&format!("d{fitting}n38 --> d{fitting}n39")), "{plain}");
         assert!(!plain.contains("small --> one"), "{plain}");
     }
 
     #[test]
-    fn syntax_only_mermaid_text_reads_still_draws_as_text() {
+    fn syntax_mermaid_rs_renderer_refuses_still_draws_as_text() {
         let sources = [
             "classDiagram\n  class Shape {\n    <<interface>>\n    +area() float\n  }\n  Shape <|-- Circle",
             "sequenceDiagram\n  box Purple Front\n    participant A\n  end\n  A->>B: hi\n  B-->>A: ok",

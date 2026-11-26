@@ -1,0 +1,23 @@
+---
+source: src/mermaid/text.rs
+expression: "lines.iter().map(Line::plain).collect::<Vec<_>>().join(\"\\n\")"
+---
+╭─ CI ────────────╮
+│                 │
+│ ┌───────┐       │
+│ │ Build │       │
+│ └──┬────┘       │
+│    │   ▴        │
+│    │   │        │
+│    ▾  no        │
+│ ╱──────┴──────╲ │
+│ │ Tests pass? │ │
+│ ╲──────┬──────╱ │
+│        │        │
+╰────────┼────────╯
+        yes
+         │
+         ▾
+     ┌────────┐
+     │ Deploy │
+     └────────┘

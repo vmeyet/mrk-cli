@@ -5,7 +5,7 @@ Read Markdown in your terminal as a well-set page, with Mermaid diagrams drawn a
 ![mrk rendering a technical plan with a table, code and a Mermaid flowchart](https://raw.githubusercontent.com/vmeyet/mrk-cli/main/examples/pictures/example-plan.gif)
 
 `mrk` turns headings, tables, code, alerts, task lists and footnotes into calm colour and clean spacing, with no `#` or `*` left on screen.
-On terminals that can show pictures, Mermaid diagrams appear as images; everywhere else they become box-drawing text.
+On terminals that can show pictures, Mermaid diagrams appear as images; everywhere else flowchart, sequence, state, class and ER diagrams become box-drawing text, and other kinds show their source.
 
 ## Install
 
