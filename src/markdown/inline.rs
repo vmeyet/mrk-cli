@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use comrak::nodes::{AstNode, NodeValue};
@@ -88,8 +89,9 @@ fn linked(spans: Vec<Span>, url: &str, target: Target, base: Style, context: &Co
     if url.is_empty() {
         return spans;
     }
-    let clickable: Option<Arc<str>> = sanitize::link(url).map(Arc::from);
-    let shown = shown_target(&spans, url, target, clickable.is_some(), base, context);
+    let resolved = context.settings.link_base.as_ref().map_or(Cow::Borrowed(url), |link_base| link_base.resolve(url));
+    let clickable: Option<Arc<str>> = sanitize::link(&resolved).map(Arc::from);
+    let shown = if url.starts_with('#') { None } else { shown_target(&spans, &resolved, target, clickable.is_some(), base, context) };
     let spans = spans.into_iter().map(|span| match &clickable {
         Some(clickable) => span.linked(Arc::clone(clickable)),
         None => span,
@@ -99,10 +101,10 @@ fn linked(spans: Vec<Span>, url: &str, target: Target, base: Style, context: &Co
 
 /// ` <url>` for a link that cannot be clicked, unless its text already reads as the URL. Without hyperlinks every
 /// target shows; with them, only a link's target that `sanitize::link` refuses (a relative path, another scheme), and
-/// never an image's source or a `#fragment`, which means nothing outside the document.
+/// never an image's source. The caller leaves out a written `#fragment`, which points inside the document.
 fn shown_target(spans: &[Span], url: &str, target: Target, is_clickable: bool, base: Style, context: &Context) -> Option<Span> {
     let is_unclickable = !context.settings.hyperlinks || (target == Target::Link && !is_clickable);
-    if !is_unclickable || url.starts_with('#') {
+    if !is_unclickable {
         return None;
     }
     let text: String = spans.iter().map(|span| span.text.as_str()).collect();
@@ -118,9 +120,12 @@ fn reads_as(text: &str, url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use std::sync::Arc;
 
-    use crate::document::{Block, Settings, Span, Style, plain, test_settings};
+    use crate::document::{Block, Document, Settings, Span, Style, plain, test_settings};
+    use crate::link::LinkBase;
     use crate::markdown::{plain_at, render, styled};
     use crate::theme::MRK_DARK;
 
@@ -221,7 +226,10 @@ mod tests {
     }
 
     fn links_at(source: &str, width: usize) -> Vec<Option<Arc<str>>> {
-        let document = render(source, &Settings { width, ..test_settings() });
+        links(&render(source, &Settings { width, ..test_settings() }))
+    }
+
+    fn links(document: &Document) -> Vec<Option<Arc<str>>> {
         let lines = document.blocks.iter().flat_map(Block::lines);
         lines.flat_map(|line| &line.spans).map(|span| span.link.clone()).collect()
     }
@@ -233,6 +241,56 @@ mod tests {
         for source in [too_long.as_str(), "[guide](docs/guide.md)", "[x](javascript:alert(1))"] {
             assert!(links_at(source, 80).iter().all(Option::is_none), "{source}");
         }
+    }
+
+    fn with_base(source: &str, hyperlinks: bool) -> Document {
+        let link_base = Some(LinkBase::new("https://forge.test/group/project/-/merge_requests/7").unwrap());
+        render(source, &Settings { hyperlinks, link_base, ..test_settings() })
+    }
+
+    fn links_with_base(source: &str) -> Vec<Option<Arc<str>>> {
+        links(&with_base(source, true))
+    }
+
+    #[test]
+    fn with_a_link_base_a_relative_link_or_image_is_clickable() {
+        assert_eq!(
+            links_with_base("[report](/uploads/ab12/report.pdf) ![a](../../raw/main/a.png)"),
+            [
+                Some(Arc::from("https://forge.test/uploads/ab12/report.pdf")),
+                None,
+                Some(Arc::from("https://forge.test/group/project/raw/main/a.png"))
+            ]
+        );
+        assert_eq!(plain(&with_base("[report](/uploads/ab12/report.pdf)", true)), "report\n");
+    }
+
+    #[test]
+    fn with_a_link_base_and_no_hyperlinks_the_resolved_target_shows() {
+        assert_eq!(
+            plain(&with_base("[x](docs/x.md) and [notes](#note_2)", false)),
+            "x <https://forge.test/group/project/-/merge_requests/docs/x.md> and notes\n"
+        );
+    }
+
+    #[test]
+    fn a_link_base_never_makes_a_refused_scheme_clickable() {
+        for source in ["[x](javascript:alert(1))", "[x](data:text/html,x)", "[x](file://host/share)"] {
+            assert!(links_with_base(source).iter().all(Option::is_none), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_resolved_target_is_still_sanitized() {
+        let links = links_with_base("[x](<a\u{1b}]52;c;eA==\u{7}b\u{9b}c>)");
+
+        assert_eq!(links, [Some(Arc::from("https://forge.test/group/project/-/merge_requests/a]52;c;eA==bc"))]);
+    }
+
+    #[test]
+    fn without_a_link_base_a_relative_link_stays_unclickable() {
+        assert_eq!(links_at("[report](/uploads/ab12/report.pdf)", 80), [None, None]);
+        assert_eq!(plain_at("[report](/uploads/ab12/report.pdf)", 80), "report </uploads/ab12/report.pdf>\n");
     }
 
     #[test]

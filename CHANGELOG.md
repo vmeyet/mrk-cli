@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `Settings::link_base` makes relative links and images clickable for a library user: a `LinkBase` (an absolute http or https URL) they resolve against as a browser would, the result still passing `sanitize::link`.
+
 ## [0.10.0] - 2026-11-26
 
 ### Added

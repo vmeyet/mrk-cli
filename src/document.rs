@@ -2,6 +2,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::link::LinkBase;
 use crate::sanitize;
 use crate::theme::Theme;
 
@@ -222,16 +223,27 @@ pub struct Settings {
     /// Whether the terminal makes links clickable; when it does not, a link's target is printed after its text.
     pub hyperlinks: bool,
     pub jumbo_title: Option<JumboTitle>,
+    /// What a relative link target (`docs/x.md`, `/uploads/a.pdf`) resolves against, so it can be clicked; `None`
+    /// leaves it unclickable, its target printed after its text.
+    pub link_base: Option<LinkBase>,
     /// When diagrams stop being laid out: each runs on a thread of its own, given up on at that moment, and those
     /// left show as source. `None` lays every diagram out on the calling thread, bounded by the diagram budget alone.
     pub diagram_deadline: Option<Instant>,
 }
 
 /// 80 columns of `mrk-dark` text: no pictures, links not clickable (their target printed after them), no jumbo title, no
-/// diagram deadline.
+/// link base, no diagram deadline.
 impl Default for Settings {
     fn default() -> Self {
-        Self { width: 80, theme: crate::theme::MRK_DARK, cell: None, hyperlinks: false, jumbo_title: None, diagram_deadline: None }
+        Self {
+            width: 80,
+            theme: crate::theme::MRK_DARK,
+            cell: None,
+            hyperlinks: false,
+            jumbo_title: None,
+            link_base: None,
+            diagram_deadline: None,
+        }
     }
 }
 
