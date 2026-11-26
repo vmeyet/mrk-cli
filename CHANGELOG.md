@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-26
+
+### Added
+
+- crates.io releases are published from the release tag by GitHub Actions, with trusted publishing instead of a token.
+
 ### Changed
 
 - Mermaid as text is drawn by vt-mermaid instead of mermaid-text: flowchart, sequence, state, class and ER diagrams, with a theme colour per role, the same on every run.
 - Mermaid as text counts up to 150 edges for a flowchart, class, state or ER diagram; class diagrams are no longer capped at 32 relations, and subgraphs that reuse an id or nest deep draw.
 - **Regression**: without pictures, pie, gantt, mindmap, timeline, journey, git graph, kanban and every other kind mermaid-text drew now show as source with a note, until vt-mermaid draws them.
+
+### Fixed
+
+- Mermaid labels show their words, in pictures and text: HTML tags dropped, `<br>` a line break, a markdown string without its backticks and `*`/`_` markers, entities decoded inside quotes.
+- A Mermaid diagram whose opening keyword names no kind mrk draws (`venn-beta`, `pieChart-beta`) shows as source instead of being drawn as a flowchart; `radar` and `treemap` are known kinds.
 
 ## [0.9.0] - 2026-11-12
 
@@ -228,6 +239,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Every byte written to the terminal passes one sanitizer; links are filtered by scheme and length; input and diagrams are size-capped.
 
+[0.10.0]: https://github.com/vmeyet/mrk-cli/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/vmeyet/mrk-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/vmeyet/mrk-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/vmeyet/mrk-cli/compare/v0.6.0...v0.7.0
